@@ -1,29 +1,32 @@
-use crate::{db::Ext, store::handler::AssertionStoreRequest, AssertionExecutor};
+use crate::{
+    db::Ext,
+    store::AssertionStoreReader,
+    AssertionExecutor,
+};
 
-use revm::db::{Database, DatabaseCommit};
-use tokio::sync::mpsc::Sender;
+use revm::db::{
+    Database,
+    DatabaseCommit,
+};
 
 pub struct AssertionExecutorBuilder<DB: Database + DatabaseCommit + Ext<DB>> {
     pub db: DB,
-    pub assertion_store_tx: Sender<AssertionStoreRequest>,
+    pub assertion_store_reader: AssertionStoreReader,
 }
 
 //TODO: Extend with any necessary configuration
 impl<DB: Database + DatabaseCommit + Ext<DB>> AssertionExecutorBuilder<DB> {
-    pub fn new(db: DB, assertion_store_tx: Sender<AssertionStoreRequest>) -> Self {
+    pub fn new(db: DB, assertion_store_reader: AssertionStoreReader) -> Self {
         AssertionExecutorBuilder {
             db,
-            assertion_store_tx,
+            assertion_store_reader,
         }
     }
 
     pub fn build(self) -> AssertionExecutor<DB> {
-        let (assertion_match_tx, assertion_match_rx) = tokio::sync::mpsc::channel(1_000);
         AssertionExecutor {
             db: self.db,
-            assertion_store_tx: self.assertion_store_tx,
-            assertion_match_tx,
-            assertion_match_rx,
+            assertion_store_reader: self.assertion_store_reader,
         }
     }
 }

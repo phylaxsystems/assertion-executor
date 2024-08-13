@@ -1,57 +1,119 @@
-pub mod handler;
+mod handler;
+mod map;
 
-use crate::{
-    primitives::{Address, AssertionContract, B256},
-    tracer::CallTracer,
-};
+mod request;
+pub use request::AssertionStoreRequest;
 
-use tracing::debug;
+mod reader;
+pub use reader::AssertionStoreReader;
 
-#[derive(Default)]
-pub struct AssertionStore(std::collections::HashMap<Address, Vec<AssertionContract>>);
+mod writer;
+pub use writer::AssertionStoreWriter;
+
+use tokio::sync::mpsc;
+use tracing::error;
+
+/// Used for synchronizing reads and writes of assertions by block number.
+///
+/// Writes are processed order by block number
+/// Read Requests are only processed if the requested block number is less than or equal to the latest block number
+///
+/// # Example
+///
+///``` rust
+/// #[tokio::main]
+/// async fn main() {
+///     use assertion_executor::{
+///         primitives::{
+///             Address,
+///             AssertionContract,
+///             U256,
+///         },
+///         store::AssertionStore,
+///         tracer::CallTracer,
+///     };
+///
+///     let assertion_store = AssertionStore::default();
+///
+///     let writer = assertion_store.writer();
+///     let mut reader = assertion_store.reader();
+///
+///     let mut trace = CallTracer::default();
+///     trace.calls.insert(Address::new([0; 20]));
+///
+///     assert_eq!(
+///         reader
+///             .read(U256::ZERO, trace.clone())
+///             .await
+///             .unwrap()
+///             .unwrap(),
+///         vec![]
+///     );
+///
+///     writer
+///         .write(
+///             U256::ZERO,
+///             vec![(Address::new([0; 20]), vec![AssertionContract::default()])],
+///         )
+///         .await;
+///
+///     assert_eq!(
+///         reader.read(U256::ZERO, trace).await.unwrap().unwrap(),
+///         vec![AssertionContract::default()]
+///     );
+/// }
+/// ```
+#[derive(Debug)]
+pub struct AssertionStore {
+    req_tx: mpsc::Sender<AssertionStoreRequest>,
+    reader_channel_size: usize,
+}
 
 impl AssertionStore {
-    pub fn match_traces(&self, traces: &CallTracer) -> Vec<AssertionContract> {
-        let assertion_contracts = traces
-            .calls
-            .iter()
-            .filter_map(move |to: &Address| {
-                let maybe_assertions = self.0.get(to).cloned();
+    /// Instantiates the [`AssertionStore`], spawning the handler polling on a new thread, and returns the [`AssertionStore`].
+    pub fn new(req_channel_size: usize, reader_channel_size: usize) -> Self {
+        let (req_tx, req_rx) = mpsc::channel(req_channel_size);
 
-                if let Some(ref assertions) = maybe_assertions {
-                    let assertion_hashes: Vec<B256> = assertions
-                        .iter()
-                        .map(|assertion: &AssertionContract| assertion.code_hash)
-                        .collect();
-                    debug!(?assertion_hashes, contract = ?to, "Found assertions for contract");
-                };
+        std::thread::spawn(move || {
+            let mut req_handler = handler::AssertionStoreRequestHandler::new(req_rx);
 
-                maybe_assertions
-            })
-            .flatten()
-            .collect::<Vec<AssertionContract>>();
-        assertion_contracts
+            loop {
+                if let Err(err) = req_handler.poll() {
+                    //TODO: improve error handling
+                    error!(
+                        ?err,
+                        "AssertionStore: Error polling assertion store handler"
+                    );
+                }
+            }
+        });
+
+        AssertionStore {
+            reader_channel_size,
+            req_tx,
+        }
     }
 
-    pub fn insert(&mut self, address: Address, assertions: Vec<AssertionContract>) {
-        self.0.insert(address, assertions);
+    /// Instantiates an [`AssertionStoreReader`] and returns it.
+    pub fn reader(&self) -> AssertionStoreReader {
+        let (match_tx, match_rx) = mpsc::channel(self.reader_channel_size);
+        AssertionStoreReader {
+            req_tx: self.req_tx.clone(),
+            match_rx,
+            match_tx,
+        }
+    }
+
+    /// Instantiates an [`AssertionStoreWriter`] and returns it.
+    pub fn writer(&self) -> AssertionStoreWriter {
+        AssertionStoreWriter {
+            req_tx: self.req_tx.clone(),
+        }
     }
 }
 
-#[test]
-fn test_assertion_store() {
-    let mut store = AssertionStore::default();
-
-    let address = Address::new([1u8; 20]);
-    let assertion = crate::test_utils::counter_assertion();
-
-    store.insert(address, vec![assertion.clone()]);
-
-    let traces = CallTracer {
-        calls: vec![address, Address::new([2u8; 20])],
-    };
-
-    let matched_assertions = store.match_traces(&traces);
-    assert_eq!(matched_assertions.len(), 1);
-    assert_eq!(matched_assertions[0], assertion);
+impl Default for AssertionStore {
+    fn default() -> Self {
+        Self::new(1_000, 100)
+    }
 }

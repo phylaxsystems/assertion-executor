@@ -1,10 +1,15 @@
-use super::AssertionStore;
 use crate::{
-    primitives::{Address, AssertionContract, U256},
-    tracer::CallTracer,
+    primitives::{
+        AssertionContract,
+        U256,
+    },
+    store::{
+        map::AssertionStoreMap,
+        request::AssertionStoreRequest,
+    },
 };
 use std::collections::HashMap;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc;
 
 //TODO: Support reorgs
 
@@ -12,42 +17,26 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 /// Write requests are expected to be in order by block number
 /// Match Requests are only processed if the requested block number is less than or equal to the latest block number
 pub struct AssertionStoreRequestHandler {
-    assertion_store: AssertionStore,
-    pub req_tx: Sender<AssertionStoreRequest>,
-    req_rx: Receiver<AssertionStoreRequest>,
+    assertion_store: AssertionStoreMap,
+    req_rx: mpsc::Receiver<AssertionStoreRequest>,
     latest_block_num: Option<U256>,
     pending_reqs: HashMap<U256, Vec<AssertionStoreRequest>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum AssertionStoreRequest {
-    Match {
-        block_num: U256,
-        traces: CallTracer,
-        resp_sender: Sender<Vec<AssertionContract>>,
-    },
-    Write {
-        block_num: U256,
-        assertions: Vec<(Address, Vec<AssertionContract>)>,
-    },
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to send response, receiver dropped")]
 pub enum AssertionStoreRequestHandlerError {
     #[error("Failed to send Assertions, receiver dropped")]
-    FailedToSendAssertions(#[from] tokio::sync::mpsc::error::TrySendError<Vec<AssertionContract>>),
+    FailedToSendAssertions(#[from] mpsc::error::TrySendError<Vec<AssertionContract>>),
     #[error("Write requests not in order by block number")]
     WriteRequestsNotInOrder,
 }
 
 impl AssertionStoreRequestHandler {
-    pub fn new() -> Self {
-        let (req_tx, req_rx) = channel(1_000);
+    pub fn new(req_rx: mpsc::Receiver<AssertionStoreRequest>) -> Self {
         Self {
-            assertion_store: AssertionStore::default(),
+            assertion_store: AssertionStoreMap::default(),
             pending_reqs: HashMap::new(),
-            req_tx,
             req_rx,
             latest_block_num: None,
         }
@@ -73,7 +62,6 @@ impl AssertionStoreRequestHandler {
                     block_num,
                     assertions,
                 } => {
-
                     if let Some(ref latest_block_num) = self.latest_block_num {
                         if block_num <= *latest_block_num {
                             return Err(AssertionStoreRequestHandlerError::WriteRequestsNotInOrder);
@@ -110,14 +98,22 @@ impl AssertionStoreRequestHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn setup() -> Sender<AssertionStoreRequest> {
-        let mut handler = AssertionStoreRequestHandler::new();
+    use crate::{
+        primitives::Address,
+        tracer::CallTracer,
+    };
+    use std::collections::HashSet;
 
-        let req_tx = handler.req_tx.clone();
+    fn setup() -> mpsc::Sender<AssertionStoreRequest> {
+        let (req_tx, req_rx) = mpsc::channel(1000);
 
-        std::thread::spawn(move || loop {
-            if handler.poll().is_err() {
-                break;
+        let mut handler = AssertionStoreRequestHandler::new(req_rx);
+
+        std::thread::spawn(move || {
+            loop {
+                if handler.poll().is_err() {
+                    break;
+                }
             }
         });
         req_tx
@@ -125,7 +121,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_assertion_store_handler() {
-        use crate::test_utils::{counter_assertion, COUNTER_ADDRESS};
+        use crate::test_utils::{
+            counter_assertion,
+            COUNTER_ADDRESS,
+        };
         use revm::primitives::uint;
 
         let req_tx = setup();
@@ -146,7 +145,9 @@ mod tests {
                 .send(AssertionStoreRequest::Match {
                     block_num,
                     traces: CallTracer {
-                        calls: vec![COUNTER_ADDRESS, Address::new([2u8; 20])],
+                        calls: HashSet::from_iter(
+                            vec![COUNTER_ADDRESS, Address::new([2u8; 20])].into_iter(),
+                        ),
                     },
                     resp_sender: match_resp_tx,
                 })
@@ -155,7 +156,8 @@ mod tests {
 
             let res = match_resp_rx
                 .recv()
-                .await .expect("Failed to receive match response");
+                .await
+                .expect("Failed to receive match response");
 
             assert_eq!(res, vec![counter_assertion()]);
         }
@@ -163,41 +165,46 @@ mod tests {
 
     #[tokio::test]
     async fn test_assertion_store_handler_blocking_match() {
-        use crate::test_utils::{counter_assertion, COUNTER_ADDRESS};
+        use crate::test_utils::{
+            counter_assertion,
+            COUNTER_ADDRESS,
+        };
         use revm::primitives::uint;
         use tokio::sync::mpsc::error::TryRecvError;
 
         let req_tx = setup();
 
-
-        let (match_resp_tx, mut match_resp_rx) = tokio::sync::mpsc::channel(1000);
+        let (match_resp_tx, mut match_resp_rx) = mpsc::channel(1000);
         req_tx
             .send(AssertionStoreRequest::Match {
                 block_num: uint!(1_U256),
                 traces: CallTracer {
-                    calls: vec![COUNTER_ADDRESS, Address::new([2u8; 20])],
+                    calls: HashSet::from_iter(
+                        vec![COUNTER_ADDRESS, Address::new([2u8; 20])].into_iter(),
+                    ),
                 },
                 resp_sender: match_resp_tx,
             })
             .await
             .expect("Failed to send match request");
 
-            assert_eq!(match_resp_rx.try_recv(), Err(TryRecvError::Empty));
+        assert_eq!(match_resp_rx.try_recv(), Err(TryRecvError::Empty));
 
-            let write_req = AssertionStoreRequest::Write {
-                block_num: uint!(1_U256),
-                assertions: vec![(COUNTER_ADDRESS, vec![counter_assertion()])],
-            };
+        let write_req = AssertionStoreRequest::Write {
+            block_num: uint!(1_U256),
+            assertions: vec![(COUNTER_ADDRESS, vec![counter_assertion()])],
+        };
 
-            req_tx
-                .send(write_req)
-                .await
-                .expect("Failed to send write request");
+        req_tx
+            .send(write_req)
+            .await
+            .expect("Failed to send write request");
 
-            let res = match_resp_rx.recv().await.expect("Failed to receive match response");
+        let res = match_resp_rx
+            .recv()
+            .await
+            .expect("Failed to receive match response");
 
-            assert_eq!(res, vec![counter_assertion()]);
-        
+        assert_eq!(res, vec![counter_assertion()]);
     }
 }
-

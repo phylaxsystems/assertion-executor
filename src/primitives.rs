@@ -1,7 +1,17 @@
 use crate::error::ExecutorError;
 pub use revm::primitives::{
-    address, AccountInfo, Address, BlockEnv, Bytecode, EVMError, ExecutionResult, FixedBytes,
-    TxEnv, TxKind, B256, U256,
+    address,
+    AccountInfo,
+    Address,
+    BlockEnv,
+    Bytecode,
+    EVMError,
+    ExecutionResult,
+    FixedBytes,
+    TxEnv,
+    TxKind,
+    B256,
+    U256,
 };
 
 #[derive(Default, Debug, Clone, PartialEq)]

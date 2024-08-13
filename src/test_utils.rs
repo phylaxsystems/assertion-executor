@@ -1,8 +1,21 @@
-#![cfg(test)]
+#![cfg(any(test, feature = "test"))]
+
 use crate::primitives::{
-    AccountInfo, Address, AssertionContract, Bytecode, TransactionBundle, TxEnv, TxKind, U256,
+    AccountInfo,
+    Address,
+    AssertionContract,
+    Bytecode,
+    TransactionBundle,
+    TxEnv,
+    TxKind,
+    U256,
 };
-use revm::primitives::{bytes, fixed_bytes, keccak256, Bytes};
+use revm::primitives::{
+    bytes,
+    fixed_bytes,
+    keccak256,
+    Bytes,
+};
 
 pub const COUNTER_CODE : Bytes= bytes!("6080604052348015600f57600080fd5b506004361060325760003560e01c80638381f58a146037578063d09de08a146051575b600080fd5b603f60005481565b60405190815260200160405180910390f35b60576059565b005b600080549080606683606d565b9190505550565b600060018201608c57634e487b7160e01b600052601160045260246000fd5b506001019056fea2646970667358221220e286ad6519f82d6863d59b6024c676007347de449fb04de9aa0b47e14513e85a64736f6c63430008190033");
 pub const COUNTER_ADDRESS: Address = Address::new([1u8; 20]);

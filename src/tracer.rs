@@ -1,13 +1,26 @@
-use crate::primitives::{Address, U256};
+use crate::primitives::{
+    Address,
+    U256,
+};
 
 use revm::{
-    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
-    Database, EvmContext, Inspector,
+    interpreter::{
+        CallInputs,
+        CallOutcome,
+        CreateInputs,
+        CreateOutcome,
+        Interpreter,
+    },
+    Database,
+    EvmContext,
+    Inspector,
 };
+
+use std::collections::HashSet;
 
 #[derive(Clone, Debug, Default)]
 pub struct CallTracer {
-    pub calls: Vec<Address>,
+    pub calls: HashSet<Address>,
 }
 
 impl<DB: Database> Inspector<DB> for CallTracer {
@@ -40,7 +53,7 @@ impl<DB: Database> Inspector<DB> for CallTracer {
         _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        self.calls.push(inputs.target_address);
+        self.calls.insert(inputs.target_address);
         None
     }
 
@@ -59,11 +72,18 @@ impl<DB: Database> Inspector<DB> for CallTracer {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::primitives::{address, Bytecode};
+    use crate::primitives::{
+        address,
+        Bytecode,
+    };
     use revm::{
         inspector_handle_register,
-        primitives::{bytes, SpecId},
-        Evm, InMemoryDB,
+        primitives::{
+            bytes,
+            SpecId,
+        },
+        Evm,
+        InMemoryDB,
     };
 
     #[test]
@@ -97,7 +117,7 @@ mod test {
 
         evm.transact().expect("Transaction to work");
 
-        let expected = vec![callee; 33];
+        let expected = HashSet::from_iter(vec![callee; 33].into_iter());
         assert_eq!(evm.context.external.calls, expected);
     }
 }

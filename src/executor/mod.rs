@@ -4,27 +4,62 @@ use crate::{
     db::Ext,
     error::ExecutorError,
     primitives::{
-        address, AccountInfo, Address, AssertionContract, AssertionId, AssertionResult, BlockEnv,
-        EVMError, FixedBytes, TxEnv, TxKind, U256,
+        address,
+        AccountInfo,
+        Address,
+        AssertionContract,
+        AssertionId,
+        AssertionResult,
+        BlockEnv,
+        EVMError,
+        FixedBytes,
+        TxEnv,
+        TxKind,
+        U256,
     },
-    store::handler::AssertionStoreRequest,
+    store::{
+        AssertionStoreReader,
+        AssertionStoreRequest,
+    },
     tracer::CallTracer,
 };
-use rayon::prelude::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::{
+    IntoParallelIterator,
+    ParallelIterator,
+};
 use revm::{
-    inspector_handle_register, inspectors::NoOpInspector, Database, DatabaseCommit, Evm, EvmBuilder,
+    inspector_handle_register,
+    inspectors::NoOpInspector,
+    Database,
+    DatabaseCommit,
+    Evm,
+    EvmBuilder,
 };
 
-use std::marker::{Send, Sync};
+use std::marker::{
+    Send,
+    Sync,
+};
 
-use tokio::sync::mpsc::{Receiver, Sender};
-use tracing::{instrument, trace};
+use tokio::sync::mpsc::error::SendError;
+use tracing::{
+    instrument,
+    trace,
+};
 
-pub struct AssertionExecutor<DB: Database + DatabaseCommit + Ext<DB>> {
+#[derive(Debug)]
+pub struct AssertionExecutor<DB> {
     pub db: DB,
-    pub assertion_store_tx: Sender<AssertionStoreRequest>,
-    pub assertion_match_tx: Sender<Vec<AssertionContract>>,
-    pub assertion_match_rx: Receiver<Vec<AssertionContract>>,
+    pub assertion_store_reader: AssertionStoreReader,
+}
+
+impl<DB: Clone> Clone for AssertionExecutor<DB> {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            assertion_store_reader: self.assertion_store_reader.clone(),
+        }
+    }
 }
 
 impl<DB: Database + DatabaseCommit + Clone + Ext<DB> + std::fmt::Debug + Sync + Send>
@@ -36,38 +71,33 @@ where
         address!("0000000000000000000000000000000000000069");
 
     #[instrument(skip_all)]
-    pub async fn execute_assertions<'a>(
+    pub fn execute_assertions<'a>(
         &'a mut self,
         block_env: BlockEnv,
         traces: CallTracer,
-    ) -> impl ParallelIterator<Item = AssertionResult> + 'a {
+    ) -> Result<impl ParallelIterator<Item = AssertionResult> + 'a, SendError<AssertionStoreRequest>>
+    {
         // Examine contracts that were called to see if they have assertions
         // associated, and dispatch accordingly
-        if let Err(err) = self
-            .assertion_store_tx
-            .send(AssertionStoreRequest::Match {
-                block_num: block_env.number,
-                traces,
-                resp_sender: self.assertion_match_tx.clone(),
+        let mut assertion_store_reader = self.assertion_store_reader.clone();
+
+        let assertions = tokio::task::block_in_place(move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                // TODO: improve channel error handling
+                assertion_store_reader
+                    .read(block_env.number, traces)
+                    .await
+                    .expect("Failed to send request")
+                    .expect("Failed to receive response, channel empty and closed")
             })
-            .await
-        {
-            //TODO: Handle error
-            panic!("Failed to send match request: {:?}", err);
-        }
+        });
 
-        let assertions = self
-            .assertion_match_rx
-            .recv()
-            .await
-            .expect("Failed to receive match response");
-
-        assertions
+        Ok(assertions
             .into_par_iter()
             .map(move |assertion_contract| {
                 self.run_assertion_contract(&assertion_contract, block_env.clone())
             })
-            .flatten()
+            .flatten())
     }
 
     fn run_assertion_contract(
@@ -110,7 +140,7 @@ where
                 let result = evm
                     .transact()
                     .map(|result_and_state| result_and_state.result)
-                    .map_err(|e| e.into());
+                    .map_err(Into::into);
 
                 let id = AssertionId {
                     fn_selector: *fn_selector,
@@ -122,6 +152,7 @@ where
             .collect()
     }
 
+    /// Commits a transaction against the underlying database, persisting the state.
     pub fn commit_tx(
         &mut self,
         block_env: BlockEnv,
@@ -143,38 +174,44 @@ where
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_run_assertions_tx_state_persists() -> Result<(), Box<dyn std::error::Error>> {
-    use super::test_utils::{counter_acct_info, counter_assertion, counter_call, COUNTER_ADDRESS};
+    use super::test_utils::{
+        counter_acct_info,
+        counter_assertion,
+        counter_call,
+        COUNTER_ADDRESS,
+    };
     use crate::{
-        primitives::{BlockEnv, U256},
-        store::handler::AssertionStoreRequestHandler,
+        primitives::{
+            BlockEnv,
+            U256,
+        },
+        store::AssertionStore,
         AssertionExecutorBuilder,
     };
 
-    use revm::{db::AccountState, primitives::uint, InMemoryDB};
+    use revm::{
+        db::AccountState,
+        primitives::uint,
+        InMemoryDB,
+    };
 
     let mut db = InMemoryDB::default();
     db.insert_account_info(COUNTER_ADDRESS, counter_acct_info());
 
-    let mut assertion_store_handler = AssertionStoreRequestHandler::new();
-    let req_tx = assertion_store_handler.req_tx.clone();
+    let assertion_store = AssertionStore::default();
 
-    std::thread::spawn(move || loop {
-        if let Err(err) = assertion_store_handler.poll() {
-            println!("Error polling assertion store handler {err:?}");
-        }
-    });
-
-    req_tx
-        .send(AssertionStoreRequest::Write {
-            block_num: U256::ZERO,
-            assertions: vec![(COUNTER_ADDRESS, vec![counter_assertion()])],
-        })
+    assertion_store
+        .writer()
+        .write(
+            U256::ZERO,
+            vec![(COUNTER_ADDRESS, vec![counter_assertion()])],
+        )
         .await
         .unwrap();
 
-    let mut executor = AssertionExecutorBuilder::new(db, req_tx).build();
+    let mut executor = AssertionExecutorBuilder::new(db, assertion_store.reader()).build();
 
     let block_env = BlockEnv::default();
     let tx = counter_call();
@@ -193,7 +230,7 @@ async fn test_run_assertions_tx_state_persists() -> Result<(), Box<dyn std::erro
         //Assert that the assertions resolved as expected
         let result = executor
             .execute_assertions(block_env.clone(), traces.clone())
-            .await;
+            .expect("receiver dropped");
 
         let success = result.all(|r| r.is_success());
         assert_eq!(success, expected_result);

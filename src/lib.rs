@@ -2,7 +2,10 @@ mod error;
 pub use error::ExecutorError;
 
 mod executor;
-pub use executor::{builder::AssertionExecutorBuilder, AssertionExecutor};
+pub use executor::{
+    builder::AssertionExecutorBuilder,
+    AssertionExecutor,
+};
 
 pub mod primitives;
 
@@ -12,4 +15,5 @@ pub mod tracer;
 
 pub mod db;
 
-mod test_utils;
+#[cfg(any(test, feature = "test"))]
+pub mod test_utils;

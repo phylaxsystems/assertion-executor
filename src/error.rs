@@ -1,5 +1,8 @@
 use crate::primitives::EVMError;
-use std::{convert::Infallible, fmt::Debug};
+use std::{
+    convert::Infallible,
+    fmt::Debug,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
