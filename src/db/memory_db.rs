@@ -53,22 +53,23 @@ impl DatabaseRef for MemoryDB {
 impl DatabaseCommit for MemoryDB {
     fn commit(&mut self, changes: HashMap<Address, Account>) {
         for (address, account) in changes {
-            //If the account has code, insert it into the code_by_hash map
+            if account.is_selfdestructed() {
+                self.basic.remove(&address);
+                self.storage.remove(&address);
+                continue;
+            }
+
             if let Some(ref code) = account.info.code {
                 self.code_by_hash
                     .insert(account.info.code_hash, code.clone());
 
-                //If the account has storage, insert it into the storage map
-                if !account.storage.is_empty() {
-                    let account_storage_entry = self.storage.entry(address).or_default();
-
-                    account.storage.iter().for_each(|(k, v)| {
-                        account_storage_entry.insert(*k, v.present_value);
-                    });
-                }
+                self.storage.entry(address).or_default().extend(
+                    account
+                        .storage
+                        .into_iter()
+                        .map(|(key, value)| (key, value.present_value())),
+                );
             }
-
-            //Insert the account info into the basic map
             self.basic.insert(address, account.info);
         }
     }
