@@ -27,4 +27,18 @@ impl AssertionStoreWriter {
             })
             .await
     }
+
+    /// Writes a batch of assertions to the [`AssertionStore`](super::AssertionStore) for a given block number.
+    /// Must be called in order of block number.
+    /// For use in synchronous contexts, will fail in async runtimes.
+    pub fn write_sync(
+        &self,
+        block_num: U256,
+        assertions: Vec<(Address, Vec<AssertionContract>)>,
+    ) -> Result<(), mpsc::error::SendError<AssertionStoreRequest>> {
+        self.req_tx.blocking_send(AssertionStoreRequest::Write {
+            block_num,
+            assertions,
+        })
+    }
 }

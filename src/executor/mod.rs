@@ -1,21 +1,26 @@
 pub mod builder;
 
 use crate::{
-    db::Ext,
+    db::{
+        CacheDB,
+        DatabaseCommit,
+        DatabaseRef,
+        PhDB,
+    },
     error::ExecutorError,
     primitives::{
         address,
-        AccountInfo,
         Address,
         AssertionContract,
         AssertionId,
         AssertionResult,
         BlockEnv,
+        Bytecode,
         EVMError,
         FixedBytes,
+        StateChanges,
         TxEnv,
         TxKind,
-        U256,
     },
     store::{
         AssertionStoreReader,
@@ -30,15 +35,8 @@ use rayon::prelude::{
 use revm::{
     inspector_handle_register,
     inspectors::NoOpInspector,
-    Database,
-    DatabaseCommit,
     Evm,
     EvmBuilder,
-};
-
-use std::marker::{
-    Send,
-    Sync,
 };
 
 use tokio::sync::mpsc::error::SendError;
@@ -62,40 +60,61 @@ impl<DB: Clone> Clone for AssertionExecutor<DB> {
     }
 }
 
-impl<DB: Database + DatabaseCommit + Clone + Ext<DB> + std::fmt::Debug + Sync + Send>
-    AssertionExecutor<DB>
+impl<DB: PhDB> AssertionExecutor<DB>
 where
-    ExecutorError: From<EVMError<<DB as Database>::Error>>,
+    ExecutorError: From<EVMError<<DB as DatabaseRef>::Error>>,
 {
-    const ASSERTION_CONTRACT_ADDRESS: Address =
-        address!("0000000000000000000000000000000000000069");
+    const CALLER: Address = address!("0000000000000000000000000000000000000069");
 
+    const ASSERTION_CONTRACT: Address = address!("cb5ee4f88a1b7107fbc4f8668218cee5ecd3264b");
+
+    /// Executes a transaction against the current state of the fork, and runs the appropriate
+    /// assertions.
+    /// Returns the results of the assertions, as well as the state changes that should be
+    /// committed if the assertions pass.
     #[instrument(skip_all)]
-    pub fn execute_assertions<'a>(
+    pub fn validate_transaction<'a>(
         &'a mut self,
         block_env: BlockEnv,
+        tx_env: TxEnv,
+    ) -> Result<bool, ExecutorError> {
+        let mut fork_db = CacheDB::new(self.db.clone());
+        let (tx_traces, state_changes) =
+            self.execute_forked_tx(block_env.clone(), tx_env, &mut fork_db)?;
+
+        let results = self.execute_assertions(block_env, tx_traces, fork_db.clone())?;
+
+        match results.all(|r| r.is_success()) {
+            true => {
+                self.db.commit(state_changes);
+                Ok(true)
+            }
+            false => Ok(false),
+        }
+    }
+
+    #[instrument(skip_all)]
+    fn execute_assertions<'a>(
+        &'a self,
+        block_env: BlockEnv,
         traces: CallTracer,
+        fork_db: CacheDB<DB>,
     ) -> Result<impl ParallelIterator<Item = AssertionResult> + 'a, SendError<AssertionStoreRequest>>
     {
         // Examine contracts that were called to see if they have assertions
         // associated, and dispatch accordingly
         let mut assertion_store_reader = self.assertion_store_reader.clone();
 
-        let assertions = tokio::task::block_in_place(move || {
-            tokio::runtime::Handle::current().block_on(async move {
-                // TODO: improve channel error handling
-                assertion_store_reader
-                    .read(block_env.number, traces)
-                    .await
-                    .expect("Failed to send request")
-                    .expect("Failed to receive response, channel empty and closed")
-            })
-        });
+        // TODO: improve channel error handling
+        let assertions = assertion_store_reader
+            .read_sync(block_env.number, traces)
+            .expect("Failed to send request")
+            .expect("Failed to receive response, channel empty and closed");
 
         Ok(assertions
             .into_par_iter()
             .map(move |assertion_contract| {
-                self.run_assertion_contract(&assertion_contract, block_env.clone())
+                self.run_assertion_contract(&assertion_contract, block_env.clone(), fork_db.clone())
             })
             .flatten())
     }
@@ -104,6 +123,7 @@ where
         &self,
         assertion_contract: &AssertionContract,
         block_env: BlockEnv,
+        mut fork_db: CacheDB<DB>,
     ) -> Vec<AssertionResult> {
         let AssertionContract {
             fn_selectors,
@@ -113,24 +133,25 @@ where
 
         trace!(?code_hash, "Running assertion contract");
 
-        let mut db = self.db.clone();
+        //Deploy the assertion contract
+        let assertion_address = self
+            .deploy_assertion_contract(block_env.clone(), code.clone(), &mut fork_db)
+            .expect("Failed to deploy assertion contract");
 
-        db.insert_account_info(
-            Self::ASSERTION_CONTRACT_ADDRESS,
-            AccountInfo::new(U256::ZERO, 0, *code_hash, code.clone()),
-        );
-
+        //Execute the functions in parallel against cloned forks of the intermediate state, with
+        //the deployed assertion contract as the target.
         fn_selectors
             .into_par_iter()
             .map(|fn_selector: &FixedBytes<4>| {
                 let mut evm = EvmBuilder::default()
-                    .with_db(db.clone())
+                    .with_ref_db(fork_db.clone())
                     .with_block_env(block_env.clone())
                     .with_external_context(NoOpInspector)
                     .append_handler_register(inspector_handle_register)
                     .modify_tx_env(|env| {
                         *env = TxEnv {
-                            transact_to: TxKind::Call(Self::ASSERTION_CONTRACT_ADDRESS),
+                            transact_to: TxKind::Call(assertion_address),
+                            caller: Self::CALLER,
                             data: (*fn_selector).into(),
                             ..Default::default()
                         }
@@ -152,14 +173,16 @@ where
             .collect()
     }
 
-    /// Commits a transaction against the underlying database, persisting the state.
-    pub fn commit_tx(
-        &mut self,
+    /// Commits a transaction against a fork of the current state.
+    /// Returns the state changes that should be committed if the transaction is valid.
+    fn execute_forked_tx(
+        &self,
         block_env: BlockEnv,
         tx_env: TxEnv,
-    ) -> Result<CallTracer, ExecutorError> {
+        fork_db: &mut CacheDB<DB>,
+    ) -> Result<(CallTracer, StateChanges), ExecutorError> {
         let mut evm = Evm::builder()
-            .with_db(self.db.clone())
+            .with_ref_db(fork_db.clone())
             .with_external_context(CallTracer::default())
             .with_block_env(block_env)
             .modify_tx_env(|env| *env = tx_env)
@@ -168,14 +191,174 @@ where
 
         let result = evm.transact()?;
 
-        self.db.commit(result.state);
+        fork_db.commit(result.state.clone());
 
-        Ok(evm.context.external)
+        Ok((evm.context.external, result.state))
+    }
+
+    /// Deploys an assertion contract to the forked db.
+    /// Returns the address of the deployed contract.
+    fn deploy_assertion_contract(
+        &self,
+        block_env: BlockEnv,
+        constructor_code: Bytecode,
+        fork_db: &mut CacheDB<DB>,
+    ) -> Result<Address, ExecutorError> {
+        let tx_env = TxEnv {
+            transact_to: TxKind::Create,
+            caller: Self::CALLER,
+            data: constructor_code.original_bytes(),
+            ..Default::default()
+        };
+
+        self.execute_forked_tx(block_env, tx_env, fork_db)?;
+
+        Ok(Self::ASSERTION_CONTRACT)
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_run_assertions_tx_state_persists() -> Result<(), Box<dyn std::error::Error>> {
+#[test]
+fn test_deploy_assertion_contract() {
+    use crate::{
+        db::SharedDB,
+        store::AssertionStore,
+        test_utils::SIMPLE_ASSERTION_COUNTER_CODE,
+        AssertionExecutorBuilder,
+    };
+    let shared_db = SharedDB::default();
+    let assertion_store = AssertionStore::default();
+
+    let executor =
+        AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
+    let mut fork_db0 = CacheDB::new(shared_db.clone());
+
+    let deployed_address0 = executor
+        .deploy_assertion_contract(
+            BlockEnv::default(),
+            Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE),
+            &mut fork_db0,
+        )
+        .unwrap();
+
+    assert_eq!(
+        deployed_address0,
+        AssertionExecutor::<SharedDB>::ASSERTION_CONTRACT
+    );
+
+    let deployed_code0 = fork_db0
+        .basic_ref(deployed_address0)
+        .unwrap()
+        .unwrap()
+        .code
+        .unwrap();
+    assert!(deployed_code0.len() > 0);
+
+    let mut shortened_code = SIMPLE_ASSERTION_COUNTER_CODE;
+    shortened_code.truncate(SIMPLE_ASSERTION_COUNTER_CODE.len() - 1);
+
+    let mut fork_db1 = CacheDB::new(shared_db);
+
+    let deployed_address1 = executor
+        .deploy_assertion_contract(
+            BlockEnv::default(),
+            Bytecode::LegacyRaw(shortened_code),
+            &mut fork_db1,
+        )
+        .unwrap();
+
+    assert_eq!(
+        deployed_address1,
+        AssertionExecutor::<SharedDB>::ASSERTION_CONTRACT
+    );
+
+    let deployed_code1 = fork_db1
+        .basic_ref(deployed_address1)
+        .unwrap()
+        .unwrap()
+        .code
+        .unwrap();
+    assert!(deployed_code1.len() > 0);
+
+    //Assert that the same address is returned for the differing code
+    assert_eq!(deployed_address0, deployed_address1);
+    assert_ne!(deployed_code0, deployed_code1);
+}
+
+#[test]
+fn test_execute_forked_tx() {
+    use crate::{
+        db::SharedDB,
+        primitives::{
+            Account,
+            BlockEnv,
+            U256,
+        },
+        store::AssertionStore,
+        test_utils::{
+            counter_acct_info,
+            counter_call,
+            COUNTER_ADDRESS,
+        },
+        AssertionExecutorBuilder,
+    };
+
+    use revm::primitives::uint;
+    use std::collections::HashMap;
+
+    let shared_db = SharedDB::default();
+
+    shared_db.db.write().unwrap().commit(HashMap::from_iter(
+        vec![(
+            COUNTER_ADDRESS,
+            Account {
+                info: counter_acct_info(),
+                ..Default::default()
+            },
+        )]
+        .into_iter(),
+    ));
+
+    let assertion_store = AssertionStore::default();
+
+    let executor =
+        AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
+
+    let mut fork_db = CacheDB::new(shared_db.clone());
+
+    let (traces, state_changes) = executor
+        .execute_forked_tx(BlockEnv::default(), counter_call().decoded, &mut fork_db)
+        .unwrap();
+
+    //Traces should contain the call to the counter contract
+    assert_eq!(
+        traces.calls.into_iter().collect::<Vec<Address>>(),
+        vec![COUNTER_ADDRESS]
+    );
+
+    //State changes should contain the counter contract and the caller accounts
+    let mut accounts = state_changes.keys().cloned().collect::<Vec<_>>();
+    accounts.sort();
+
+    assert_eq!(
+        accounts,
+        vec![counter_call().decoded.caller, COUNTER_ADDRESS]
+    );
+
+    //Counter is incremented by 1 for fork
+    assert_eq!(
+        fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
+        Ok(uint!(1_U256))
+    );
+
+    //Counter is not incremented in the shared db
+    assert_eq!(
+        executor.db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
+        Ok(U256::ZERO)
+    );
+}
+
+#[test]
+fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
     use super::test_utils::{
         counter_acct_info,
         counter_assertion,
@@ -183,7 +366,9 @@ async fn test_run_assertions_tx_state_persists() -> Result<(), Box<dyn std::erro
         COUNTER_ADDRESS,
     };
     use crate::{
+        db::SharedDB,
         primitives::{
+            Account,
             BlockEnv,
             U256,
         },
@@ -191,58 +376,64 @@ async fn test_run_assertions_tx_state_persists() -> Result<(), Box<dyn std::erro
         AssertionExecutorBuilder,
     };
 
-    use revm::{
-        db::AccountState,
-        primitives::uint,
-        InMemoryDB,
-    };
+    use revm::primitives::uint;
+    use std::collections::HashMap;
 
-    let mut db = InMemoryDB::default();
-    db.insert_account_info(COUNTER_ADDRESS, counter_acct_info());
+    let shared_db = SharedDB::default();
+    shared_db.db.write().unwrap().commit(HashMap::from_iter(
+        vec![(
+            COUNTER_ADDRESS,
+            Account {
+                info: counter_acct_info(),
+                ..Default::default()
+            },
+        )]
+        .into_iter(),
+    ));
 
     let assertion_store = AssertionStore::default();
 
     assertion_store
         .writer()
-        .write(
+        .write_sync(
             U256::ZERO,
             vec![(COUNTER_ADDRESS, vec![counter_assertion()])],
         )
-        .await
         .unwrap();
 
-    let mut executor = AssertionExecutorBuilder::new(db, assertion_store.reader()).build();
+    let mut executor = AssertionExecutorBuilder::new(shared_db, assertion_store.reader()).build();
 
     let block_env = BlockEnv::default();
     let tx = counter_call();
 
-    for (expected_state, expected_result) in [(uint!(1_U256), true), (uint!(2_U256), false)] {
-        let traces = executor.commit_tx(block_env.clone(), tx.decoded.clone())?;
-
-        let counter_account = executor.db.load_account(COUNTER_ADDRESS).unwrap();
-
-        //Assert that the state of the counter contract is as expected
+    for (expected_state_before, expected_state_after, expected_result) in [
+        (uint!(0_U256), uint!(1_U256), true),  //Counter is incremented
+        (uint!(1_U256), uint!(1_U256), false), //Counter is not incremented as assertion fails
+    ] {
+        //Assert that the state of the counter contract before committing the changes
         assert_eq!(
-            counter_account.storage.get(&U256::ZERO),
-            Some(&expected_state)
+            executor.db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
+            Ok(expected_state_before)
         );
 
-        //Assert that the assertions resolved as expected
-        let result = executor
-            .execute_assertions(block_env.clone(), traces.clone())
-            .expect("receiver dropped");
+        let result = executor.validate_transaction(block_env.clone(), tx.decoded.clone())?;
 
-        let success = result.all(|r| r.is_success());
-        assert_eq!(success, expected_result);
+        assert_eq!(result, expected_result);
+
+        //Assert that the state of the counter contract before committing the changes
+        assert_eq!(
+            executor.db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
+            Ok(expected_state_after)
+        );
     }
+
     //Assert that the assertion contract is not persisted in the database
     assert_eq!(
         executor
             .db
-            .load_account(AssertionExecutor::<InMemoryDB>::ASSERTION_CONTRACT_ADDRESS)
-            .unwrap()
-            .account_state,
-        AccountState::NotExisting
+            .basic_ref(AssertionExecutor::<SharedDB>::ASSERTION_CONTRACT)
+            .unwrap(),
+        None
     );
 
     Ok(())

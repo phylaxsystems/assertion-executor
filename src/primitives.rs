@@ -1,6 +1,7 @@
 use crate::error::ExecutorError;
 pub use revm::primitives::{
     address,
+    Account,
     AccountInfo,
     Address,
     BlockEnv,
@@ -13,6 +14,8 @@ pub use revm::primitives::{
     B256,
     U256,
 };
+
+use std::collections::HashMap;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct AssertionContract {
@@ -39,6 +42,8 @@ pub struct AssertionResult {
     pub id: AssertionId,
     pub result: Result<ExecutionResult, ExecutorError>,
 }
+
+pub type StateChanges = HashMap<Address, Account>;
 
 impl AssertionResult {
     pub fn is_success(&self) -> bool {

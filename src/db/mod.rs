@@ -1,12 +1,17 @@
-mod in_mem_db;
+mod shared_db;
+pub use shared_db::SharedDB;
 
-use crate::primitives::{
-    AccountInfo,
-    Address,
+mod memory_db;
+
+mod error;
+pub use error::NotFoundError;
+
+pub use revm::{
+    db::CacheDB,
+    DatabaseCommit,
+    DatabaseRef,
 };
-use revm::Database;
 
-pub trait Ext<D: Database> {
-    /// Insert account info into database.
-    fn insert_account_info(&mut self, address: Address, account_info: AccountInfo);
-}
+pub trait PhDB: DatabaseCommit + DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}
+
+impl<T> PhDB for T where T: DatabaseCommit + DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}
