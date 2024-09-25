@@ -12,11 +12,12 @@ env:
 jobs:
   Lint_Build_Test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-      - name: Lint
+      - name: Check formatting
         run: cargo fmt --check
+      - name: Lint with Clippy
+        run: cargo clippy
       - name: Build
         run: cargo build --verbose
       - name: Run tests
