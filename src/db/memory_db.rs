@@ -39,8 +39,7 @@ impl DatabaseRef for DB {
         Ok(self
             .basic
             .get(&address)
-            .map(|v| v.get_latest())
-            .flatten()
+            .and_then(|v| v.get_latest())
             .cloned())
     }
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
@@ -50,8 +49,7 @@ impl DatabaseRef for DB {
         Ok(*self
             .storage
             .get(&address)
-            .map(|s| s.get(&index).map(|v| v.get_latest().unwrap_or(&U256::ZERO)))
-            .flatten()
+            .and_then(|s| s.get(&index).map(|v| v.get_latest().unwrap_or(&U256::ZERO)))
             .unwrap_or(&U256::ZERO))
     }
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
