@@ -48,12 +48,12 @@ pub struct AssertionResult {
 
 pub type StateChanges = HashMap<Address, Account>;
 
+#[derive(Debug, Clone)]
 pub struct BlockChanges {
     pub block_num: u64,
     pub block_hash: B256,
     pub state_changes: StateChanges,
 }
-
 
 impl AssertionResult {
     pub fn is_success(&self) -> bool {

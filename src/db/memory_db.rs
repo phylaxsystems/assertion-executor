@@ -1,47 +1,59 @@
-use crate::{
-    db::{
-        DatabaseCommit,
-        DatabaseRef,
-        NotFoundError,
-    },
-    primitives::{
-        Account,
-        AccountInfo,
-        Address,
-        Bytecode,
-        B256,
-        U256,
-    },
+use crate::db::{
+    DatabaseCommit,
+    DatabaseRef,
+    NotFoundError,
+};
+use crate::primitives::{
+    Account,
+    AccountInfo,
+    Address,
+    BlockChanges,
+    Bytecode,
+    ValueHistory,
+    B256,
+    U256,
 };
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    VecDeque,
+};
 
 #[derive(Debug, Clone, Default)]
-pub struct MemoryDB {
-    basic: HashMap<Address, AccountInfo>,
-    block_hashes: HashMap<u64, B256>,
-    storage: HashMap<Address, HashMap<U256, U256>>,
-    code_by_hash: HashMap<B256, Bytecode>,
+pub struct DB {
+    pub(super) storage: HashMap<Address, HashMap<U256, ValueHistory<U256>>>,
+    pub(super) basic: HashMap<Address, ValueHistory<AccountInfo>>,
+    pub(super) block_hashes: HashMap<u64, B256>,
+    pub(super) code_by_hash: HashMap<B256, Bytecode>,
+
+    pub(super) canonical_block_hash: B256,
+    pub(super) canonical_block_num: u64,
+
+    /// Block Changes for the blocks that have not been pruned.
+    pub(super) block_changes: VecDeque<BlockChanges>,
 }
 
-impl DatabaseRef for MemoryDB {
+impl DatabaseRef for DB {
     type Error = NotFoundError;
-
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(self.basic.get(&address).cloned())
+        Ok(self
+            .basic
+            .get(&address)
+            .map(|v| v.get_latest())
+            .flatten()
+            .cloned())
     }
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         self.block_hashes.get(&number).cloned().ok_or(NotFoundError)
     }
     fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
-        Ok(self
+        Ok(*self
             .storage
             .get(&address)
-            .and_then(|s| s.get(&index))
-            .cloned()
-            .unwrap_or_default())
+            .map(|s| s.get(&index).map(|v| v.get_latest().unwrap_or(&U256::ZERO)))
+            .flatten()
+            .unwrap_or(&U256::ZERO))
     }
-
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
         self.code_by_hash
             .get(&code_hash)
@@ -50,12 +62,16 @@ impl DatabaseRef for MemoryDB {
     }
 }
 
-impl DatabaseCommit for MemoryDB {
-    fn commit(&mut self, changes: HashMap<Address, Account>) {
-        for (address, account) in changes {
+//Replace with commit_block in trait PhDB trait
+//Will need to prune history and update sled
+impl DatabaseCommit for DB {
+    fn commit(&mut self, changes: std::collections::HashMap<Address, Account>) {
+        self.canonical_block_num += 1;
+
+        for (address, account) in &changes {
             if account.is_selfdestructed() {
-                self.basic.remove(&address);
-                self.storage.remove(&address);
+                self.basic.remove(address);
+                self.storage.remove(address);
                 continue;
             }
 
@@ -63,14 +79,208 @@ impl DatabaseCommit for MemoryDB {
                 self.code_by_hash
                     .insert(account.info.code_hash, code.clone());
 
-                self.storage.entry(address).or_default().extend(
-                    account
-                        .storage
-                        .into_iter()
-                        .map(|(key, value)| (key, value.present_value())),
-                );
+                let contract_storage = self.storage.entry(*address).or_default();
+                for (index, slot) in account.storage.clone() {
+                    contract_storage
+                        .entry(index)
+                        .or_default()
+                        .insert(self.canonical_block_num, slot.present_value());
+                }
             }
-            self.basic.insert(address, account.info);
+            self.basic
+                .entry(*address)
+                .or_default()
+                .insert(self.canonical_block_num, account.info.clone());
         }
+        self.block_changes.push_back(BlockChanges {
+            block_num: self.canonical_block_num,
+            block_hash: self.canonical_block_hash,
+            state_changes: changes,
+        });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::primitives::{
+        Account,
+        AccountInfo,
+        B256,
+        U256,
+    };
+    use crate::test_utils::random_bytes;
+    use revm::primitives::{
+        AccountStatus,
+        Bytes,
+        EvmStorageSlot,
+    };
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_basic_ref() {
+        let mut db = DB::default();
+        let address = random_bytes().into();
+        let code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()));
+        let account_info = AccountInfo {
+            nonce: 1,
+            balance: U256::from(1000),
+            code_hash: random_bytes(),
+            code: Some(code.clone()),
+        };
+
+        db.commit(HashMap::from([(
+            address,
+            Account {
+                info: account_info.clone(),
+                storage: HashMap::new(),
+                status: AccountStatus::Touched,
+            },
+        )]));
+
+        let result = db.basic_ref(address);
+        assert_eq!(result.unwrap(), Some(account_info));
+    }
+
+    #[test]
+    fn test_block_hash_ref() {
+        let mut db = DB::default();
+        let block_number = 999;
+        let block_hash = random_bytes();
+
+        db.block_hashes.insert(block_number, block_hash);
+        db.canonical_block_num = 1000;
+
+        let result = db.block_hash_ref(block_number);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), block_hash);
+    }
+
+    #[test]
+    fn test_storage_ref() {
+        let mut db = DB::default();
+        let address = random_bytes().into();
+        let index = U256::from(1);
+        let value = U256::from(100);
+
+        // Commit the storage data
+        db.commit(HashMap::from([(
+            address,
+            Account {
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: U256::ZERO,
+                    code_hash: B256::ZERO,
+                    code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
+                },
+                storage: HashMap::from([(
+                    index,
+                    EvmStorageSlot {
+                        present_value: value,
+                        original_value: U256::ZERO,
+                        is_cold: false,
+                    },
+                )]),
+                status: AccountStatus::Touched,
+            },
+        )]));
+
+        let result = db.storage_ref(address, index);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), value);
+
+        let non_existent_index = U256::from(2);
+        let result = db.storage_ref(address, non_existent_index);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), U256::ZERO);
+    }
+
+    //Should error if the code hash is not found
+    #[test]
+    fn test_code_by_hash_ref() {
+        let mut db = DB::default();
+        let code_hash = random_bytes();
+        let code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<96>()));
+
+        // Commit the code data
+        db.commit(HashMap::from([(
+            random_bytes().into(),
+            Account {
+                info: AccountInfo {
+                    nonce: 0,
+                    balance: U256::ZERO,
+                    code: Some(code.clone()),
+                    code_hash,
+                },
+                storage: HashMap::new(),
+                status: AccountStatus::Touched,
+            },
+        )]));
+
+        let result = db.code_by_hash_ref(code_hash);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), code);
+
+        let non_existent_hash = random_bytes();
+        let result = db.code_by_hash_ref(non_existent_hash);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_commit() {
+        let mut db = DB::default();
+        let address = random_bytes().into();
+        let new_account_info = AccountInfo {
+            nonce: 1,
+            balance: U256::from(2000),
+            code_hash: random_bytes(),
+            code: None,
+        };
+        let new_code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()));
+        let new_storage = HashMap::from([(
+            U256::from(1),
+            EvmStorageSlot {
+                present_value: U256::from(200),
+                original_value: U256::ZERO,
+                is_cold: false,
+            },
+        )]);
+
+        let changes = HashMap::from([(
+            address,
+            Account {
+                info: AccountInfo {
+                    code: Some(new_code.clone()),
+                    ..new_account_info.clone()
+                },
+                storage: new_storage.clone(),
+                status: AccountStatus::Touched,
+            },
+        )]);
+
+        db.commit(changes.clone());
+
+        // Verify the changes
+        assert_eq!(db.canonical_block_num, 1);
+
+        assert_eq!(
+            db.code_by_hash_ref(new_account_info.code_hash).unwrap(),
+            new_code
+        );
+
+        assert_eq!(
+            db.basic_ref(address).unwrap(),
+            Some(new_account_info.clone())
+        );
+        assert_eq!(
+            db.storage_ref(address, U256::from(1)).unwrap(),
+            U256::from(200),
+        );
+
+        let block_changes = db.block_changes.pop_back().unwrap();
+
+        assert_eq!(block_changes.block_num, 1);
+        assert_eq!(block_changes.state_changes, changes);
+    }
+}
+//TODO: Add integration test to verify revm handles block_hash access based on evm version

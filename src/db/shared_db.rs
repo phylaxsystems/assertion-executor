@@ -1,32 +1,28 @@
-use crate::{
-    db::{
-        memory_db::MemoryDB,
-        DatabaseCommit,
-        DatabaseRef,
-        NotFoundError,
-    },
-    primitives::{
-        Account,
-        AccountInfo,
-        Address,
-        Bytecode,
-        B256,
-        U256,
+use crate::db::{
+    DatabaseCommit,
+    NotFoundError,
+    DB,
+};
+use crate::primitives::{
+    Account,
+    AccountInfo,
+    Address,
+    Bytecode,
+    B256,
+    U256,
+};
+use revm::DatabaseRef;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        RwLock,
     },
 };
 
-use std::sync::{
-    Arc,
-    RwLock,
-};
-
-/// A shared database that can be used by multiple threads.
-/// Implemented using an Arc<RwLock<MemoryDB>>.
-/// Read operations are done in parallel, done either at the end of every tx or the end of every
-/// complete block to avoid contention.
 #[derive(Debug, Clone, Default)]
 pub struct SharedDB {
-    pub db: Arc<RwLock<MemoryDB>>,
+    db: Arc<RwLock<DB>>,
 }
 
 impl DatabaseRef for SharedDB {
@@ -57,11 +53,12 @@ impl DatabaseRef for SharedDB {
     }
 }
 
+//Replace with commit_block in trait PhDB trait
 impl DatabaseCommit for SharedDB {
-    fn commit(&mut self, changes: std::collections::HashMap<Address, Account>) {
+    fn commit(&mut self, changes: HashMap<Address, Account>) {
         self.db
             .write()
             .unwrap_or_else(|e| e.into_inner())
-            .commit(changes)
+            .commit(changes);
     }
 }

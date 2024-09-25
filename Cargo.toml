@@ -13,3 +13,6 @@ tracing = "0.1.40"
 
 [features]
 test = []
+
+[dev-dependencies]
+rand = "0.8.5"

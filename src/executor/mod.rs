@@ -305,9 +305,9 @@ fn test_execute_forked_tx() {
     use revm::primitives::uint;
     use std::collections::HashMap;
 
-    let shared_db = SharedDB::default();
+    let mut shared_db = SharedDB::default();
 
-    shared_db.db.write().unwrap().commit(HashMap::from_iter(
+    shared_db.commit(HashMap::from_iter(
         vec![(
             COUNTER_ADDRESS,
             Account {
@@ -379,8 +379,8 @@ fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
     use revm::primitives::uint;
     use std::collections::HashMap;
 
-    let shared_db = SharedDB::default();
-    shared_db.db.write().unwrap().commit(HashMap::from_iter(
+    let mut shared_db = SharedDB::default();
+    shared_db.commit(HashMap::from_iter(
         vec![(
             COUNTER_ADDRESS,
             Account {

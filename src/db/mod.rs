@@ -1,11 +1,8 @@
-mod shared_db;
 pub use shared_db::SharedDB;
 
-mod memory_db_v1;
-mod shared_db_v1;
-pub use memory_db_v1::DB;
-
 mod memory_db;
+mod shared_db;
+pub use memory_db::DB;
 
 mod error;
 pub use error::NotFoundError;
