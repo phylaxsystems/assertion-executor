@@ -18,7 +18,6 @@ use std::collections::{
     HashMap,
     VecDeque,
 };
-use std::ptr::drop_in_place;
 
 use reth_primitives_traits::{
     Account as RethAccount,
@@ -177,8 +176,8 @@ impl MemoryDb {
                             let acount_info: AccountInfo = AccountInfo {
                                 nonce: value.nonce,
                                 balance: value.balance,
-                                code_hash: code_hash,
-                                code: code,
+                                code_hash,
+                                code,
                             };
 
                             let mut history = ValueHistory::new();
