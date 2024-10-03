@@ -1,17 +1,19 @@
-use crate::db::{
-    DatabaseCommit,
-    NotFoundError,
-    DB,
+use crate::{
+    db::{
+        DatabaseCommit,
+        NotFoundError,
+        DB,
+    },
+    primitives::{
+        Account,
+        AccountInfo,
+        Address,
+        Bytecode,
+        B256,
+        U256,
+    },
 };
-use crate::primitives::{
-    Account,
-    AccountInfo,
-    Address,
-    Bytecode,
-    B256,
-    U256,
-};
-use revm::DatabaseRef;
+
 use std::{
     collections::HashMap,
     sync::{
