@@ -15,6 +15,9 @@ tracing = "0.1.40"
 mending = { git = "ssh://git@github.com/phylaxsystems/mending.git", rev = "0c28f98c6"}
 sled = { version = "1.0.0-alpha.122" }
 anyhow = "1.0.89"
+reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "17aa3d61f"}
+reth-db = { git = "https://github.com/paradigmxyz/reth.git", rev = "17aa3d61f"}
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth.git", rev = "17aa3d61f"}
 
 [net]
 git-fetch-with-cli = true

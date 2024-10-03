@@ -18,7 +18,17 @@ use std::collections::{
     HashMap,
     VecDeque,
 };
-use std::ops::FromResidual;
+
+use reth_primitives_traits::{
+    Bytecode as RethBytecode,
+    StorageEntry,
+    Account as RethAccount,
+};
+
+use reth_db::table::{
+    Decompress,
+    Table,
+};
 
 use sled::Db as SledDb;
 
@@ -52,7 +62,6 @@ pub struct MemoryDb {
 }
 
 impl MemoryDb {
-
     /// Iterates over all the KV pairs and loads them into the corresponding struct.
     fn load_tables_into_db<const LEAF_FANOUT: usize>(
         sled_db: &SledDb<LEAF_FANOUT>,
@@ -65,7 +74,8 @@ impl MemoryDb {
         for table_name in reth_tables {
             match *table_name {
                 // <Hash, Blocknumber>
-                // Loads `block_hashes`
+                // Loads `block_hashes` as well as the `canonical_block_hash` and `canonical_block_num`
+                // NOTE: this table must be deserialized first
                 "HeaderNumbers" => {
                     let sled_table = sled_db.open_tree(table_name).unwrap();
 
@@ -85,69 +95,70 @@ impl MemoryDb {
                             memory_db.block_hashes.insert(value, key);
                         }
                     });
+
+                    // Commit canonical block hash and number
+                    memory_db.canonical_block_hash = canonical_block_hash;
+                    memory_db.canonical_block_num = canonical_block_num;
                 }
                 // <Address, Account>
+                // Loads `basic`
                 "PlainAccountState" => {
                     let sled_table = sled_db.open_tree(table_name).unwrap();
 
                     sled_table.iter().for_each(|item| {
                         if let Ok((key, value)) = item {
                             let key: Address = Address::new(key.as_ref().try_into().unwrap());
-                            let key: <reth_db::PlainAccountState as Table>::Key = key;
 
-                            // let value: reth_primitives_traits::Account =
-                            //     Account::decompress(&value).unwrap();
-                            // let value: <reth_db::PlainAccountState as Table>::Value = value;
+                            let value: reth_primitives_traits::Account =
+                                RethAccount::decompress(&value).unwrap();
+                            let value: <reth_db::PlainAccountState as Table>::Value = value;
 
-                            // println!("Key: {}, Value: {:?}", key, value);
-                            // let mut buf = Vec::new();
-                            // value.compress_to_buf(&mut buf);
-                            // assert_eq!(buf, value_og);
+                            let history = ValueHistory::new();
+                            history.insert(canonical_block_num, value);
+                            memory_db.basic.insert(key, history);
 
-                            // we cant store an uncompressed account for whatever reason so
-                            // enjoy decompression
-                            if sled_table.insert(key, value).is_err() {
-                                panic!("Failed to insert into sled");
-                            }
                         }
                     });
                 }
                 // <Address, StorageEntry, B256>
+                // Loads `storage`
+                // TODO: double check this?
                 "PlainStorageState" => {
-                    let sled_table = sled_db.open_tree(table_name)?;
+                    let sled_table = sled_db.open_tree(table_name).unwrap();
 
                     sled_table.iter().for_each(|item| {
                         if let Ok((key, value)) = item {
+                            // Get the address
                             let key: Address = Address::new(key.as_ref().try_into().unwrap());
-                            let key: <reth_db::PlainStorageState as Table>::Key = key;
 
-                            // let value: StorageEntry = StorageEntry::decompress(&value).unwrap();
-                            // println!("{:?}", value);
+                            // Get a a struct containing <storage slot key, value>
+                            let value: StorageEntry = StorageEntry::decompress(&value).unwrap();
+                            // We can always create a new value history safely because values
+                            // should only appear once.
+                            let history = ValueHistory::new();
 
-                            // let value: <reth_db::PlainStorageState as Table>::Value = value;
+                            // Multiple of the same key can however exist
+                            // We want to either create a new hashmap or add an entry to an existing one
+                            let storage = memory_db.storage.entry(key).or_default();
+                            storage
+                                .entry(value.key.into())
+                                .or_default()
+                                .insert(canonical_block_num, value.value);
 
-                            if sled_table.insert(key, &value).is_err() {
-                                panic!("Failed to insert into sled");
-                            }
                         }
                     });
                 }
                 // <Address, Bytecode>
                 "Bytecodes" => {
-                    let sled_table = sled_db.open_tree(table_name)?;
+                    let sled_table = sled_db.open_tree(table_name).unwrap();
 
                     sled_table.iter().for_each(|item| {
                         if let Ok((key, value)) = item {
                             let key: B256 = B256::new(key.as_ref().try_into().unwrap());
-                            let key: <reth_db::Bytecodes as Table>::Key = key;
 
                             let value: Vec<u8> = value.as_ref().into();
                             let value: Bytecode = Bytecode::decompress(&value).unwrap();
                             let value: <reth_db::Bytecodes as Table>::Value = value;
-
-                            if sled_table.insert(key, value.original_byte_slice()).is_err() {
-                                panic!("Failed to insert into sled");
-                            }
                         }
                     });
                 }
