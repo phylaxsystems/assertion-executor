@@ -7,10 +7,16 @@ edition = "2021"
 rayon = "1.10.0"
 revm = "12.1.0"
 serde = { version = "1.0.208", features = ["derive"] }
-sled = { version = "1.0.0-alpha.122" }
 thiserror = "1.0.63"
 tokio = { version = "1.39.2", features = ["macros", "rt-multi-thread", "sync"] }
 tracing = "0.1.40"
+
+# ETL deps
+mending = { git = "ssh://git@github.com/phylaxsystems/mending.git", rev = "0c28f98c6"}
+sled = { version = "1.0.0-alpha.122" }
+
+[net]
+git-fetch-with-cli = true
 
 [features]
 test = []

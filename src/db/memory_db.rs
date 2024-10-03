@@ -19,8 +19,18 @@ use std::collections::{
     VecDeque,
 };
 
+use sled::Db as SledDb;
+
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum MemoryDbError {
+    #[error("Failed to load MemoryDb from sled!")]
+    LoadFail,
+}
+
 #[derive(Debug, Clone, Default)]
-pub struct DB {
+pub struct MemoryDb {
     pub(super) storage: HashMap<Address, HashMap<U256, ValueHistory<U256>>>,
     pub(super) basic: HashMap<Address, ValueHistory<AccountInfo>>,
     pub(super) block_hashes: HashMap<u64, B256>,
@@ -33,7 +43,13 @@ pub struct DB {
     pub(super) block_changes: VecDeque<BlockChanges>,
 }
 
-impl DatabaseRef for DB {
+impl MemoryDb {
+    pub fn load_from_exported_sled(sled_db: &SledDb) -> Result<Self, MemoryDbError> {
+        unimplemented!()
+    }
+}
+
+impl DatabaseRef for MemoryDb {
     type Error = NotFoundError;
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         Ok(self
@@ -62,7 +78,7 @@ impl DatabaseRef for DB {
 
 //Replace with commit_block in trait PhDB trait
 //Will need to prune history and update sled
-impl DatabaseCommit for DB {
+impl DatabaseCommit for MemoryDb {
     fn commit(&mut self, changes: std::collections::HashMap<Address, Account>) {
         self.canonical_block_num += 1;
 
@@ -117,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_basic_ref() {
-        let mut db = DB::default();
+        let mut db = MemoryDb::default();
         let address = random_bytes().into();
         let code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()));
         let account_info = AccountInfo {
@@ -142,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_block_hash_ref() {
-        let mut db = DB::default();
+        let mut db = MemoryDb::default();
         let block_number = 999;
         let block_hash = random_bytes();
 
@@ -156,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_storage_ref() {
-        let mut db = DB::default();
+        let mut db = MemoryDb::default();
         let address = random_bytes().into();
         let index = U256::from(1);
         let value = U256::from(100);
@@ -196,7 +212,7 @@ mod tests {
     //Should error if the code hash is not found
     #[test]
     fn test_code_by_hash_ref() {
-        let mut db = DB::default();
+        let mut db = MemoryDb::default();
         let code_hash = random_bytes();
         let code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<96>()));
 
@@ -226,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_commit() {
-        let mut db = DB::default();
+        let mut db = MemoryDb::default();
         let address = random_bytes().into();
         let new_account_info = AccountInfo {
             nonce: 1,

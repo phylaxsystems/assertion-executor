@@ -2,7 +2,8 @@ use crate::{
     db::{
         DatabaseCommit,
         NotFoundError,
-        DB,
+        DatabaseRef,
+        MemoryDb,
     },
     primitives::{
         Account,
@@ -24,7 +25,7 @@ use std::{
 
 #[derive(Debug, Clone, Default)]
 pub struct SharedDB {
-    db: Arc<RwLock<DB>>,
+    db: Arc<RwLock<MemoryDb>>,
 }
 
 impl DatabaseRef for SharedDB {
