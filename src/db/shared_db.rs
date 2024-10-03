@@ -1,9 +1,9 @@
 use crate::{
     db::{
         DatabaseCommit,
-        NotFoundError,
         DatabaseRef,
         MemoryDb,
+        NotFoundError,
     },
     primitives::{
         Account,

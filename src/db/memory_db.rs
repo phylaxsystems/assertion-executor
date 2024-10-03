@@ -18,11 +18,12 @@ use std::collections::{
     HashMap,
     VecDeque,
 };
+use std::ptr::drop_in_place;
 
 use reth_primitives_traits::{
+    Account as RethAccount,
     Bytecode as RethBytecode,
     StorageEntry,
-    Account as RethAccount,
 };
 
 use reth_db::table::{
@@ -30,6 +31,7 @@ use reth_db::table::{
     Table,
 };
 
+use revm::primitives::FixedBytes;
 use sled::Db as SledDb;
 
 use thiserror::Error;
@@ -66,10 +68,22 @@ impl MemoryDb {
     fn load_tables_into_db<const LEAF_FANOUT: usize>(
         sled_db: &SledDb<LEAF_FANOUT>,
         mut memory_db: MemoryDb,
-        reth_tables: &[&str]
     ) -> Result<MemoryDb, MemoryDbError> {
-        let mut canonical_block_hash;
-        let mut canonical_block_num;
+        // Define which tables we're extracting
+        //
+        // *** !!! NOTE: THE ORDER OF THE TABELS MUST ABSOLUTELY NOT CHANGE !!! ***
+        // *** !!! THINGS WILL NOT WORK AS INTENDED IF YOU CHANGE THIS !!! ***
+        let reth_tables = &[
+            "HeaderNumbers",
+            "PlainAccountState",
+            "Bytecodes",
+            "PlainStorageState",
+        ];
+
+        let mut canonical_block_hash = Default::default();
+        let mut canonical_block_num = 0;
+        let mut address_keyed_contracts: HashMap<Address, (FixedBytes<32>, Bytecode)> =
+            Default::default();
 
         for table_name in reth_tables {
             match *table_name {
@@ -100,8 +114,36 @@ impl MemoryDb {
                     memory_db.canonical_block_hash = canonical_block_hash;
                     memory_db.canonical_block_num = canonical_block_num;
                 }
+                // <Address, Bytecode>
+                "Bytecodes" => {
+                    let sled_table = sled_db.open_tree(table_name).unwrap();
+
+                    sled_table.iter().for_each(|item| {
+                        if let Ok((key, value)) = item {
+                            let key: B256 = B256::new(key.as_ref().try_into().unwrap());
+                            let address: Address = Address::new(key.as_slice().try_into().unwrap());
+
+                            let value: Vec<u8> = value.as_ref().into();
+                            let value: RethBytecode = RethBytecode::decompress(&value).unwrap();
+
+                            // Now convert this to revm `Bytecode`
+                            // absolutely insane typing
+                            let bytecode: Bytecode =
+                                Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
+                                    .unwrap();
+                            let hash = value.0.hash_slow().as_slice().try_into().unwrap();
+
+                            // Insert into the temp address keyed contracts map
+                            address_keyed_contracts.insert(address, (hash, bytecode.clone()));
+
+                            // Insert into the memory_db
+                            memory_db.code_by_hash.insert(hash, bytecode);
+                        }
+                    });
+                }
                 // <Address, Account>
                 // Loads `basic`
+                // NEEDS `Bytecodes` to be completed before this/
                 "PlainAccountState" => {
                     let sled_table = sled_db.open_tree(table_name).unwrap();
 
@@ -113,15 +155,41 @@ impl MemoryDb {
                                 RethAccount::decompress(&value).unwrap();
                             let value: <reth_db::PlainAccountState as Table>::Value = value;
 
-                            let history = ValueHistory::new();
-                            history.insert(canonical_block_num, value);
-                            memory_db.basic.insert(key, history);
+                            // We have to convert `PlainAccountState` to `AccountInfo`
+                            // `AccountInfo` contains some additional data we need that is not
 
+                            // Get the code and code hash.
+                            // If not present code_hash is default and code is None
+                            let (code_hash, code) = match address_keyed_contracts.get(&key) {
+                                Some((hash, code)) => {
+                                    // Clone so we can remove from temp map
+                                    let hash = *hash;
+                                    let code = code.clone();
+
+                                    // Remove the entry from the temp map
+                                    address_keyed_contracts.remove(&key);
+
+                                    (hash, Some(code))
+                                }
+                                None => (B256::ZERO, None),
+                            };
+
+                            let acount_info: AccountInfo = AccountInfo {
+                                nonce: value.nonce,
+                                balance: value.balance,
+                                code_hash: code_hash,
+                                code: code,
+                            };
+
+                            let mut history = ValueHistory::new();
+                            history.insert(canonical_block_num, acount_info);
+                            memory_db.basic.insert(key, history);
                         }
                     });
                 }
                 // <Address, StorageEntry, B256>
                 // Loads `storage`
+                // NEEDS `HeaderNumbers` to be completed before this.
                 // TODO: double check this?
                 "PlainStorageState" => {
                     let sled_table = sled_db.open_tree(table_name).unwrap();
@@ -135,7 +203,7 @@ impl MemoryDb {
                             let value: StorageEntry = StorageEntry::decompress(&value).unwrap();
                             // We can always create a new value history safely because values
                             // should only appear once.
-                            let history = ValueHistory::new();
+                            let history: ValueHistory<U256> = ValueHistory::new();
 
                             // Multiple of the same key can however exist
                             // We want to either create a new hashmap or add an entry to an existing one
@@ -144,21 +212,6 @@ impl MemoryDb {
                                 .entry(value.key.into())
                                 .or_default()
                                 .insert(canonical_block_num, value.value);
-
-                        }
-                    });
-                }
-                // <Address, Bytecode>
-                "Bytecodes" => {
-                    let sled_table = sled_db.open_tree(table_name).unwrap();
-
-                    sled_table.iter().for_each(|item| {
-                        if let Ok((key, value)) = item {
-                            let key: B256 = B256::new(key.as_ref().try_into().unwrap());
-
-                            let value: Vec<u8> = value.as_ref().into();
-                            let value: Bytecode = Bytecode::decompress(&value).unwrap();
-                            let value: <reth_db::Bytecodes as Table>::Value = value;
                         }
                     });
                 }
@@ -174,19 +227,11 @@ impl MemoryDb {
     /// Opens a `sled` Db that has had exported and transformed data from `reth` MDBX with
     /// `mending::transform_reth_tables`.
     pub fn new_from_exported_sled<const LEAF_FANOUT: usize>(
-        sled_db: &SledDb<LEAF_FANOUT>
+        sled_db: &SledDb<LEAF_FANOUT>,
     ) -> Result<Self, MemoryDbError> {
         let memory_db = MemoryDb::default();
 
-        // Define which tables we're extracting
-        let reth_tables = &[
-            "HeaderNumbers",
-            "Bytecodes",
-            "PlainAccountState",
-            "PlainStorageState",
-        ];
-
-        Self::load_tables_into_db::<LEAF_FANOUT>(sled_db, memory_db, reth_tables)
+        Self::load_tables_into_db::<LEAF_FANOUT>(sled_db, memory_db)
     }
 }
 
