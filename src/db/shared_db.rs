@@ -28,6 +28,16 @@ pub struct SharedDB {
     db: Arc<RwLock<MemoryDb>>,
 }
 
+impl SharedDB {
+    /// Create new `SharedDB` from a `MemoryDb`.
+    // Note: depending on how large the MemoryDb this might nuke performance
+    pub fn new(memory_db: MemoryDb) -> Self {
+        Self {
+            db: Arc::new(RwLock::new(memory_db)),
+        }
+    }
+}
+
 impl DatabaseRef for SharedDB {
     type Error = NotFoundError;
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {

@@ -18,6 +18,7 @@ use std::collections::{
     HashMap,
     VecDeque,
 };
+use std::ops::FromResidual;
 
 use sled::Db as SledDb;
 
@@ -29,14 +30,21 @@ pub enum MemoryDbError {
     LoadFail,
 }
 
+/// Contains current and past state of an EVM chain.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryDb {
+    /// Maps addresses to storage slots and their history indexed by block.
     pub(super) storage: HashMap<Address, HashMap<U256, ValueHistory<U256>>>,
+    /// Maps addresses to their account info and indexes it by block.
     pub(super) basic: HashMap<Address, ValueHistory<AccountInfo>>,
+    /// Maps block numbers to block hashes.
     pub(super) block_hashes: HashMap<u64, B256>,
+    /// Maps bytecode hashes to bytecode.
     pub(super) code_by_hash: HashMap<B256, Bytecode>,
 
+    /// Hash of the head block.
     pub(super) canonical_block_hash: B256,
+    /// Block number of the head block.
     pub(super) canonical_block_num: u64,
 
     /// Block Changes for the blocks that have not been pruned.
@@ -44,8 +52,130 @@ pub struct MemoryDb {
 }
 
 impl MemoryDb {
-    pub fn load_from_exported_sled(sled_db: &SledDb) -> Result<Self, MemoryDbError> {
-        unimplemented!()
+
+    /// Iterates over all the KV pairs and loads them into the corresponding struct.
+    fn load_tables_into_db<const LEAF_FANOUT: usize>(
+        sled_db: &SledDb<LEAF_FANOUT>,
+        mut memory_db: MemoryDb,
+        reth_tables: &[&str]
+    ) -> Result<MemoryDb, MemoryDbError> {
+        let mut canonical_block_hash;
+        let mut canonical_block_num;
+
+        for table_name in reth_tables {
+            match *table_name {
+                // <Hash, Blocknumber>
+                // Loads `block_hashes`
+                "HeaderNumbers" => {
+                    let sled_table = sled_db.open_tree(table_name).unwrap();
+
+                    sled_table.iter().for_each(|item| {
+                        if let Ok((key, value)) = item {
+                            let key: B256 = B256::new(key.as_ref().try_into().unwrap());
+
+                            let value: &[u8] = value.as_ref();
+                            let value: u64 = u64::from_le_bytes(value.try_into().unwrap());
+
+                            // check if we have a higher block number
+                            if canonical_block_num < value {
+                                canonical_block_num = value;
+                                canonical_block_hash = key;
+                            }
+
+                            memory_db.block_hashes.insert(value, key);
+                        }
+                    });
+                }
+                // <Address, Account>
+                "PlainAccountState" => {
+                    let sled_table = sled_db.open_tree(table_name).unwrap();
+
+                    sled_table.iter().for_each(|item| {
+                        if let Ok((key, value)) = item {
+                            let key: Address = Address::new(key.as_ref().try_into().unwrap());
+                            let key: <reth_db::PlainAccountState as Table>::Key = key;
+
+                            // let value: reth_primitives_traits::Account =
+                            //     Account::decompress(&value).unwrap();
+                            // let value: <reth_db::PlainAccountState as Table>::Value = value;
+
+                            // println!("Key: {}, Value: {:?}", key, value);
+                            // let mut buf = Vec::new();
+                            // value.compress_to_buf(&mut buf);
+                            // assert_eq!(buf, value_og);
+
+                            // we cant store an uncompressed account for whatever reason so
+                            // enjoy decompression
+                            if sled_table.insert(key, value).is_err() {
+                                panic!("Failed to insert into sled");
+                            }
+                        }
+                    });
+                }
+                // <Address, StorageEntry, B256>
+                "PlainStorageState" => {
+                    let sled_table = sled_db.open_tree(table_name)?;
+
+                    sled_table.iter().for_each(|item| {
+                        if let Ok((key, value)) = item {
+                            let key: Address = Address::new(key.as_ref().try_into().unwrap());
+                            let key: <reth_db::PlainStorageState as Table>::Key = key;
+
+                            // let value: StorageEntry = StorageEntry::decompress(&value).unwrap();
+                            // println!("{:?}", value);
+
+                            // let value: <reth_db::PlainStorageState as Table>::Value = value;
+
+                            if sled_table.insert(key, &value).is_err() {
+                                panic!("Failed to insert into sled");
+                            }
+                        }
+                    });
+                }
+                // <Address, Bytecode>
+                "Bytecodes" => {
+                    let sled_table = sled_db.open_tree(table_name)?;
+
+                    sled_table.iter().for_each(|item| {
+                        if let Ok((key, value)) = item {
+                            let key: B256 = B256::new(key.as_ref().try_into().unwrap());
+                            let key: <reth_db::Bytecodes as Table>::Key = key;
+
+                            let value: Vec<u8> = value.as_ref().into();
+                            let value: Bytecode = Bytecode::decompress(&value).unwrap();
+                            let value: <reth_db::Bytecodes as Table>::Value = value;
+
+                            if sled_table.insert(key, value.original_byte_slice()).is_err() {
+                                panic!("Failed to insert into sled");
+                            }
+                        }
+                    });
+                }
+                _ => {
+                    return Err(MemoryDbError::LoadFail);
+                }
+            }
+        }
+
+        Ok(memory_db)
+    }
+
+    /// Opens a `sled` Db that has had exported and transformed data from `reth` MDBX with
+    /// `mending::transform_reth_tables`.
+    pub fn new_from_exported_sled<const LEAF_FANOUT: usize>(
+        sled_db: &SledDb<LEAF_FANOUT>
+    ) -> Result<Self, MemoryDbError> {
+        let memory_db = MemoryDb::default();
+
+        // Define which tables we're extracting
+        let reth_tables = &[
+            "HeaderNumbers",
+            "Bytecodes",
+            "PlainAccountState",
+            "PlainStorageState",
+        ];
+
+        Self::load_tables_into_db::<LEAF_FANOUT>(sled_db, memory_db, reth_tables)
     }
 }
 
