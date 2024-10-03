@@ -79,8 +79,13 @@ impl MemoryDb {
             "PlainStorageState",
         ];
 
+        // For populating the `canonical_block_hash` field
         let mut canonical_block_hash = Default::default();
+        // For populating the `canonical_block_num` field
         let mut canonical_block_num = 0;
+        // Because we do not have the full context of accounts in `PlainAccountState` we
+        // need to temporarily store contract data in a map keyed by address.
+        // TODO: potential future optimization to get rid of the `code_by_hash` field.
         let mut address_keyed_contracts: HashMap<Address, (FixedBytes<32>, Bytecode)> =
             Default::default();
 
