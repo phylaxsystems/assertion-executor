@@ -119,6 +119,7 @@ impl MemoryDb {
                     memory_db.canonical_block_num = canonical_block_num;
                 }
                 // <Address, Bytecode>
+                // Loads `code_by_hash` and supplements `basic`
                 "Bytecodes" => {
                     let sled_table = sled_db.open_tree(table_name).unwrap();
 
