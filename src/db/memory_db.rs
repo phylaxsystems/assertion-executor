@@ -35,6 +35,16 @@ use sled::Db as SledDb;
 
 use thiserror::Error;
 
+use serde::{Serialize, Deserialize};
+use bincode;
+
+/// Struct for serializing/deserializng PST table values.
+#[derive(Serialize, Deserialize, Debug)]
+struct StorageMap(HashMap<Vec<u8>, Vec<u8>>);
+
+/// Type alias for the `MemoryDb` EVM storage struct.
+type EvmStorage = HashMap<Address, HashMap<U256, ValueHistory<U256>>>;
+
 #[derive(Error, Debug)]
 pub enum MemoryDbError {
     #[error("Failed to load MemoryDb from sled!")]
@@ -45,7 +55,7 @@ pub enum MemoryDbError {
 #[derive(Debug, Clone, Default)]
 pub struct MemoryDb {
     /// Maps addresses to storage slots and their history indexed by block.
-    pub(super) storage: HashMap<Address, HashMap<U256, ValueHistory<U256>>>,
+    pub(super) storage: EvmStorage,
     /// Maps addresses to their account info and indexes it by block.
     pub(super) basic: HashMap<Address, ValueHistory<AccountInfo>>,
     /// Maps block numbers to block hashes.
@@ -192,7 +202,7 @@ impl MemoryDb {
                         }
                     });
                 }
-                // <Address, StorageEntry, B256>
+                // <Address, Hashmap<slot, value>>
                 // Loads `storage`
                 // NEEDS `HeaderNumbers` to be completed before this.
                 // TODO: double check this?
@@ -204,19 +214,27 @@ impl MemoryDb {
                             // Get the address
                             let key: Address = Address::new(key.as_ref().try_into().unwrap());
 
-                            // Get a a struct containing <storage slot key, value>
-                            let value: StorageEntry = StorageEntry::decompress(&value).unwrap();
-                            // We can always create a new value history safely because values
-                            // should only appear once.
-                            let history: ValueHistory<U256> = ValueHistory::new();
+                            // Deserialize the StorageMap
+                            let storage_map: StorageMap = bincode::deserialize(&value).unwrap();
 
-                            // Multiple of the same key can however exist
-                            // We want to either create a new hashmap or add an entry to an existing one
-                            let storage = memory_db.storage.entry(key).or_default();
-                            storage
-                                .entry(value.key.into())
-                                .or_default()
-                                .insert(canonical_block_num, value.value);
+                            // Create a new HashMap for this address in the storage
+                            let address_storage = memory_db.storage.entry(key).or_default();
+
+                            // Iterate over the storage slots and values
+                            for (slot_bytes, value_bytes) in storage_map.0 {
+                                let slot: FixedBytes<32> = slot_bytes.as_slice().try_into().unwrap();
+                                let slot: U256 = slot.into();
+
+                                let value: FixedBytes<32> = value_bytes.as_slice().try_into().unwrap();
+                                let value: U256 = value.into();
+
+                                // Create a new ValueHistory for this slot
+                                let mut history = ValueHistory::new();
+                                history.insert(canonical_block_num, value);
+
+                                // Insert the history into the address storage
+                                address_storage.insert(slot, history);
+                            }
                         }
                     });
                 }
