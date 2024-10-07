@@ -7,10 +7,11 @@ use crate::{
     tracer::CallTracer,
 };
 
+use std::collections::HashMap;
 use tracing::debug;
 
 #[derive(Default)]
-pub struct AssertionStoreMap(std::collections::HashMap<Address, Vec<AssertionContract>>);
+pub struct AssertionStoreMap(HashMap<Address, Vec<AssertionContract>>);
 
 impl AssertionStoreMap {
     pub fn match_traces(&self, traces: &CallTracer) -> Vec<AssertionContract> {
@@ -43,6 +44,7 @@ impl AssertionStoreMap {
 
 #[test]
 fn test_assertion_store_map() {
+    use std::collections::HashSet;
     let mut store = AssertionStoreMap::default();
 
     let address = Address::new([1u8; 20]);
@@ -51,9 +53,7 @@ fn test_assertion_store_map() {
     store.insert(address, vec![assertion.clone()]);
 
     let traces = CallTracer {
-        calls: std::collections::HashSet::from_iter(
-            vec![address, Address::new([2u8; 20])].into_iter(),
-        ),
+        calls: HashSet::from_iter(vec![address, Address::new([2u8; 20])]),
     };
 
     let matched_assertions = store.match_traces(&traces);

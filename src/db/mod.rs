@@ -1,8 +1,10 @@
-pub use shared_db::SharedDB;
+pub mod fs;
 
 mod memory_db;
-mod shared_db;
 pub use memory_db::MemoryDb;
+
+mod shared_db;
+pub use shared_db::SharedDB;
 
 mod error;
 pub use error::NotFoundError;
@@ -13,6 +15,6 @@ pub use revm::{
     DatabaseRef,
 };
 
-pub trait PhDB: DatabaseCommit + DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}
+pub trait PhDB: DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}
 
-impl<T> PhDB for T where T: DatabaseCommit + DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}
+impl<T> PhDB for T where T: DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}

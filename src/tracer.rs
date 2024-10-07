@@ -117,7 +117,7 @@ mod test {
 
         evm.transact().expect("Transaction to work");
 
-        let expected = HashSet::from_iter(vec![callee; 33].into_iter());
+        let expected = HashSet::from_iter(vec![callee; 33]);
         assert_eq!(evm.context.external.calls, expected);
     }
 }

@@ -1,20 +1,29 @@
-use crate::db::{
-    DatabaseCommit,
-    DatabaseRef,
-    NotFoundError,
-};
-use crate::primitives::{
-    Account,
-    AccountInfo,
-    Address,
-    BlockChanges,
-    Bytecode,
-    ValueHistory,
-    B256,
-    U256,
+use crate::{
+    db::{
+        fs::fs_db::{
+            AccountValueHistory,
+            FsCommitBlockParams,
+            FsHandleReorgParams,
+            StorageValueHistory,
+        },
+        DatabaseRef,
+        NotFoundError,
+    },
+    primitives::{
+        AccountInfo,
+        Address,
+        BlockChanges,
+        Bytecode,
+        EvmStorageSlot,
+        TouchedKeys,
+        ValueHistory,
+        B256,
+        U256,
+    },
 };
 
 use std::collections::{
+    BTreeMap,
     HashMap,
     VecDeque,
 };
@@ -65,31 +74,29 @@ pub enum MemoryDbError {
 
 /// Contains current and past state of an EVM chain.
 #[derive(Debug, Clone, Default)]
-pub struct MemoryDb {
+pub struct MemoryDb<const BLOCKS_TO_RETAIN: usize> {
     /// Maps addresses to storage slots and their history indexed by block.
     pub(super) storage: EvmStorage,
     /// Maps addresses to their account info and indexes it by block.
     pub(super) basic: HashMap<Address, ValueHistory<AccountInfo>>,
     /// Maps block numbers to block hashes.
-    pub(super) block_hashes: HashMap<u64, B256>,
+    pub(super) block_hashes: BTreeMap<u64, B256>,
     /// Maps bytecode hashes to bytecode.
     pub(super) code_by_hash: HashMap<B256, Bytecode>,
-
     /// Hash of the head block.
     pub(super) canonical_block_hash: B256,
     /// Block number of the head block.
     pub(super) canonical_block_num: u64,
-
     /// Block Changes for the blocks that have not been pruned.
     pub(super) block_changes: VecDeque<BlockChanges>,
 }
 
-impl MemoryDb {
+impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
     /// Iterates over all the KV pairs and loads them into the corresponding struct.
     fn load_tables_into_db<const LEAF_FANOUT: usize>(
+        &mut self,
         sled_db: &SledDb<LEAF_FANOUT>,
-        mut memory_db: MemoryDb,
-    ) -> Result<MemoryDb, MemoryDbError> {
+    ) -> Result<(), MemoryDbError> {
         // Define which tables we're extracting
         //
         // Note: Do not change the order of this array
@@ -111,48 +118,38 @@ impl MemoryDb {
                 // Loads `block_hashes` as well as the `canonical_block_hash` and `canonical_block_num`
                 // NOTE: this table must be deserialized first
                 "HeaderNumbers" => {
-                    let result = Self::load_header_numbers(sled_db, &mut memory_db, table_name)?;
+                    let result = self.load_header_numbers(sled_db, table_name)?;
                     canonical_block_hash = result.0;
                     canonical_block_num = result.1;
                 }
                 // <Code hash, Bytecode>
                 // Loads `code_by_hash` and supplements `basic`
-                "Bytecodes" => Self::load_bytecodes(sled_db, &mut memory_db, table_name)?,
+                "Bytecodes" => self.load_bytecodes(sled_db, table_name)?,
                 // <Address, Account>
                 // Loads `basic`
                 // NEEDS `Bytecodes` to be completed before this
                 "PlainAccountState" => {
-                    Self::load_plain_account_state(
-                        sled_db,
-                        &mut memory_db,
-                        table_name,
-                        canonical_block_num,
-                    )?
+                    self.load_plain_account_state(sled_db, table_name, canonical_block_num)?
                 }
                 // <Address, Hashmap<slot, value>>
                 // Loads `storage`
                 // NEEDS `HeaderNumbers` to be completed before this.
                 "PlainStorageState" => {
-                    Self::load_plain_storage_state(
-                        sled_db,
-                        &mut memory_db,
-                        table_name,
-                        canonical_block_num,
-                    )?
+                    self.load_plain_storage_state(sled_db, table_name, canonical_block_num)?
                 }
                 _ => return Err(MemoryDbError::LoadFail),
             }
         }
 
-        memory_db.canonical_block_hash = canonical_block_hash;
-        memory_db.canonical_block_num = canonical_block_num;
+        self.canonical_block_hash = canonical_block_hash;
+        self.canonical_block_num = canonical_block_num;
 
-        Ok(memory_db)
+        Ok(())
     }
 
     fn load_header_numbers<const LEAF_FANOUT: usize>(
+        &mut self,
         sled_db: &SledDb<LEAF_FANOUT>,
-        memory_db: &mut MemoryDb,
         table_name: &str,
     ) -> Result<(B256, u64), MemoryDbError> {
         let sled_table = sled_db
@@ -174,7 +171,7 @@ impl MemoryDb {
                     canonical_block_hash = key;
                 }
 
-                memory_db.block_hashes.insert(value, key);
+                self.block_hashes.insert(value, key);
             }
         }
 
@@ -182,8 +179,8 @@ impl MemoryDb {
     }
 
     fn load_bytecodes<const LEAF_FANOUT: usize>(
+        &mut self,
         sled_db: &SledDb<LEAF_FANOUT>,
-        memory_db: &mut MemoryDb,
         table_name: &str,
     ) -> Result<(), MemoryDbError> {
         let sled_table = sled_db
@@ -204,7 +201,7 @@ impl MemoryDb {
                         .map_err(|_| MemoryDbError::EofDecoderError)?;
 
                 // Insert into the memory_db
-                memory_db.code_by_hash.insert(key, bytecode);
+                self.code_by_hash.insert(key, bytecode);
             }
         }
 
@@ -212,8 +209,8 @@ impl MemoryDb {
     }
 
     fn load_plain_account_state<const LEAF_FANOUT: usize>(
+        &mut self,
         sled_db: &SledDb<LEAF_FANOUT>,
-        memory_db: &mut MemoryDb,
         table_name: &str,
         canonical_block_num: u64,
     ) -> Result<(), MemoryDbError> {
@@ -232,7 +229,7 @@ impl MemoryDb {
                 // `AccountInfo` contains some additional data we need that is not
 
                 // Get the code by addressing the `code_by_hash` field of `MemoryDb`.
-                let (code_hash, code) = Self::get_code_info(memory_db, &value);
+                let (code_hash, code) = self.get_code_info(&value);
 
                 let account_info: AccountInfo = AccountInfo {
                     nonce: value.nonce,
@@ -243,17 +240,14 @@ impl MemoryDb {
 
                 let mut history = ValueHistory::new();
                 history.insert(canonical_block_num, account_info);
-                memory_db.basic.insert(key, history);
+                self.basic.insert(key, history);
             }
         }
 
         Ok(())
     }
 
-    fn get_code_info(
-        memory_db: &MemoryDb,
-        value: &RethAccount,
-    ) -> (FixedBytes<32>, Option<Bytecode>) {
+    fn get_code_info(&self, value: &RethAccount) -> (FixedBytes<32>, Option<Bytecode>) {
         let mut code_hash: FixedBytes<32> = (&[0; 32]).into();
         let mut code: Option<Bytecode> = None;
 
@@ -267,7 +261,7 @@ impl MemoryDb {
             code_hash = bytecode_hash;
 
             // If we have the bytecode hash, we can get the bytecode
-            if let Some(bytecode) = memory_db.code_by_hash.get(&bytecode_hash) {
+            if let Some(bytecode) = self.code_by_hash.get(&bytecode_hash) {
                 code = Some(bytecode.clone());
             }
         }
@@ -276,8 +270,8 @@ impl MemoryDb {
     }
 
     fn load_plain_storage_state<const LEAF_FANOUT: usize>(
+        &mut self,
         sled_db: &SledDb<LEAF_FANOUT>,
-        memory_db: &mut MemoryDb,
         table_name: &str,
         canonical_block_num: u64,
     ) -> Result<(), MemoryDbError> {
@@ -294,7 +288,7 @@ impl MemoryDb {
                 let storage_map: StorageMap = bincode::deserialize(&value)?;
 
                 // Create a new HashMap for this address in the storage
-                let address_storage = memory_db.storage.entry(key).or_default();
+                let address_storage = self.storage.entry(key).or_default();
 
                 // Iterate over the storage slots and values
                 for (slot_bytes, value_bytes) in storage_map.0 {
@@ -322,21 +316,189 @@ impl MemoryDb {
     pub fn new_from_exported_sled<const LEAF_FANOUT: usize>(
         sled_db: &SledDb<LEAF_FANOUT>,
     ) -> Result<Self, MemoryDbError> {
-        let memory_db = MemoryDb::default();
-        Self::load_tables_into_db::<LEAF_FANOUT>(sled_db, memory_db)
+        let mut memory_db = MemoryDb::default();
+        memory_db.load_tables_into_db::<LEAF_FANOUT>(sled_db)?;
+        Ok(memory_db)
     }
 
     /// Opens a `sled` Db that has had exported and transformed data from `reth` MDBX with
     /// `mending::transform_reth_tables` and loads it into itself.
     pub fn load_into_self(&mut self, sled_db: &SledDb) -> Result<(), MemoryDbError> {
-        let memory_db = MemoryDb::default();
-        let loaded_db = Self::load_tables_into_db(sled_db, memory_db)?;
-        *self = loaded_db;
+        self.load_tables_into_db(sled_db)?;
         Ok(())
     }
 }
 
-impl DatabaseRef for MemoryDb {
+impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
+    ///Handles reorgs.
+    ///This function will take the new head block hash and reorg the db to that block.
+    ///Reorging will prune -
+    ///value histories of accounts and storage slots that have changed
+    ///Block hashes for blocks that are greater than the block number of the reorged block
+    ///
+    ///This function will remove all block changes from the block number of the reorged block
+    ///Returns the FsHandleReorgParams which contains the values needed to update the
+    ///[`crate::db::fs::FsDb`]
+    pub fn handle_reorg(&mut self, block_hash: B256) -> Option<FsHandleReorgParams> {
+        let (index, block_num) = if let Some((index, BlockChanges { block_num, .. })) =
+            &self.block_changes.iter().enumerate().rev().find(
+                |(
+                    _,
+                    BlockChanges {
+                        block_hash: block_hash_i,
+                        ..
+                    },
+                )| block_hash.eq(block_hash_i),
+            ) {
+            (*index, *block_num)
+        } else {
+            //TODO: block hash not found, possibly a block that the executor has not seen yet or
+            //has already pruned.
+            //Perhaps we request the block from the rpc and then reorg the db
+            return None;
+        };
+
+        let block_numbers_to_remove = self
+            .block_changes
+            .range(index..)
+            .map(|block_change| block_change.block_num)
+            .collect();
+
+        let removed_block_changes = self.block_changes.split_off(index - 1);
+        let touched_keys = removed_block_changes.iter().fold(
+            TouchedKeys::default(),
+            |mut touched_keys, block_change| {
+                touched_keys.extend(block_change.touched_keys());
+                touched_keys
+            },
+        );
+
+        self.prune_from(&touched_keys, block_num);
+        self.set_canonical_block(block_num, block_hash);
+        let (account_value_histories, storage_value_histories) =
+            self.get_touched_val_histories(&touched_keys);
+
+        Some(FsHandleReorgParams {
+            block_numbers_to_remove,
+            account_value_histories,
+            storage_value_histories,
+        })
+    }
+
+    pub fn commit_block(&mut self, block_changes: BlockChanges) -> FsCommitBlockParams {
+        let mut block_changes = block_changes;
+
+        let mut code_hashes_to_insert = Vec::new();
+        for (address, account) in block_changes.state_changes.iter_mut() {
+            if account.is_selfdestructed() {
+                self.basic.remove(address);
+                if let Some(storage_history) = self.storage.get_mut(address) {
+                    for (slot, val_history) in storage_history.iter_mut() {
+                        account.storage.insert(
+                            *slot,
+                            EvmStorageSlot {
+                                present_value: U256::ZERO,
+                                original_value: *val_history.get_latest().unwrap_or(&U256::ZERO),
+                                is_cold: false,
+                            },
+                        );
+                        val_history.insert(self.canonical_block_num, U256::ZERO);
+                    }
+                }
+                continue;
+            }
+
+            if let Some(ref code) = account.info.code {
+                self.code_by_hash
+                    .insert(account.info.code_hash, code.clone());
+                code_hashes_to_insert.push((account.info.code_hash, code.clone()));
+
+                let contract_storage = self.storage.entry(*address).or_default();
+                for (slot, evm_storage_slot) in account.storage.clone() {
+                    contract_storage
+                        .entry(slot)
+                        .or_default()
+                        .insert(self.canonical_block_num, evm_storage_slot.present_value());
+                }
+            }
+
+            self.basic
+                .entry(*address)
+                .or_default()
+                .insert(self.canonical_block_num, account.info.clone());
+        }
+
+        self.set_canonical_block(block_changes.block_num, block_changes.block_hash);
+        self.block_changes.push_back(block_changes.clone());
+
+        //TODO: Remove the oldest block changes if the length of block changes is greater than 256
+        //block_changes.block_num.checked_sub(BLOCKS_TO_RETAIN as u64);
+
+        let (account_value_histories, storage_value_histories) =
+            self.get_touched_val_histories(&block_changes.touched_keys());
+
+        FsCommitBlockParams {
+            block_changes,
+            code_hashes_to_insert,
+            account_value_histories,
+            storage_value_histories,
+        }
+    }
+
+    ///Prune the database from the block number of the reorged block to the current block number.
+    ///This function will remove all value history entries of accounts and storage slots that have
+    ///changed, and block hashes for blocks that are greater than the block number of the reorged
+    fn prune_from(&mut self, touched_keys: &TouchedKeys, block_num: u64) {
+        for key in &touched_keys.basic {
+            self.basic
+                .get_mut(key)
+                .map(|info| info.prune_from(block_num));
+        }
+        for key in &touched_keys.storage {
+            self.storage
+                .get_mut(&key.address)
+                .and_then(|s| s.get_mut(&key.slot))
+                .map(|v| v.prune_from(block_num));
+        }
+
+        self.block_hashes.split_off(&(block_num + 1));
+    }
+
+    ///Set the canonical block number and hash
+    fn set_canonical_block(&mut self, block_num: u64, block_hash: B256) {
+        self.canonical_block_num = block_num;
+        self.canonical_block_hash = block_hash;
+    }
+
+    fn get_touched_val_histories(
+        &self,
+        touched_keys: &TouchedKeys,
+    ) -> (Vec<AccountValueHistory>, Vec<StorageValueHistory>) {
+        let mut touched_val_histories_basic = Vec::new();
+        for address in &touched_keys.basic {
+            if let Some(val_history) = self.basic.get(address) {
+                touched_val_histories_basic.push(AccountValueHistory {
+                    address: *address,
+                    value_history: val_history.clone(),
+                });
+            }
+        }
+        let mut touched_val_histories_storage = Vec::new();
+        for key in &touched_keys.storage {
+            if let Some(storage) = self.storage.get(&key.address) {
+                if let Some(val_history) = storage.get(&key.slot) {
+                    touched_val_histories_storage.push(StorageValueHistory {
+                        key: key.clone(),
+                        value_history: val_history.clone(),
+                    });
+                }
+            }
+        }
+        (touched_val_histories_basic, touched_val_histories_storage)
+    }
+}
+
+impl<const BLOCKS_TO_RETAIN: usize> DatabaseRef for MemoryDb<BLOCKS_TO_RETAIN> {
     type Error = NotFoundError;
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         Ok(self
@@ -348,11 +510,11 @@ impl DatabaseRef for MemoryDb {
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
         self.block_hashes.get(&number).cloned().ok_or(NotFoundError)
     }
-    fn storage_ref(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    fn storage_ref(&self, address: Address, slot: U256) -> Result<U256, Self::Error> {
         Ok(*self
             .storage
             .get(&address)
-            .and_then(|s| s.get(&index).map(|v| v.get_latest().unwrap_or(&U256::ZERO)))
+            .and_then(|s| s.get(&slot).map(|v| v.get_latest().unwrap_or(&U256::ZERO)))
             .unwrap_or(&U256::ZERO))
     }
     fn code_by_hash_ref(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -363,270 +525,542 @@ impl DatabaseRef for MemoryDb {
     }
 }
 
-// Replace with commit_block in trait PhDB trait
-// Will need to prune history and update sled
-impl DatabaseCommit for MemoryDb {
-    fn commit(&mut self, changes: std::collections::HashMap<Address, Account>) {
-        self.canonical_block_num += 1;
-
-        for (address, account) in &changes {
-            if account.is_selfdestructed() {
-                self.basic.remove(address);
-                self.storage.remove(address);
-                continue;
-            }
-
-            if let Some(ref code) = account.info.code {
-                self.code_by_hash
-                    .insert(account.info.code_hash, code.clone());
-
-                let contract_storage = self.storage.entry(*address).or_default();
-                for (index, slot) in account.storage.clone() {
-                    contract_storage
-                        .entry(index)
-                        .or_default()
-                        .insert(self.canonical_block_num, slot.present_value());
-                }
-            }
-            self.basic
-                .entry(*address)
-                .or_default()
-                .insert(self.canonical_block_num, account.info.clone());
-        }
-        self.block_changes.push_back(BlockChanges {
-            block_num: self.canonical_block_num,
-            block_hash: self.canonical_block_hash,
-            state_changes: changes,
-        });
-    }
-}
-
 #[cfg(test)]
-mod memory_db_insert_tests {
+mod test {
+
     use super::*;
-    use alloy::primitives::{
-        B256,
-        U256,
-    };
-    use rand::{
-        thread_rng,
-        Rng,
-    };
-    use reth_db::table::Compress;
-    use reth_primitives_traits::{
-        Account as RethAccount,
-        Bytecode as RethBytecode,
-        StorageEntry,
+    use crate::{
+        primitives::{
+            Account,
+            AccountStatus,
+            Address,
+            Bytes,
+        },
+        test_utils::random_bytes,
     };
     use std::collections::HashMap;
 
-    fn create_mock_sled_db() -> sled::Db {
-        let temp_dir = tempfile::tempdir().unwrap();
-        sled::Config::new().path(temp_dir).open().unwrap()
-    }
-
-    fn random_b256() -> B256 {
-        let mut rng = thread_rng();
-        let mut bytes = [0u8; 32];
-        rng.fill(&mut bytes);
-        B256::from(bytes)
-    }
-
-    fn random_address() -> Address {
-        let mut rng = thread_rng();
-        let mut bytes = [0u8; 20];
-        rng.fill(&mut bytes);
-        Address::from(bytes)
-    }
-
-    #[test]
-    fn test_insert_header_numbers() -> Result<(), Box<dyn std::error::Error>> {
-        let sled_db = create_mock_sled_db();
-        let header_numbers = sled_db.open_tree("HeaderNumbers")?;
-
-        let block_hash1 = random_b256();
-        let block_number1 = 1u64;
-        let block_hash2 = random_b256();
-        let block_number2 = 2u64;
-
-        header_numbers.insert(block_hash1.as_slice(), &block_number1.to_le_bytes())?;
-        header_numbers.insert(block_hash2.as_slice(), &block_number2.to_le_bytes())?;
-
-        let memory_db = MemoryDb::new_from_exported_sled(&sled_db)?;
-
-        assert_eq!(
-            memory_db.block_hashes.get(&block_number1).unwrap(),
-            block_hash1.as_slice()
-        );
-        assert_eq!(
-            memory_db.block_hashes.get(&block_number2).unwrap(),
-            block_hash2.as_slice()
-        );
-        assert_eq!(memory_db.canonical_block_hash, *block_hash2);
-        assert_eq!(memory_db.canonical_block_num, block_number2);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_insert_bytecodes() -> Result<(), Box<dyn std::error::Error>> {
-        let sled_db = create_mock_sled_db();
-        let bytecodes = sled_db.open_tree("Bytecodes")?;
-
-        let code_hash = random_b256();
-        let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
-        bytecodes.insert(code_hash.as_slice(), bytecode.clone().compress())?;
-
-        let memory_db = MemoryDb::new_from_exported_sled(&sled_db)?;
-
-        assert!(memory_db
-            .code_by_hash
-            .contains_key::<FixedBytes<32>>(&code_hash.as_slice().try_into()?));
-
-        assert_eq!(
-            memory_db
-                .code_by_hash
-                .get::<FixedBytes<32>>(&code_hash.as_slice().try_into()?)
-                .unwrap()
-                .original_byte_slice(),
-            bytecode.0.bytecode()
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_insert_plain_account_state() -> Result<(), Box<dyn std::error::Error>> {
-        let sled_db = create_mock_sled_db();
-        let plain_account_state = sled_db.open_tree("PlainAccountState")?;
-        let bytecodes = sled_db.open_tree("Bytecodes")?;
-        let header_numbers = sled_db.open_tree("HeaderNumbers")?;
-
-        let address = random_address();
-        let account = RethAccount {
-            nonce: 1,
-            balance: U256::from(100),
-            bytecode_hash: Some(random_b256()),
+    #[cfg(test)]
+    mod memory_db_insert_tests {
+        use super::*;
+        use alloy::primitives::{
+            B256,
+            U256,
         };
-        plain_account_state.insert(address.as_slice(), account.compress())?;
-
-        // Insert a dummy block number to set the canonical block
-        let block_hash = random_b256();
-        let block_number = 1u64;
-        header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
-
-        // Insert corresponding bytecode if account has bytecode_hash
-        if let Some(bytecode_hash) = account.bytecode_hash {
-            let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
-            bytecodes.insert(bytecode_hash.as_slice(), bytecode.compress())?;
-        }
-
-        let memory_db = MemoryDb::new_from_exported_sled(&sled_db)?;
-
-        assert!(memory_db
-            .basic
-            .contains_key::<Address>(&Address::from_slice(address.as_slice())));
-
-        let stored_account = memory_db
-            .basic
-            .get(&Address::from_slice(address.as_slice()))
-            .unwrap()
-            .get_latest()
-            .unwrap();
-        assert_eq!(stored_account.nonce, account.nonce);
-        assert_eq!(stored_account.balance, account.balance);
-        assert_eq!(
-            stored_account.code_hash,
-            *account.bytecode_hash.unwrap_or_default()
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_insert_plain_storage_state() -> Result<(), Box<dyn std::error::Error>> {
-        let sled_db = create_mock_sled_db();
-        let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
-        let header_numbers = sled_db.open_tree("HeaderNumbers")?;
-
-        let address = random_address();
-        let storage_key = random_b256();
-        let storage_value = U256::from(42);
-        let _storage_entry = StorageEntry {
-            key: storage_key,
-            value: storage_value,
+        use rand::{
+            thread_rng,
+            Rng,
+        };
+        use reth_db::table::Compress;
+        use reth_primitives_traits::{
+            Account as RethAccount,
+            Bytecode as RethBytecode,
+            StorageEntry,
         };
 
-        let mut storage_map = HashMap::new();
-        storage_map.insert(
-            storage_key.to_vec(),
-            storage_value.to_be_bytes::<32>().to_vec(),
-        );
-        let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
-        plain_storage_state.insert(address.as_slice(), serialized_map)?;
-
-        // Insert a dummy block number to set the canonical block
-        let block_hash = random_b256();
-        let block_number = 1u64;
-        header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
-
-        let memory_db = MemoryDb::new_from_exported_sled(&sled_db)?;
-
-        assert!(memory_db.storage.contains_key::<Address>(&address.into()));
-
-        let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
-        assert!(stored_storage.contains_key(&storage_key.into()));
-        assert_eq!(
-            stored_storage
-                .get(&storage_key.into())
-                .unwrap()
-                .get_latest(),
-            Some(&storage_value)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_insert_multiple_storage_entries() -> Result<(), Box<dyn std::error::Error>> {
-        let sled_db = create_mock_sled_db();
-        let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
-        let header_numbers = sled_db.open_tree("HeaderNumbers")?;
-
-        let address = random_address();
-        let storage_entries = vec![
-            (random_b256(), U256::from(42)),
-            (random_b256(), U256::from(100)),
-            (random_b256(), U256::from(200)),
-        ];
-
-        let mut storage_map = HashMap::new();
-        for (key, value) in &storage_entries {
-            storage_map.insert(key.to_vec(), value.to_be_bytes::<32>().to_vec());
+        fn create_mock_sled_db() -> sled::Db {
+            let temp_dir = tempfile::tempdir().unwrap();
+            sled::Config::new().path(temp_dir).open().unwrap()
         }
-        let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
-        plain_storage_state.insert(address.as_slice(), serialized_map)?;
 
-        // Insert a dummy block number to set the canonical block
-        let block_hash = random_b256();
-        let block_number = 1u64;
-        header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+        fn random_b256() -> B256 {
+            let mut rng = thread_rng();
+            let mut bytes = [0u8; 32];
+            rng.fill(&mut bytes);
+            B256::from(bytes)
+        }
 
-        let memory_db = MemoryDb::new_from_exported_sled(&sled_db)?;
+        fn random_address() -> Address {
+            let mut rng = thread_rng();
+            let mut bytes = [0u8; 20];
+            rng.fill(&mut bytes);
+            Address::from(bytes)
+        }
 
-        assert!(memory_db.storage.contains_key::<Address>(&address.into()));
-        let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
-        assert_eq!(stored_storage.len(), storage_entries.len());
+        #[test]
+        fn test_insert_header_numbers() -> Result<(), Box<dyn std::error::Error>> {
+            let sled_db = create_mock_sled_db();
+            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
 
-        for (key, value) in storage_entries {
-            assert!(stored_storage.contains_key(&key.into()));
+            let block_hash1 = random_b256();
+            let block_number1 = 1u64;
+            let block_hash2 = random_b256();
+            let block_number2 = 2u64;
+
+            header_numbers.insert(block_hash1.as_slice(), &block_number1.to_le_bytes())?;
+            header_numbers.insert(block_hash2.as_slice(), &block_number2.to_le_bytes())?;
+
+            let memory_db = MemoryDb::<5>::new_from_exported_sled(&sled_db)?;
+
             assert_eq!(
-                stored_storage.get(&key.into()).unwrap().get_latest(),
-                Some(&value)
+                memory_db.block_hashes.get(&block_number1).unwrap(),
+                block_hash1.as_slice()
             );
+            assert_eq!(
+                memory_db.block_hashes.get(&block_number2).unwrap(),
+                block_hash2.as_slice()
+            );
+            assert_eq!(memory_db.canonical_block_hash, *block_hash2);
+            assert_eq!(memory_db.canonical_block_num, block_number2);
+
+            Ok(())
         }
 
-        Ok(())
+        #[test]
+        fn test_insert_bytecodes() -> Result<(), Box<dyn std::error::Error>> {
+            let sled_db = create_mock_sled_db();
+            let bytecodes = sled_db.open_tree("Bytecodes")?;
+
+            let code_hash = random_b256();
+            let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
+            bytecodes.insert(code_hash.as_slice(), bytecode.clone().compress())?;
+
+            let memory_db = MemoryDb::<5>::new_from_exported_sled(&sled_db)?;
+
+            assert!(memory_db
+                .code_by_hash
+                .contains_key::<FixedBytes<32>>(&code_hash.as_slice().try_into()?));
+
+            assert_eq!(
+                memory_db
+                    .code_by_hash
+                    .get::<FixedBytes<32>>(&code_hash.as_slice().try_into()?)
+                    .unwrap()
+                    .original_byte_slice(),
+                bytecode.0.bytecode()
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_insert_plain_account_state() -> Result<(), Box<dyn std::error::Error>> {
+            let sled_db = create_mock_sled_db();
+            let plain_account_state = sled_db.open_tree("PlainAccountState")?;
+            let bytecodes = sled_db.open_tree("Bytecodes")?;
+            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+
+            let address = random_address();
+            let account = RethAccount {
+                nonce: 1,
+                balance: U256::from(100),
+                bytecode_hash: Some(random_b256()),
+            };
+            plain_account_state.insert(address.as_slice(), account.compress())?;
+
+            // Insert a dummy block number to set the canonical block
+            let block_hash = random_b256();
+            let block_number = 1u64;
+            header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+
+            // Insert corresponding bytecode if account has bytecode_hash
+            if let Some(bytecode_hash) = account.bytecode_hash {
+                let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
+                bytecodes.insert(bytecode_hash.as_slice(), bytecode.compress())?;
+            }
+
+            let memory_db = MemoryDb::<0>::new_from_exported_sled(&sled_db)?;
+
+            assert!(memory_db
+                .basic
+                .contains_key::<Address>(&Address::from_slice(address.as_slice())));
+
+            let stored_account = memory_db
+                .basic
+                .get(&Address::from_slice(address.as_slice()))
+                .unwrap()
+                .get_latest()
+                .unwrap();
+            assert_eq!(stored_account.nonce, account.nonce);
+            assert_eq!(stored_account.balance, account.balance);
+            assert_eq!(
+                stored_account.code_hash,
+                *account.bytecode_hash.unwrap_or_default()
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_insert_plain_storage_state() -> Result<(), Box<dyn std::error::Error>> {
+            let sled_db = create_mock_sled_db();
+            let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
+            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+
+            let address = random_address();
+            let storage_key = random_b256();
+            let storage_value = U256::from(42);
+            let _storage_entry = StorageEntry {
+                key: storage_key,
+                value: storage_value,
+            };
+
+            let mut storage_map = HashMap::new();
+            storage_map.insert(
+                storage_key.to_vec(),
+                storage_value.to_be_bytes::<32>().to_vec(),
+            );
+            let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
+            plain_storage_state.insert(address.as_slice(), serialized_map)?;
+
+            // Insert a dummy block number to set the canonical block
+            let block_hash = random_b256();
+            let block_number = 1u64;
+            header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+
+            let memory_db = MemoryDb::<0>::new_from_exported_sled(&sled_db)?;
+
+            assert!(memory_db.storage.contains_key::<Address>(&address.into()));
+
+            let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
+            assert!(stored_storage.contains_key(&storage_key.into()));
+            assert_eq!(
+                stored_storage
+                    .get(&storage_key.into())
+                    .unwrap()
+                    .get_latest(),
+                Some(&storage_value)
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_insert_multiple_storage_entries() -> Result<(), Box<dyn std::error::Error>> {
+            let sled_db = create_mock_sled_db();
+            let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
+            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+
+            let address = random_address();
+            let storage_entries = vec![
+                (random_b256(), U256::from(42)),
+                (random_b256(), U256::from(100)),
+                (random_b256(), U256::from(200)),
+            ];
+
+            let mut storage_map = HashMap::new();
+            for (key, value) in &storage_entries {
+                storage_map.insert(key.to_vec(), value.to_be_bytes::<32>().to_vec());
+            }
+            let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
+            plain_storage_state.insert(address.as_slice(), serialized_map)?;
+
+            // Insert a dummy block number to set the canonical block
+            let block_hash = random_b256();
+            let block_number = 1u64;
+            header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+
+            let memory_db = MemoryDb::<0>::new_from_exported_sled(&sled_db)?;
+
+            assert!(memory_db.storage.contains_key::<Address>(&address.into()));
+            let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
+            assert_eq!(stored_storage.len(), storage_entries.len());
+
+            for (key, value) in storage_entries {
+                assert!(stored_storage.contains_key(&key.into()));
+                assert_eq!(
+                    stored_storage.get(&key.into()).unwrap().get_latest(),
+                    Some(&value)
+                );
+            }
+
+            Ok(())
+        }
     }
+
+    mod memory_db_db_ref_tests {
+        use super::*;
+        #[test]
+        fn test_basic_ref() {
+            let mut db = MemoryDb::<0>::default();
+            let address = random_bytes().into();
+            let code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()));
+            let account_info = AccountInfo {
+                nonce: 1,
+                balance: U256::from(1000),
+                code_hash: random_bytes(),
+                code: Some(code.clone()),
+            };
+
+            let state_changes = HashMap::from([(
+                address,
+                Account {
+                    info: account_info.clone(),
+                    storage: HashMap::new(),
+                    status: AccountStatus::Touched,
+                },
+            )]);
+            db.commit_block(BlockChanges {
+                state_changes,
+                ..Default::default()
+            });
+
+            let result = db.basic_ref(address);
+            assert_eq!(result.unwrap(), Some(account_info));
+        }
+
+        #[test]
+        fn test_block_hash_ref() {
+            let mut db = MemoryDb::<0>::default();
+            let block_number = 999;
+            let block_hash = random_bytes();
+
+            db.block_hashes.insert(block_number, block_hash);
+            db.canonical_block_num = 1000;
+
+            let result = db.block_hash_ref(block_number);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), block_hash);
+        }
+
+        #[test]
+        fn test_storage_ref() {
+            let mut db = MemoryDb::<0>::default();
+            let address = random_bytes().into();
+            let slot = U256::from(1);
+            let value = U256::from(100);
+
+            let state_changes = HashMap::from([(
+                address,
+                Account {
+                    info: AccountInfo {
+                        nonce: 0,
+                        balance: U256::ZERO,
+                        code_hash: B256::ZERO,
+                        code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
+                    },
+                    storage: HashMap::from([(
+                        slot,
+                        EvmStorageSlot {
+                            present_value: value,
+                            original_value: U256::ZERO,
+                            is_cold: false,
+                        },
+                    )]),
+                    status: AccountStatus::Touched,
+                },
+            )]);
+            // Commit the storage data
+            db.commit_block(BlockChanges {
+                state_changes,
+                ..Default::default()
+            });
+
+            let result = db.storage_ref(address, slot);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), value);
+
+            let non_existent_slot = U256::from(2);
+            let result = db.storage_ref(address, non_existent_slot);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), U256::ZERO);
+        }
+
+        //Should error if the code hash is not found
+        #[test]
+        fn test_code_by_hash_ref() {
+            let mut db = MemoryDb::<0>::default();
+            let code_hash = random_bytes();
+            let code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<96>()));
+
+            let state_changes = HashMap::from([(
+                random_bytes().into(),
+                Account {
+                    info: AccountInfo {
+                        nonce: 0,
+                        balance: U256::ZERO,
+                        code: Some(code.clone()),
+                        code_hash,
+                    },
+                    storage: HashMap::new(),
+                    status: AccountStatus::Touched,
+                },
+            )]);
+
+            // Commit the code data
+            db.commit_block(BlockChanges {
+                state_changes,
+                ..Default::default()
+            });
+
+            let result = db.code_by_hash_ref(code_hash);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), code);
+
+            let non_existent_hash = random_bytes();
+            let result = db.code_by_hash_ref(non_existent_hash);
+            assert!(result.is_err());
+        }
+    }
+    #[cfg(test)]
+    mod memory_db_tests_commit_block {
+        use super::*;
+        use crate::primitives::{
+            AccountInfo,
+            Bytecode,
+            EvmStorageSlot,
+        };
+
+        //TODO: improve
+        #[test]
+        fn test_commit_block() {
+            let mut db = MemoryDb::<5>::default();
+            let address = random_bytes().into();
+            let new_account_info = AccountInfo {
+                nonce: 1,
+                balance: U256::from(2000),
+                code_hash: random_bytes(),
+                code: None,
+            };
+            let new_code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()));
+            let new_storage = HashMap::from([(
+                U256::from(1),
+                EvmStorageSlot {
+                    present_value: U256::from(200),
+                    original_value: U256::ZERO,
+                    is_cold: false,
+                },
+            )]);
+
+            let changes = HashMap::from([(
+                address,
+                Account {
+                    info: AccountInfo {
+                        code: Some(new_code.clone()),
+                        ..new_account_info.clone()
+                    },
+                    storage: new_storage.clone(),
+                    status: AccountStatus::Touched,
+                },
+            )]);
+
+            db.commit_block(BlockChanges {
+                block_num: 1,
+                block_hash: random_bytes(),
+                state_changes: changes.clone(),
+            });
+
+            // Verify the changes
+            assert_eq!(db.canonical_block_num, 1);
+
+            assert_eq!(
+                db.code_by_hash_ref(new_account_info.code_hash).unwrap(),
+                new_code
+            );
+
+            assert_eq!(
+                db.basic_ref(address).unwrap(),
+                Some(new_account_info.clone())
+            );
+            assert_eq!(
+                db.storage_ref(address, U256::from(1)).unwrap(),
+                U256::from(200),
+            );
+
+            let block_changes = db.block_changes.pop_back().unwrap();
+
+            assert_eq!(block_changes.block_num, 1);
+        }
+    }
+
+    mod memory_db_tests_handle_reorg {
+        use super::*;
+
+        #[ignore]
+        #[test]
+        fn test_handle_reorg() {
+            let mut db = MemoryDb::<5>::default();
+
+            let block_changes_0 = BlockChanges {
+                block_num: 0,
+                block_hash: random_bytes(),
+                state_changes: HashMap::from([(
+                    random_bytes().into(),
+                    Account {
+                        info: AccountInfo {
+                            nonce: 0,
+                            balance: U256::from(1000),
+                            code_hash: B256::ZERO,
+                            code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
+                        },
+                        storage: HashMap::from([(
+                            U256::from(1),
+                            EvmStorageSlot {
+                                present_value: U256::from(100),
+                                original_value: U256::ZERO,
+                                is_cold: false,
+                            },
+                        )]),
+                        status: AccountStatus::Touched,
+                    },
+                )]),
+            };
+            db.commit_block(block_changes_0.clone());
+
+            let block_changes_1 = BlockChanges {
+                block_num: 1,
+                block_hash: random_bytes(),
+                state_changes: HashMap::from([(
+                    random_bytes().into(),
+                    Account {
+                        info: AccountInfo {
+                            nonce: 0,
+                            balance: U256::ZERO,
+                            code_hash: B256::ZERO,
+                            code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
+                        },
+                        storage: HashMap::from([(
+                            U256::from(1),
+                            EvmStorageSlot {
+                                present_value: U256::from(200),
+                                original_value: U256::ZERO,
+                                is_cold: false,
+                            },
+                        )]),
+                        status: AccountStatus::Touched,
+                    },
+                )]),
+            };
+            db.commit_block(block_changes_1.clone());
+
+            let result = db.handle_reorg(block_changes_0.block_hash);
+
+            assert!(result.is_some());
+            let result = result.unwrap();
+            assert_eq!(result.block_numbers_to_remove, vec![1]);
+
+            println!("{:#?}", result.account_value_histories);
+            assert_eq!(result.account_value_histories.len(), 1);
+            assert!(result.account_value_histories[0].value_history.is_empty());
+
+            assert_eq!(result.storage_value_histories.len(), 1);
+            assert!(result.storage_value_histories[0].value_history.is_empty());
+
+            assert_eq!(
+                &result.account_value_histories[0].address,
+                block_changes_1.state_changes.keys().next().unwrap()
+            );
+
+            assert_eq!(
+                result.account_value_histories[0]
+                    .value_history
+                    .get_latest()
+                    .unwrap()
+                    .balance,
+                U256::ZERO
+            );
+
+            assert_eq!(db.canonical_block_num, block_changes_0.block_num);
+            assert_eq!(db.canonical_block_hash, block_changes_0.block_hash);
+        }
+        //Test pruning
+        //Test with self destruct
+        //Test with empty val history
+        //Test case where reorg not found
+        //Test commit block
+    }
+
+    //TODO: Add integration test to verify revm handles block_hash access based on evm version
+    //
+    //TODO: Test the canonicalize function with self destruct in uncle block
 }
-//TODO: Add integration test to verify revm handles block_hash access based on evm version
