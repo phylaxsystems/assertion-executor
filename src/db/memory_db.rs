@@ -51,6 +51,16 @@ type EvmStorage = HashMap<Address, HashMap<U256, ValueHistory<U256>>>;
 pub enum MemoryDbError {
     #[error("Failed to load MemoryDb from sled!")]
     LoadFail,
+    #[error("Array conversion error: {0}")]
+    ArrayConversionError(#[from] std::array::TryFromSliceError),
+    #[error("Database error: {0}")]
+    DatabaseError(#[from] reth_db::DatabaseError),
+    #[error("Bincode deserialization error: {0}")]
+    BincodeError(#[from] Box<bincode::ErrorKind>),
+    #[error("EoF Decoder error")]
+    EofDecoderError,
+    #[error("Bytecode Hash Conversion Error")]
+    BytecodeHashConversionError,
 }
 
 /// Contains current and past state of an EVM chain.
@@ -153,12 +163,12 @@ impl MemoryDb {
         let mut canonical_block_hash = Default::default();
         let mut canonical_block_num = 0;
 
-        sled_table.iter().for_each(|item| {
+        for item in sled_table.iter() {
             if let Ok((key, value)) = item {
-                let key: B256 = B256::new(key.as_ref().try_into().unwrap());
+                let key: B256 = B256::new(key.as_ref().try_into()?);
 
                 let value: &[u8] = value.as_ref();
-                let value: u64 = u64::from_le_bytes(value.try_into().unwrap());
+                let value: u64 = u64::from_le_bytes(value.try_into()?);
 
                 // check if we have a higher block number
                 if canonical_block_num < value {
@@ -168,7 +178,7 @@ impl MemoryDb {
 
                 memory_db.block_hashes.insert(value, key);
             }
-        });
+        }
 
         Ok((canonical_block_hash, canonical_block_num))
     }
@@ -182,22 +192,23 @@ impl MemoryDb {
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        sled_table.iter().for_each(|item| {
+        for item in sled_table.iter() {
             if let Ok((key, value)) = item {
-                let key: B256 = B256::new(key.as_ref().try_into().unwrap());
+                let key: B256 = B256::new(key.as_ref().try_into()?);
 
                 let value: Vec<u8> = value.as_ref().into();
-                let value: RethBytecode = RethBytecode::decompress(&value).unwrap();
+                let value: RethBytecode = RethBytecode::decompress(&value)?;
 
                 // Now convert this to revm `Bytecode`
                 // absolutely insane typing
                 let bytecode: Bytecode =
-                    Bytecode::new_raw_checked(value.0.bytecode().to_vec().into()).unwrap();
+                    Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
+                        .map_err(|_| MemoryDbError::EofDecoderError)?;
 
                 // Insert into the memory_db
                 memory_db.code_by_hash.insert(key, bytecode);
             }
-        });
+        }
 
         Ok(())
     }
@@ -212,12 +223,11 @@ impl MemoryDb {
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        sled_table.iter().for_each(|item| {
+        for item in sled_table.iter() {
             if let Ok((key, value)) = item {
-                let key: Address = Address::new(key.as_ref().try_into().unwrap());
+                let key: Address = Address::new(key.as_ref().try_into()?);
 
-                let value: reth_primitives_traits::Account =
-                    RethAccount::decompress(&value).unwrap();
+                let value: reth_primitives_traits::Account = RethAccount::decompress(&value)?;
                 let value: <reth_db::PlainAccountState as Table>::Value = value;
 
                 // We have to convert `PlainAccountState` to `AccountInfo`
@@ -237,7 +247,7 @@ impl MemoryDb {
                 history.insert(canonical_block_num, account_info);
                 memory_db.basic.insert(key, history);
             }
-        });
+        }
 
         Ok(())
     }
@@ -250,7 +260,12 @@ impl MemoryDb {
         let mut code: Option<Bytecode> = None;
 
         if let Some(bytecode_hash) = value.bytecode_hash {
-            let bytecode_hash: FixedBytes<32> = bytecode_hash.as_slice().try_into().unwrap();
+            let bytecode_hash: FixedBytes<32> = bytecode_hash
+                .as_slice()
+                .try_into()
+                .map_err(|_| MemoryDbError::BytecodeHashConversionError)
+                .unwrap();
+
             code_hash = bytecode_hash;
 
             // If we have the bytecode hash, we can get the bytecode
@@ -272,23 +287,23 @@ impl MemoryDb {
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        sled_table.iter().for_each(|item| {
+        for item in sled_table.iter() {
             if let Ok((key, value)) = item {
                 // Get the address
-                let key: Address = Address::new(key.as_ref().try_into().unwrap());
+                let key: Address = Address::new(key.as_ref().try_into()?);
 
                 // Deserialize the StorageMap
-                let storage_map: StorageMap = bincode::deserialize(&value).unwrap();
+                let storage_map: StorageMap = bincode::deserialize(&value)?;
 
                 // Create a new HashMap for this address in the storage
                 let address_storage = memory_db.storage.entry(key).or_default();
 
                 // Iterate over the storage slots and values
                 for (slot_bytes, value_bytes) in storage_map.0 {
-                    let slot: FixedBytes<32> = slot_bytes.as_slice().try_into().unwrap();
+                    let slot: FixedBytes<32> = slot_bytes.as_slice().try_into()?;
                     let slot: U256 = slot.into();
 
-                    let value: FixedBytes<32> = value_bytes.as_slice().try_into().unwrap();
+                    let value: FixedBytes<32> = value_bytes.as_slice().try_into()?;
                     let value: U256 = value.into();
 
                     // Create a new ValueHistory for this slot
@@ -299,7 +314,7 @@ impl MemoryDb {
                     address_storage.insert(slot, history);
                 }
             }
-        });
+        }
 
         Ok(())
     }
