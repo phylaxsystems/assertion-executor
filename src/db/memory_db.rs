@@ -92,8 +92,7 @@ impl MemoryDb {
     ) -> Result<MemoryDb, MemoryDbError> {
         // Define which tables we're extracting
         //
-        // *** !!! NOTE: THE ORDER OF THE TABELS MUST ABSOLUTELY NOT CHANGE !!! ***
-        // *** !!! THINGS WILL NOT WORK AS INTENDED IF YOU CHANGE THIS !!! ***
+        // Note: Do not change the order of this array
         let reth_tables = &[
             "HeaderNumbers",
             "PlainAccountState",
@@ -133,7 +132,6 @@ impl MemoryDb {
                 // <Address, Hashmap<slot, value>>
                 // Loads `storage`
                 // NEEDS `HeaderNumbers` to be completed before this.
-                // TODO: double check this?
                 "PlainStorageState" => {
                     Self::load_plain_storage_state(
                         sled_db,
