@@ -102,143 +102,206 @@ impl MemoryDb {
                 // Loads `block_hashes` as well as the `canonical_block_hash` and `canonical_block_num`
                 // NOTE: this table must be deserialized first
                 "HeaderNumbers" => {
-                    let sled_table = sled_db.open_tree(table_name).unwrap();
-
-                    sled_table.iter().for_each(|item| {
-                        if let Ok((key, value)) = item {
-                            let key: B256 = B256::new(key.as_ref().try_into().unwrap());
-
-                            let value: &[u8] = value.as_ref();
-                            let value: u64 = u64::from_le_bytes(value.try_into().unwrap());
-
-                            // check if we have a higher block number
-                            if canonical_block_num < value {
-                                canonical_block_num = value;
-                                canonical_block_hash = key;
-                            }
-
-                            memory_db.block_hashes.insert(value, key);
-                        }
-                    });
-
-                    // Commit canonical block hash and number
-                    memory_db.canonical_block_hash = canonical_block_hash;
-                    memory_db.canonical_block_num = canonical_block_num;
+                    let result = Self::load_header_numbers(sled_db, &mut memory_db, table_name)?;
+                    canonical_block_hash = result.0;
+                    canonical_block_num = result.1;
                 }
                 // <Code hash, Bytecode>
                 // Loads `code_by_hash` and supplements `basic`
-                "Bytecodes" => {
-                    let sled_table = sled_db.open_tree(table_name).unwrap();
-
-                    sled_table.iter().for_each(|item| {
-                        if let Ok((key, value)) = item {
-                            let key: B256 = B256::new(key.as_ref().try_into().unwrap());
-
-                            let value: Vec<u8> = value.as_ref().into();
-                            let value: RethBytecode = RethBytecode::decompress(&value).unwrap();
-
-                            // Now convert this to revm `Bytecode`
-                            // absolutely insane typing
-                            let bytecode: Bytecode =
-                                Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
-                                    .unwrap();
-
-                            // Insert into the memory_db
-                            memory_db.code_by_hash.insert(key, bytecode);
-                        }
-                    });
-                }
+                "Bytecodes" => Self::load_bytecodes(sled_db, &mut memory_db, table_name)?,
                 // <Address, Account>
                 // Loads `basic`
-                // NEEDS `Bytecodes` to be completed before this/
+                // NEEDS `Bytecodes` to be completed before this
                 "PlainAccountState" => {
-                    let sled_table = sled_db.open_tree(table_name).unwrap();
-
-                    sled_table.iter().for_each(|item| {
-                        if let Ok((key, value)) = item {
-                            let key: Address = Address::new(key.as_ref().try_into().unwrap());
-
-                            let value: reth_primitives_traits::Account =
-                                RethAccount::decompress(&value).unwrap();
-                            let value: <reth_db::PlainAccountState as Table>::Value = value;
-
-                            // We have to convert `PlainAccountState` to `AccountInfo`
-                            // `AccountInfo` contains some additional data we need that is not
-
-                            // Get the code by addressing the `code_by_hash` field of
-                            // `MemoryDb`.
-                            let mut code_hash: FixedBytes<32> = (&[0; 32]).into();
-                            let mut code: Option<Bytecode> = None;
-
-                            if let Some(bytecode_hash) = value.bytecode_hash {
-                                let bytecode_hash: FixedBytes<32> =
-                                    bytecode_hash.as_slice().try_into().unwrap();
-                                code_hash = bytecode_hash;
-
-                                // If we have the bytecode hash, we can get the bytecode
-                                if let Some(bytecode) = memory_db.code_by_hash.get(&bytecode_hash) {
-                                    code = Some(bytecode.clone());
-                                }
-                            }
-
-                            let acount_info: AccountInfo = AccountInfo {
-                                nonce: value.nonce,
-                                balance: value.balance,
-                                code_hash,
-                                code,
-                            };
-
-                            let mut history = ValueHistory::new();
-                            history.insert(canonical_block_num, acount_info);
-                            memory_db.basic.insert(key, history);
-                        }
-                    });
+                    Self::load_plain_account_state(
+                        sled_db,
+                        &mut memory_db,
+                        table_name,
+                        canonical_block_num,
+                    )?
                 }
                 // <Address, Hashmap<slot, value>>
                 // Loads `storage`
                 // NEEDS `HeaderNumbers` to be completed before this.
                 // TODO: double check this?
                 "PlainStorageState" => {
-                    let sled_table = sled_db.open_tree(table_name).unwrap();
-
-                    sled_table.iter().for_each(|item| {
-                        if let Ok((key, value)) = item {
-                            // Get the address
-                            let key: Address = Address::new(key.as_ref().try_into().unwrap());
-
-                            // Deserialize the StorageMap
-                            let storage_map: StorageMap = bincode::deserialize(&value).unwrap();
-
-                            // Create a new HashMap for this address in the storage
-                            let address_storage = memory_db.storage.entry(key).or_default();
-
-                            // Iterate over the storage slots and values
-                            for (slot_bytes, value_bytes) in storage_map.0 {
-                                let slot: FixedBytes<32> =
-                                    slot_bytes.as_slice().try_into().unwrap();
-                                let slot: U256 = slot.into();
-
-                                let value: FixedBytes<32> =
-                                    value_bytes.as_slice().try_into().unwrap();
-                                let value: U256 = value.into();
-
-                                // Create a new ValueHistory for this slot
-                                let mut history = ValueHistory::new();
-                                history.insert(canonical_block_num, value);
-
-                                // Insert the history into the address storage
-                                address_storage.insert(slot, history);
-                            }
-                        }
-                    });
+                    Self::load_plain_storage_state(
+                        sled_db,
+                        &mut memory_db,
+                        table_name,
+                        canonical_block_num,
+                    )?
                 }
-                _ => {
-                    return Err(MemoryDbError::LoadFail);
-                }
+                _ => return Err(MemoryDbError::LoadFail),
             }
         }
 
+        memory_db.canonical_block_hash = canonical_block_hash;
+        memory_db.canonical_block_num = canonical_block_num;
+
         Ok(memory_db)
+    }
+
+    fn load_header_numbers<const LEAF_FANOUT: usize>(
+        sled_db: &SledDb<LEAF_FANOUT>,
+        memory_db: &mut MemoryDb,
+        table_name: &str,
+    ) -> Result<(B256, u64), MemoryDbError> {
+        let sled_table = sled_db
+            .open_tree(table_name)
+            .map_err(|_| MemoryDbError::LoadFail)?;
+        let mut canonical_block_hash = Default::default();
+        let mut canonical_block_num = 0;
+
+        sled_table.iter().for_each(|item| {
+            if let Ok((key, value)) = item {
+                let key: B256 = B256::new(key.as_ref().try_into().unwrap());
+
+                let value: &[u8] = value.as_ref();
+                let value: u64 = u64::from_le_bytes(value.try_into().unwrap());
+
+                // check if we have a higher block number
+                if canonical_block_num < value {
+                    canonical_block_num = value;
+                    canonical_block_hash = key;
+                }
+
+                memory_db.block_hashes.insert(value, key);
+            }
+        });
+
+        Ok((canonical_block_hash, canonical_block_num))
+    }
+
+    fn load_bytecodes<const LEAF_FANOUT: usize>(
+        sled_db: &SledDb<LEAF_FANOUT>,
+        memory_db: &mut MemoryDb,
+        table_name: &str,
+    ) -> Result<(), MemoryDbError> {
+        let sled_table = sled_db
+            .open_tree(table_name)
+            .map_err(|_| MemoryDbError::LoadFail)?;
+
+        sled_table.iter().for_each(|item| {
+            if let Ok((key, value)) = item {
+                let key: B256 = B256::new(key.as_ref().try_into().unwrap());
+
+                let value: Vec<u8> = value.as_ref().into();
+                let value: RethBytecode = RethBytecode::decompress(&value).unwrap();
+
+                // Now convert this to revm `Bytecode`
+                // absolutely insane typing
+                let bytecode: Bytecode =
+                    Bytecode::new_raw_checked(value.0.bytecode().to_vec().into()).unwrap();
+
+                // Insert into the memory_db
+                memory_db.code_by_hash.insert(key, bytecode);
+            }
+        });
+
+        Ok(())
+    }
+
+    fn load_plain_account_state<const LEAF_FANOUT: usize>(
+        sled_db: &SledDb<LEAF_FANOUT>,
+        memory_db: &mut MemoryDb,
+        table_name: &str,
+        canonical_block_num: u64,
+    ) -> Result<(), MemoryDbError> {
+        let sled_table = sled_db
+            .open_tree(table_name)
+            .map_err(|_| MemoryDbError::LoadFail)?;
+
+        sled_table.iter().for_each(|item| {
+            if let Ok((key, value)) = item {
+                let key: Address = Address::new(key.as_ref().try_into().unwrap());
+
+                let value: reth_primitives_traits::Account =
+                    RethAccount::decompress(&value).unwrap();
+                let value: <reth_db::PlainAccountState as Table>::Value = value;
+
+                // We have to convert `PlainAccountState` to `AccountInfo`
+                // `AccountInfo` contains some additional data we need that is not
+
+                // Get the code by addressing the `code_by_hash` field of `MemoryDb`.
+                let (code_hash, code) = Self::get_code_info(memory_db, &value);
+
+                let account_info: AccountInfo = AccountInfo {
+                    nonce: value.nonce,
+                    balance: value.balance,
+                    code_hash,
+                    code,
+                };
+
+                let mut history = ValueHistory::new();
+                history.insert(canonical_block_num, account_info);
+                memory_db.basic.insert(key, history);
+            }
+        });
+
+        Ok(())
+    }
+
+    fn get_code_info(
+        memory_db: &MemoryDb,
+        value: &RethAccount,
+    ) -> (FixedBytes<32>, Option<Bytecode>) {
+        let mut code_hash: FixedBytes<32> = (&[0; 32]).into();
+        let mut code: Option<Bytecode> = None;
+
+        if let Some(bytecode_hash) = value.bytecode_hash {
+            let bytecode_hash: FixedBytes<32> = bytecode_hash.as_slice().try_into().unwrap();
+            code_hash = bytecode_hash;
+
+            // If we have the bytecode hash, we can get the bytecode
+            if let Some(bytecode) = memory_db.code_by_hash.get(&bytecode_hash) {
+                code = Some(bytecode.clone());
+            }
+        }
+
+        (code_hash, code)
+    }
+
+    fn load_plain_storage_state<const LEAF_FANOUT: usize>(
+        sled_db: &SledDb<LEAF_FANOUT>,
+        memory_db: &mut MemoryDb,
+        table_name: &str,
+        canonical_block_num: u64,
+    ) -> Result<(), MemoryDbError> {
+        let sled_table = sled_db
+            .open_tree(table_name)
+            .map_err(|_| MemoryDbError::LoadFail)?;
+
+        sled_table.iter().for_each(|item| {
+            if let Ok((key, value)) = item {
+                // Get the address
+                let key: Address = Address::new(key.as_ref().try_into().unwrap());
+
+                // Deserialize the StorageMap
+                let storage_map: StorageMap = bincode::deserialize(&value).unwrap();
+
+                // Create a new HashMap for this address in the storage
+                let address_storage = memory_db.storage.entry(key).or_default();
+
+                // Iterate over the storage slots and values
+                for (slot_bytes, value_bytes) in storage_map.0 {
+                    let slot: FixedBytes<32> = slot_bytes.as_slice().try_into().unwrap();
+                    let slot: U256 = slot.into();
+
+                    let value: FixedBytes<32> = value_bytes.as_slice().try_into().unwrap();
+                    let value: U256 = value.into();
+
+                    // Create a new ValueHistory for this slot
+                    let mut history = ValueHistory::new();
+                    history.insert(canonical_block_num, value);
+
+                    // Insert the history into the address storage
+                    address_storage.insert(slot, history);
+                }
+            }
+        });
+
+        Ok(())
     }
 
     /// Opens a `sled` Db that has had exported and transformed data from `reth` MDBX with
@@ -247,7 +310,6 @@ impl MemoryDb {
         sled_db: &SledDb<LEAF_FANOUT>,
     ) -> Result<Self, MemoryDbError> {
         let memory_db = MemoryDb::default();
-
         Self::load_tables_into_db::<LEAF_FANOUT>(sled_db, memory_db)
     }
 }
