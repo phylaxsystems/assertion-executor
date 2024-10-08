@@ -95,11 +95,6 @@ impl MemoryDb {
         let mut canonical_block_hash = Default::default();
         // For populating the `canonical_block_num` field
         let mut canonical_block_num = 0;
-        // Because we do not have the full context of accounts in `PlainAccountState` we
-        // need to temporarily store contract data in a map keyed by address.
-        // TODO: potential future optimization to get rid of the `code_by_hash` field.
-        let mut address_keyed_contracts: HashMap<Address, (FixedBytes<32>, Bytecode)> =
-            Default::default();
 
         for table_name in reth_tables {
             match *table_name {
@@ -284,8 +279,8 @@ impl DatabaseRef for MemoryDb {
     }
 }
 
-//Replace with commit_block in trait PhDB trait
-//Will need to prune history and update sled
+// Replace with commit_block in trait PhDB trait
+// Will need to prune history and update sled
 impl DatabaseCommit for MemoryDb {
     fn commit(&mut self, changes: std::collections::HashMap<Address, Account>) {
         self.canonical_block_num += 1;
@@ -326,7 +321,6 @@ impl DatabaseCommit for MemoryDb {
 mod memory_db_insert_tests {
     use super::*;
     use alloy::primitives::{
-        Address as AlloyAddress,
         B256,
         U256,
     };
@@ -474,7 +468,7 @@ mod memory_db_insert_tests {
         let address = random_address();
         let storage_key = random_b256();
         let storage_value = U256::from(42);
-        let storage_entry = StorageEntry {
+        let _storage_entry = StorageEntry {
             key: storage_key,
             value: storage_value,
         };
