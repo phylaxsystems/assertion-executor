@@ -327,6 +327,15 @@ impl MemoryDb {
         let memory_db = MemoryDb::default();
         Self::load_tables_into_db::<LEAF_FANOUT>(sled_db, memory_db)
     }
+
+    /// Opens a `sled` Db that has had exported and transformed data from `reth` MDBX with
+    /// `mending::transform_reth_tables` and loads it into itself.
+    pub fn load_into_self(&mut self, sled_db: &SledDb) -> Result<(), MemoryDbError> {
+        let memory_db = MemoryDb::default();
+        let loaded_db = Self::load_tables_into_db(sled_db, memory_db)?;
+        *self = loaded_db;
+        Ok(())
+    }
 }
 
 impl DatabaseRef for MemoryDb {
