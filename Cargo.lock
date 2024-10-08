@@ -2400,14 +2400,16 @@ dependencies = [
 [[package]]
 name = "mending"
 version = "0.0.0"
-source = "git+ssh://git@github.com/phylaxsystems/mending.git?rev=0c28f98c6#0c28f98c6f84393880662efc2772e1ca89588bfc"
+source = "git+ssh://git@github.com/phylaxsystems/mending.git?rev=3a771745f#3a771745fc39fce2dbf2ac42d1d07dc3ed80b96f"
 dependencies = [
  "alloy 0.3.6",
  "anyhow",
+ "bincode",
  "libmdbx",
  "reth-db",
  "reth-db-api",
  "reth-primitives-traits",
+ "serde",
  "serde_json",
  "sled",
  "tempfile",
