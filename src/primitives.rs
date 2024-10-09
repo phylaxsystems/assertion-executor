@@ -100,6 +100,12 @@ impl<T> ValueHistory<T> {
             value_history: self.value_history.split_off(&(block_num + 1)),
         }
     }
+
+    pub fn new() -> Self {
+        Self {
+            value_history: BTreeMap::new(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,17 +1,20 @@
-use crate::db::{
-    DatabaseCommit,
-    NotFoundError,
-    DB,
+use crate::{
+    db::{
+        DatabaseCommit,
+        DatabaseRef,
+        MemoryDb,
+        NotFoundError,
+    },
+    primitives::{
+        Account,
+        AccountInfo,
+        Address,
+        Bytecode,
+        B256,
+        U256,
+    },
 };
-use crate::primitives::{
-    Account,
-    AccountInfo,
-    Address,
-    Bytecode,
-    B256,
-    U256,
-};
-use revm::DatabaseRef;
+
 use std::{
     collections::HashMap,
     sync::{
@@ -22,7 +25,17 @@ use std::{
 
 #[derive(Debug, Clone, Default)]
 pub struct SharedDB {
-    db: Arc<RwLock<DB>>,
+    db: Arc<RwLock<MemoryDb>>,
+}
+
+impl SharedDB {
+    /// Create new `SharedDB` from a `MemoryDb`.
+    // Note: depending on how large the MemoryDb this might nuke performance
+    pub fn new(memory_db: MemoryDb) -> Self {
+        Self {
+            db: Arc::new(RwLock::new(memory_db)),
+        }
+    }
 }
 
 impl DatabaseRef for SharedDB {

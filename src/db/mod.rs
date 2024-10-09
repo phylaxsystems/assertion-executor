@@ -2,7 +2,7 @@ pub use shared_db::SharedDB;
 
 mod memory_db;
 mod shared_db;
-pub use memory_db::DB;
+pub use memory_db::MemoryDb;
 
 mod error;
 pub use error::NotFoundError;
