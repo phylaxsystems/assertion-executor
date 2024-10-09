@@ -161,21 +161,19 @@ impl MemoryDb {
         let mut canonical_block_hash = Default::default();
         let mut canonical_block_num = 0;
 
-        for item in sled_table.iter() {
-            if let Ok((key, value)) = item {
-                let key: B256 = B256::new(key.as_ref().try_into()?);
+        for (key, value) in sled_table.iter().flatten() {
+            let key: B256 = B256::new(key.as_ref().try_into()?);
 
-                let value: &[u8] = value.as_ref();
-                let value: u64 = u64::from_le_bytes(value.try_into()?);
+            let value: &[u8] = value.as_ref();
+            let value: u64 = u64::from_le_bytes(value.try_into()?);
 
-                // check if we have a higher block number
-                if canonical_block_num < value {
-                    canonical_block_num = value;
-                    canonical_block_hash = key;
-                }
-
-                memory_db.block_hashes.insert(value, key);
+            // check if we have a higher block number
+            if canonical_block_num < value {
+                canonical_block_num = value;
+                canonical_block_hash = key;
             }
+
+            memory_db.block_hashes.insert(value, key);
         }
 
         Ok((canonical_block_hash, canonical_block_num))
@@ -190,22 +188,20 @@ impl MemoryDb {
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        for item in sled_table.iter() {
-            if let Ok((key, value)) = item {
-                let key: B256 = B256::new(key.as_ref().try_into()?);
+        for (key, value) in sled_table.iter().flatten() {
+            let key: B256 = B256::new(key.as_ref().try_into()?);
 
-                let value: Vec<u8> = value.as_ref().into();
-                let value: RethBytecode = RethBytecode::decompress(&value)?;
+            let value: Vec<u8> = value.as_ref().into();
+            let value: RethBytecode = RethBytecode::decompress(&value)?;
 
-                // Now convert this to revm `Bytecode`
-                // absolutely insane typing
-                let bytecode: Bytecode =
-                    Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
-                        .map_err(|_| MemoryDbError::EofDecoderError)?;
+            // Now convert this to revm `Bytecode`
+            // absolutely insane typing
+            let bytecode: Bytecode =
+                Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
+                    .map_err(|_| MemoryDbError::EofDecoderError)?;
 
-                // Insert into the memory_db
-                memory_db.code_by_hash.insert(key, bytecode);
-            }
+            // Insert into the memory_db
+            memory_db.code_by_hash.insert(key, bytecode);
         }
 
         Ok(())
@@ -221,30 +217,28 @@ impl MemoryDb {
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        for item in sled_table.iter() {
-            if let Ok((key, value)) = item {
-                let key: Address = Address::new(key.as_ref().try_into()?);
+        for (key, value) in sled_table.iter().flatten() {
+            let key: Address = Address::new(key.as_ref().try_into()?);
 
-                let value: reth_primitives_traits::Account = RethAccount::decompress(&value)?;
-                let value: <reth_db::PlainAccountState as Table>::Value = value;
+            let value: reth_primitives_traits::Account = RethAccount::decompress(&value)?;
+            let value: <reth_db::PlainAccountState as Table>::Value = value;
 
-                // We have to convert `PlainAccountState` to `AccountInfo`
-                // `AccountInfo` contains some additional data we need that is not
+            // We have to convert `PlainAccountState` to `AccountInfo`
+            // `AccountInfo` contains some additional data we need that is not
 
-                // Get the code by addressing the `code_by_hash` field of `MemoryDb`.
-                let (code_hash, code) = Self::get_code_info(memory_db, &value);
+            // Get the code by addressing the `code_by_hash` field of `MemoryDb`.
+            let (code_hash, code) = Self::get_code_info(memory_db, &value);
 
-                let account_info: AccountInfo = AccountInfo {
-                    nonce: value.nonce,
-                    balance: value.balance,
-                    code_hash,
-                    code,
-                };
+            let account_info: AccountInfo = AccountInfo {
+                nonce: value.nonce,
+                balance: value.balance,
+                code_hash,
+                code,
+            };
 
-                let mut history = ValueHistory::new();
-                history.insert(canonical_block_num, account_info);
-                memory_db.basic.insert(key, history);
-            }
+            let mut history = ValueHistory::new();
+            history.insert(canonical_block_num, account_info);
+            memory_db.basic.insert(key, history);
         }
 
         Ok(())
@@ -285,32 +279,30 @@ impl MemoryDb {
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        for item in sled_table.iter() {
-            if let Ok((key, value)) = item {
-                // Get the address
-                let key: Address = Address::new(key.as_ref().try_into()?);
+        for (key, value) in sled_table.iter().flatten() {
+            // Get the address
+            let key: Address = Address::new(key.as_ref().try_into()?);
 
-                // Deserialize the StorageMap
-                let storage_map: StorageMap = bincode::deserialize(&value)?;
+            // Deserialize the StorageMap
+            let storage_map: StorageMap = bincode::deserialize(&value)?;
 
-                // Create a new HashMap for this address in the storage
-                let address_storage = memory_db.storage.entry(key).or_default();
+            // Create a new HashMap for this address in the storage
+            let address_storage = memory_db.storage.entry(key).or_default();
 
-                // Iterate over the storage slots and values
-                for (slot_bytes, value_bytes) in storage_map.0 {
-                    let slot: FixedBytes<32> = slot_bytes.as_slice().try_into()?;
-                    let slot: U256 = slot.into();
+            // Iterate over the storage slots and values
+            for (slot_bytes, value_bytes) in storage_map.0 {
+                let slot: FixedBytes<32> = slot_bytes.as_slice().try_into()?;
+                let slot: U256 = slot.into();
 
-                    let value: FixedBytes<32> = value_bytes.as_slice().try_into()?;
-                    let value: U256 = value.into();
+                let value: FixedBytes<32> = value_bytes.as_slice().try_into()?;
+                let value: U256 = value.into();
 
-                    // Create a new ValueHistory for this slot
-                    let mut history = ValueHistory::new();
-                    history.insert(canonical_block_num, value);
+                // Create a new ValueHistory for this slot
+                let mut history = ValueHistory::new();
+                history.insert(canonical_block_num, value);
 
-                    // Insert the history into the address storage
-                    address_storage.insert(slot, history);
-                }
+                // Insert the history into the address storage
+                address_storage.insert(slot, history);
             }
         }
 
