@@ -30,6 +30,8 @@ use sled::{
 pub struct FsCommitBlockParams {
     /// The changes to the state trie.
     pub(in crate::db) block_changes: BlockChanges,
+    /// The changes to prune.
+    pub(in crate::db) block_changes_to_remove: Vec<u64>,
     /// The code hashes to insert.
     pub(in crate::db) code_hashes_to_insert: Vec<(B256, Bytecode)>,
     /// The account value histories to insert.
@@ -63,19 +65,19 @@ pub struct StorageValueHistory {
 /// A struct that holds the file-system database.
 /// The database is a key-value store that stores the state of the blockchain.
 #[derive(Debug, Clone)]
-pub(in crate::db) struct FsDb<const BLOCKS_TO_RETAIN: usize> {
+pub(in crate::db) struct FsDb {
     db: Db,
 }
 
 #[cfg(any(test, feature = "test"))]
-impl<const BLOCKS_TO_RETAIN: usize> FsDb<BLOCKS_TO_RETAIN> {
+impl FsDb {
     pub fn new_test() -> Self {
         let temp_dir = tempfile::tempdir().unwrap();
         Self::new(temp_dir.path()).unwrap()
     }
 }
 
-impl<const BLOCKS_TO_RETAIN: usize> FsDb<BLOCKS_TO_RETAIN> {
+impl FsDb {
     const STORAGE: &'static str = "storage";
     const BASIC: &'static str = "basic";
     const BLOCK_HASHES: &'static str = "block_hashes";
@@ -131,6 +133,7 @@ impl<const BLOCKS_TO_RETAIN: usize> FsDb<BLOCKS_TO_RETAIN> {
         &self,
         FsCommitBlockParams {
             block_changes,
+            block_changes_to_remove,
             code_hashes_to_insert,
             account_value_histories,
             storage_value_histories,
@@ -142,13 +145,9 @@ impl<const BLOCKS_TO_RETAIN: usize> FsDb<BLOCKS_TO_RETAIN> {
             block_changes.serialize(),
         );
 
-        // Remove the state changes that are older than the block history.
-        // TODO: It may be worth considering pruning all state changes older than the
-        // BLOCKS_TO_RETAIN
-        let state_change_to_prune = block_changes.block_num.checked_sub(BLOCKS_TO_RETAIN as u64);
-        if let Some(state_change_to_prune) = state_change_to_prune {
-            block_change_batch.remove(state_change_to_prune.serialize());
-        }
+        block_changes_to_remove.iter().for_each(|block_num| {
+            block_change_batch.remove(block_num.serialize());
+        });
 
         let code_by_hash_batch =
             code_hashes_to_insert
@@ -181,7 +180,11 @@ impl<const BLOCKS_TO_RETAIN: usize> FsDb<BLOCKS_TO_RETAIN> {
                  address,
                  value_history,
              }| {
-                batch.insert(address.serialize(), value_history.serialize());
+                if value_history.is_empty() {
+                    batch.remove(address.serialize());
+                } else {
+                    batch.insert(address.serialize(), value_history.serialize());
+                }
                 batch
             },
         )
@@ -191,7 +194,14 @@ impl<const BLOCKS_TO_RETAIN: usize> FsDb<BLOCKS_TO_RETAIN> {
         value_historys.into_iter().fold(
             Batch::default(),
             |mut batch, StorageValueHistory { key, value_history }| {
-                batch.insert(key.serialize(), value_history.serialize());
+                if value_history.is_empty()
+                    || (value_history.value_history.len() == 1
+                        && value_history.get_latest().is_some_and(|val| val.is_zero()))
+                {
+                    batch.remove(key.serialize());
+                } else {
+                    batch.insert(key.serialize(), value_history.serialize());
+                };
                 batch
             },
         )
@@ -233,7 +243,7 @@ mod tests {
         use super::*;
         #[test]
         fn test_block_numbers_to_remove() {
-            let db = FsDb::<5>::new_test();
+            let db = FsDb::new_test();
 
             for block_num in 1..=3 {
                 let block_changes = BlockChanges {
@@ -279,7 +289,7 @@ mod tests {
         // Test account value histories
         #[test]
         fn test_account_value_histories() {
-            let db = FsDb::<1>::new_test();
+            let db = FsDb::new_test();
 
             let address = Address::from([1; 20]);
 
@@ -331,7 +341,7 @@ mod tests {
         //Test storage value histories
         #[test]
         fn test_storage_val_history() {
-            let db = FsDb::<1>::new_test();
+            let db = FsDb::new_test();
 
             // Create test data
             let storage_slot_key = StorageSlotKey {
@@ -384,7 +394,7 @@ mod tests {
 
         #[test]
         fn test_block_changes() {
-            let db = FsDb::<1>::new_test();
+            let db = FsDb::new_test();
 
             //Insert block changes @ 1
             let mut block_changes = BlockChanges {
@@ -407,11 +417,14 @@ mod tests {
                 BlockChanges::deserialize(block_changes_db).unwrap()
             );
 
+            let block_changes_to_remove = vec![block_changes.block_num.clone()];
+
             //Insert block changes @ 2
             block_changes.block_num = 2;
 
             db.commit_block(FsCommitBlockParams {
                 block_changes: block_changes.clone(),
+                block_changes_to_remove,
                 ..Default::default()
             })
             .unwrap();
@@ -431,7 +444,7 @@ mod tests {
 
         #[test]
         fn test_insert_code_hashes() {
-            let db = FsDb::<1>::new_test();
+            let db = FsDb::new_test();
 
             let code_hashes_to_insert = vec![
                 (
@@ -464,7 +477,7 @@ mod tests {
 
         #[test]
         fn test_storage_val_history() {
-            let db = FsDb::<1>::new_test();
+            let db = FsDb::new_test();
 
             // Create test data
             let storage_slot_key = StorageSlotKey {
@@ -499,9 +512,55 @@ mod tests {
             );
         }
 
+        //Test storage value histories when update is empty or only contains a zero value
+        #[test]
+        fn test_storage_val_history_removal() {
+            let db = FsDb::new_test();
+
+            let mut value_history = ValueHistory::default();
+            value_history.insert(1, U256::ZERO);
+            for value_history in [ValueHistory::default(), value_history] {
+                // Create test data
+                let storage_slot_key = StorageSlotKey {
+                    address: random_bytes().into(),
+                    slot: random_bytes().into(),
+                };
+
+                let mut value_history_init = ValueHistory::default();
+                value_history_init.insert(1, random_bytes().into());
+
+                // Commit the storage value history
+                db.commit_block(FsCommitBlockParams {
+                    storage_value_histories: vec![StorageValueHistory {
+                        key: storage_slot_key.clone(),
+                        value_history: value_history_init,
+                    }],
+                    ..Default::default()
+                })
+                .unwrap();
+
+                // Handle the reorg
+                db.handle_reorg(FsHandleReorgParams {
+                    storage_value_histories: vec![StorageValueHistory {
+                        key: storage_slot_key.clone(),
+                        value_history: value_history.clone(),
+                    }],
+                    ..Default::default()
+                })
+                .unwrap();
+
+                let storage_tree = db.storage_tree().unwrap();
+                // Verify the storage value history was stored correctly
+                assert!(storage_tree
+                    .get(storage_slot_key.serialize())
+                    .unwrap()
+                    .is_none());
+            }
+        }
+
         #[test]
         fn test_account_val_history() {
-            let db = FsDb::<1>::new_test();
+            let db = FsDb::new_test();
 
             // Create test data
             let address: Address = random_bytes().into();

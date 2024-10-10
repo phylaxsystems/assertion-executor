@@ -23,6 +23,7 @@ use crate::{
 };
 
 use std::collections::{
+    hash_map::Entry,
     BTreeMap,
     HashMap,
     VecDeque,
@@ -354,17 +355,18 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
         } else {
             //TODO: block hash not found, possibly a block that the executor has not seen yet or
             //has already pruned.
-            //Perhaps we request the block from the rpc and then reorg the db
+            //Perhaps we request the block from the rpc and try to reconcile the db.
             return None;
         };
 
         let block_numbers_to_remove = self
             .block_changes
-            .range(index..)
+            .range(index + 1..)
             .map(|block_change| block_change.block_num)
             .collect();
 
-        let removed_block_changes = self.block_changes.split_off(index - 1);
+        let removed_block_changes = self.block_changes.split_off(index + 1);
+
         let touched_keys = removed_block_changes.iter().fold(
             TouchedKeys::default(),
             |mut touched_keys, block_change| {
@@ -386,6 +388,8 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
     }
 
     pub fn commit_block(&mut self, block_changes: BlockChanges) -> FsCommitBlockParams {
+        self.set_canonical_block(block_changes.block_num, block_changes.block_hash);
+
         let mut block_changes = block_changes;
 
         let mut code_hashes_to_insert = Vec::new();
@@ -428,17 +432,32 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
                 .insert(self.canonical_block_num, account.info.clone());
         }
 
-        self.set_canonical_block(block_changes.block_num, block_changes.block_hash);
         self.block_changes.push_back(block_changes.clone());
+        self.block_hashes
+            .insert(block_changes.block_num, block_changes.block_hash);
 
         //TODO: Remove the oldest block changes if the length of block changes is greater than 256
-        //block_changes.block_num.checked_sub(BLOCKS_TO_RETAIN as u64);
+        let pruneable_block_num = block_changes
+            .block_num
+            .checked_sub(BLOCKS_TO_RETAIN as u64)
+            .unwrap_or(0);
+
+        let mut block_changes_to_remove = Vec::new();
+        while let Some(block_change) = self.block_changes.front() {
+            if block_change.block_num < pruneable_block_num {
+                block_changes_to_remove.push(block_change.block_num);
+                self.block_changes.pop_front();
+            } else {
+                break;
+            }
+        }
 
         let (account_value_histories, storage_value_histories) =
             self.get_touched_val_histories(&block_changes.touched_keys());
 
         FsCommitBlockParams {
             block_changes,
+            block_changes_to_remove,
             code_hashes_to_insert,
             account_value_histories,
             storage_value_histories,
@@ -450,15 +469,31 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
     ///changed, and block hashes for blocks that are greater than the block number of the reorged
     fn prune_from(&mut self, touched_keys: &TouchedKeys, block_num: u64) {
         for key in &touched_keys.basic {
-            self.basic
-                .get_mut(key)
-                .map(|info| info.prune_from(block_num));
+            if let Entry::Occupied(mut v) = self.basic.entry(*key) {
+                let val_history = v.get_mut();
+                val_history.prune_from(block_num);
+                if val_history.is_empty() {
+                    v.remove_entry();
+                }
+            }
         }
+
         for key in &touched_keys.storage {
-            self.storage
-                .get_mut(&key.address)
-                .and_then(|s| s.get_mut(&key.slot))
-                .map(|v| v.prune_from(block_num));
+            if let Entry::Occupied(mut s) = self.storage.entry(key.address) {
+                if let Entry::Occupied(mut v) = s.get_mut().entry(key.slot) {
+                    let val_history = v.get_mut();
+                    val_history.prune_from(block_num);
+                    if val_history.is_empty()
+                        || (val_history.len() == 1
+                            && val_history.get_latest().unwrap() == &U256::ZERO)
+                    {
+                        v.remove_entry();
+                        if s.get().is_empty() {
+                            s.remove_entry();
+                        }
+                    }
+                }
+            };
         }
 
         self.block_hashes.split_off(&(block_num + 1));
@@ -476,23 +511,23 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
     ) -> (Vec<AccountValueHistory>, Vec<StorageValueHistory>) {
         let mut touched_val_histories_basic = Vec::new();
         for address in &touched_keys.basic {
-            if let Some(val_history) = self.basic.get(address) {
-                touched_val_histories_basic.push(AccountValueHistory {
-                    address: *address,
-                    value_history: val_history.clone(),
-                });
-            }
+            let value_history = self.basic.get(address).cloned().unwrap_or_default();
+            touched_val_histories_basic.push(AccountValueHistory {
+                address: *address,
+                value_history,
+            });
         }
         let mut touched_val_histories_storage = Vec::new();
         for key in &touched_keys.storage {
-            if let Some(storage) = self.storage.get(&key.address) {
-                if let Some(val_history) = storage.get(&key.slot) {
-                    touched_val_histories_storage.push(StorageValueHistory {
-                        key: key.clone(),
-                        value_history: val_history.clone(),
-                    });
-                }
-            }
+            let value_history = match self.storage.get(&key.address) {
+                Some(storage) => storage.get(&key.slot).cloned().unwrap_or_default(),
+                None => Default::default(),
+            };
+
+            touched_val_histories_storage.push(StorageValueHistory {
+                key: key.clone(),
+                value_history,
+            });
         }
         (touched_val_histories_basic, touched_val_histories_storage)
     }
@@ -966,7 +1001,6 @@ mod test {
     mod memory_db_tests_handle_reorg {
         use super::*;
 
-        #[ignore]
         #[test]
         fn test_handle_reorg() {
             let mut db = MemoryDb::<5>::default();
@@ -1006,7 +1040,7 @@ mod test {
                         info: AccountInfo {
                             nonce: 0,
                             balance: U256::ZERO,
-                            code_hash: B256::ZERO,
+                            code_hash: random_bytes(),
                             code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
                         },
                         storage: HashMap::from([(
@@ -1022,14 +1056,13 @@ mod test {
                 )]),
             };
             db.commit_block(block_changes_1.clone());
+            println!("block_hashes {:#?}", db.block_hashes);
 
-            let result = db.handle_reorg(block_changes_0.block_hash);
+            let result = db.handle_reorg(block_changes_0.block_hash).unwrap();
+            println!("block_hashes {:#?}", db.block_hashes);
 
-            assert!(result.is_some());
-            let result = result.unwrap();
             assert_eq!(result.block_numbers_to_remove, vec![1]);
 
-            println!("{:#?}", result.account_value_histories);
             assert_eq!(result.account_value_histories.len(), 1);
             assert!(result.account_value_histories[0].value_history.is_empty());
 
@@ -1041,25 +1074,67 @@ mod test {
                 block_changes_1.state_changes.keys().next().unwrap()
             );
 
-            assert_eq!(
-                result.account_value_histories[0]
-                    .value_history
-                    .get_latest()
-                    .unwrap()
-                    .balance,
-                U256::ZERO
-            );
-
             assert_eq!(db.canonical_block_num, block_changes_0.block_num);
             assert_eq!(db.canonical_block_hash, block_changes_0.block_hash);
+            assert_eq!(db.block_changes.len(), 1);
+
+            assert_eq!(db.basic.len(), 1);
+            assert_eq!(db.storage.len(), 1);
+            assert_eq!(db.storage.iter().next().unwrap().1.len(), 1);
+            assert_eq!(
+                db.storage
+                    .iter()
+                    .next()
+                    .unwrap()
+                    .1
+                    .values()
+                    .next()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert_eq!(db.block_hashes.len(), 1);
+            assert_eq!(db.block_hashes.get(&0), Some(&block_changes_0.block_hash));
+            assert_eq!(db.code_by_hash.len(), 2);
+
+            let account_change = block_changes_0.state_changes.iter().next().unwrap().1;
+
+            assert_eq!(
+                db.basic
+                    .get(block_changes_0.state_changes.keys().next().unwrap())
+                    .unwrap()
+                    .get_latest()
+                    .cloned()
+                    .unwrap(),
+                account_change.info
+            );
+            assert_eq!(
+                db.storage
+                    .iter()
+                    .next()
+                    .unwrap()
+                    .1
+                    .iter()
+                    .next()
+                    .unwrap()
+                    .1
+                    .get_latest()
+                    .cloned()
+                    .unwrap(),
+                account_change
+                    .storage
+                    .iter()
+                    .next()
+                    .unwrap()
+                    .1
+                    .present_value
+            );
+
+            assert_eq!(db.block_changes[0], block_changes_0);
         }
-        //Test pruning
-        //Test with self destruct
-        //Test with empty val history
-        //Test case where reorg not found
-        //Test commit block
     }
 
+    //TODO: Test case where reorg not found
     //TODO: Add integration test to verify revm handles block_hash access based on evm version
     //
     //TODO: Test the canonicalize function with self destruct in uncle block

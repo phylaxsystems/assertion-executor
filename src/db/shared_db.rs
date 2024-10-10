@@ -37,7 +37,7 @@ use std::{
 #[derive(Debug, Clone)]
 pub struct SharedDB<const BLOCKS_TO_RETAIN: usize> {
     mem_db: Arc<RwLock<MemoryDb<BLOCKS_TO_RETAIN>>>,
-    fs_db: Arc<Mutex<FsDb<BLOCKS_TO_RETAIN>>>,
+    fs_db: Arc<Mutex<FsDb>>,
 }
 
 #[cfg(any(test, feature = "test"))]
@@ -82,7 +82,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
     pub fn new(path: &Path) -> Result<Self, FsDbError> {
         Ok(Self {
             mem_db: Arc::new(RwLock::new(MemoryDb::default())),
-            fs_db: Arc::new(Mutex::new(FsDb::<BLOCKS_TO_RETAIN>::new(path)?)),
+            fs_db: Arc::new(Mutex::new(FsDb::new(path)?)),
         })
     }
 

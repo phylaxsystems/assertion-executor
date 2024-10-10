@@ -103,6 +103,11 @@ pub struct ValueHistory<T> {
 }
 
 impl<T> ValueHistory<T> {
+    /// Returns the number of values in the ValueHistory.
+    pub fn len(&self) -> usize {
+        self.value_history.len()
+    }
+
     /// Returns true if the ValueHistory is empty.
     pub fn is_empty(&self) -> bool {
         self.value_history.is_empty()
