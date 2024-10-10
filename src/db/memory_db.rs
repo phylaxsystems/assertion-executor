@@ -436,19 +436,18 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
         self.block_hashes
             .insert(block_changes.block_num, block_changes.block_hash);
 
-        //TODO: Remove the oldest block changes if the length of block changes is greater than 256
-        let pruneable_block_num = block_changes
-            .block_num
-            .checked_sub(BLOCKS_TO_RETAIN as u64)
-            .unwrap_or(0);
+        //Remove the pruneable block changes
+        let pruneable_block_num = block_changes.block_num.checked_sub(BLOCKS_TO_RETAIN as u64);
 
         let mut block_changes_to_remove = Vec::new();
-        while let Some(block_change) = self.block_changes.front() {
-            if block_change.block_num < pruneable_block_num {
-                block_changes_to_remove.push(block_change.block_num);
-                self.block_changes.pop_front();
-            } else {
-                break;
+        if let Some(pruneable_block_num) = pruneable_block_num {
+            while let Some(block_change) = self.block_changes.front() {
+                if block_change.block_num <= pruneable_block_num {
+                    block_changes_to_remove.push(block_change.block_num);
+                    self.block_changes.pop_front();
+                } else {
+                    break;
+                }
             }
         }
 
@@ -939,7 +938,7 @@ mod test {
         //TODO: improve
         #[test]
         fn test_commit_block() {
-            let mut db = MemoryDb::<5>::default();
+            let mut db = MemoryDb::<1>::default();
             let address = random_bytes().into();
             let new_account_info = AccountInfo {
                 nonce: 1,
@@ -970,6 +969,12 @@ mod test {
             )]);
 
             db.commit_block(BlockChanges {
+                block_num: 0,
+                block_hash: random_bytes(),
+                state_changes: changes.clone(),
+            });
+
+            let res = db.commit_block(BlockChanges {
                 block_num: 1,
                 block_hash: random_bytes(),
                 state_changes: changes.clone(),
@@ -977,6 +982,7 @@ mod test {
 
             // Verify the changes
             assert_eq!(db.canonical_block_num, 1);
+            assert_eq!(&db.canonical_block_hash, db.block_hashes.get(&1).unwrap());
 
             assert_eq!(
                 db.code_by_hash_ref(new_account_info.code_hash).unwrap(),
@@ -995,6 +1001,22 @@ mod test {
             let block_changes = db.block_changes.pop_back().unwrap();
 
             assert_eq!(block_changes.block_num, 1);
+            assert_eq!(&block_changes.block_hash, db.block_hashes.get(&1).unwrap());
+            assert_eq!(block_changes.state_changes, changes);
+
+            assert_eq!(res.block_changes, block_changes);
+            assert_eq!(res.block_changes_to_remove, vec![0]);
+            assert_eq!(
+                res.code_hashes_to_insert,
+                vec![(new_account_info.code_hash, new_code)]
+            );
+
+            println!("{:#?}", res.account_value_histories);
+            println!("{:#?}", res.storage_value_histories);
+            assert_eq!(res.account_value_histories.len(), 1);
+            assert_eq!(res.storage_value_histories.len(), 1);
+            assert_eq!(res.account_value_histories[0].value_history.len(), 2);
+            assert_eq!(res.storage_value_histories[0].value_history.len(), 2);
         }
     }
 
@@ -1056,10 +1078,8 @@ mod test {
                 )]),
             };
             db.commit_block(block_changes_1.clone());
-            println!("block_hashes {:#?}", db.block_hashes);
 
             let result = db.handle_reorg(block_changes_0.block_hash).unwrap();
-            println!("block_hashes {:#?}", db.block_hashes);
 
             assert_eq!(result.block_numbers_to_remove, vec![1]);
 
