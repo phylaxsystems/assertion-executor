@@ -5,7 +5,6 @@ use crate::primitives::{
     Address,
     AssertionContract,
     Bytecode,
-    TransactionBundle,
     TxEnv,
     TxKind,
     U256,
@@ -21,14 +20,11 @@ use revm::primitives::{
 pub const COUNTER_CODE : Bytes= bytes!("6080604052348015600f57600080fd5b506004361060325760003560e01c80638381f58a146037578063d09de08a146051575b600080fd5b603f60005481565b60405190815260200160405180910390f35b60576059565b005b600080549080606683606d565b9190505550565b600060018201608c57634e487b7160e01b600052601160045260246000fd5b506001019056fea2646970667358221220e286ad6519f82d6863d59b6024c676007347de449fb04de9aa0b47e14513e85a64736f6c63430008190033");
 pub const COUNTER_ADDRESS: Address = Address::new([1u8; 20]);
 
-pub fn counter_call() -> TransactionBundle {
-    TransactionBundle {
-        decoded: TxEnv {
-            transact_to: TxKind::Call(COUNTER_ADDRESS),
-            data: fixed_bytes!("d09de08a").into(),
-            ..TxEnv::default()
-        },
-        raw: "".to_string(),
+pub fn counter_call() -> TxEnv {
+    TxEnv {
+        transact_to: TxKind::Call(COUNTER_ADDRESS),
+        data: fixed_bytes!("d09de08a").into(),
+        ..TxEnv::default()
     }
 }
 
@@ -48,15 +44,13 @@ pub fn counter_assertion() -> AssertionContract {
     AssertionContract {
         code: Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE),
         code_hash: keccak256(SIMPLE_ASSERTION_COUNTER_CODE),
-        fn_selectors: vec![fixed_bytes!("c667b77f").into()],
+        fn_selectors: vec![fixed_bytes!("c667b77f")],
     }
 }
 
 /// Returns a random FixedBytes of length N
 pub fn random_bytes<const N: usize>() -> FixedBytes<N> {
     let mut value = [0u8; N];
-    for i in 0..N {
-        value[i] = rand::random();
-    }
+    value.iter_mut().for_each(|x| *x = rand::random());
     FixedBytes::new(value)
 }

@@ -1,12 +1,19 @@
-use crate::error::ExecutorError;
+use crate::{
+    db::fs::serde::StorageSlotKey,
+    error::ExecutorError,
+};
 pub use revm::primitives::{
     address,
     Account,
     AccountInfo,
+    AccountStatus,
     Address,
     BlockEnv,
     Bytecode,
+    Bytes,
     EVMError,
+    EvmStorage,
+    EvmStorageSlot,
     ExecutionResult,
     FixedBytes,
     TxEnv,
@@ -18,6 +25,7 @@ pub use revm::primitives::{
 use std::collections::{
     BTreeMap,
     HashMap,
+    HashSet,
 };
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -25,15 +33,6 @@ pub struct AssertionContract {
     pub fn_selectors: Vec<FixedBytes<4>>,
     pub code: Bytecode,
     pub code_hash: B256,
-}
-
-pub type BuiltBlock = (Vec<TransactionBundle>, BlockEnv);
-
-/// Contains raw TxEnv as well as the received RPC call.
-#[derive(Debug, Clone, Default)]
-pub struct TransactionBundle {
-    pub decoded: TxEnv,
-    pub raw: String,
 }
 
 pub struct AssertionId {
@@ -48,11 +47,47 @@ pub struct AssertionResult {
 
 pub type StateChanges = HashMap<Address, Account>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BlockChanges {
     pub block_num: u64,
     pub block_hash: B256,
     pub state_changes: StateChanges,
+}
+
+///code_by_hash mapping is currently append only.
+///Code hashes can only be removed if all accounts with that code hash are self destructed, or
+///reorged out of creation.
+///
+///Not handling this could result in minor storage bloat;
+#[derive(Debug, Clone, Default)]
+pub struct TouchedKeys {
+    pub basic: HashSet<Address>,
+    pub storage: HashSet<StorageSlotKey>,
+}
+impl TouchedKeys {
+    pub fn extend(&mut self, other: TouchedKeys) {
+        self.basic.extend(other.basic);
+        self.storage.extend(other.storage);
+    }
+}
+
+impl BlockChanges {
+    pub fn touched_keys(&self) -> TouchedKeys {
+        self.state_changes.iter().fold(
+            TouchedKeys::default(),
+            |mut touched_keys, (address, account)| {
+                touched_keys.basic.insert(*address);
+
+                account.storage.keys().for_each(|slot| {
+                    touched_keys.storage.insert(StorageSlotKey {
+                        address: *address,
+                        slot: *slot,
+                    });
+                });
+                touched_keys
+            },
+        )
+    }
 }
 
 impl AssertionResult {
@@ -64,10 +99,20 @@ impl AssertionResult {
 /// A history of values at different block numbers.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ValueHistory<T> {
-    value_history: BTreeMap<u64, T>,
+    pub value_history: BTreeMap<u64, T>,
 }
 
 impl<T> ValueHistory<T> {
+    /// Returns the number of values in the ValueHistory.
+    pub fn len(&self) -> usize {
+        self.value_history.len()
+    }
+
+    /// Returns true if the ValueHistory is empty.
+    pub fn is_empty(&self) -> bool {
+        self.value_history.is_empty()
+    }
+
     /// Get the latest value.
     /// Returns None if the ValueHistory is empty.
     pub fn get_latest(&self) -> Option<&T> {

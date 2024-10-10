@@ -131,7 +131,7 @@ mod tests {
 
         for block_num in [uint!(0_U256), uint!(1_U256)] {
             let write_req = AssertionStoreRequest::Write {
-                block_num: block_num.clone(),
+                block_num,
                 assertions: vec![(COUNTER_ADDRESS, vec![counter_assertion()])],
             };
 
