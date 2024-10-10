@@ -91,6 +91,11 @@ impl FsDb {
         })
     }
 
+    /// Create a new file-system database from a sled config.
+    pub fn new_with_config(config: Config) -> Result<Self, FsDbError> {
+        Ok(Self { db: config.open()? })
+    }
+
     /// Handle a reorg by removing the blocks from the database and inserting the new canonical
     /// block.
     pub fn handle_reorg(
