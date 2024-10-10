@@ -4,5 +4,5 @@ use std::io::Error as IoError;
 pub enum FsDbError {
     /// An IO error occurred during a sled operation.
     #[error("Sled Io Error: {0}")]
-    IoError(#[from] IoError),
+    SledError(#[from] IoError),
 }
