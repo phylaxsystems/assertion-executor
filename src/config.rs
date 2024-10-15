@@ -24,14 +24,27 @@ pub struct ExecutorConfig {
     pub reth_path: Option<String>,
 }
 
+/// 
 #[macro_export]
-macro_rules! select_mode {
+macro_rules! init_mem_db {
     (
         $config:expr
-    ) => {
+    ) => {{
+        let mut mem_db = assertion_executor::db::MemoryDb::default();
+
         if $config.reth_path.is_some() {
-            return Ok(());
+            let config = sled::Config::new()
+                .path($config.db_path.clone())
+                .cache_capacity_bytes($config.cache_size)
+                .zstd_compression_level($config.zstd_compression_level)
+                .entry_cache_percent($config.entry_cache_percent);
+
+            let exported_sled = sled::Db::open_with_config(&config)?;
+
+            mem_db.load_into_self(&exported_sled)?;
         }
-    };
+
+        mem_db
+    }};
 }
 
