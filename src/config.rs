@@ -1,0 +1,25 @@
+use clap_derive::Parser;
+
+#[derive(Parser, Debug, Clone, Default)]
+#[command(author, version, about, long_about = None)]
+pub struct ExecutorConfig {
+    /// Path of the database, defaults to `./executor`.
+    #[arg(long, default_value = "./executor")]
+    pub db_path: String,
+    /// Cache size in bytes, defaults to 512mb.
+    #[arg(long, default_value = "536870912")]
+    pub cache_size: usize,
+    /// The percentage of the cache that is dedicated to the
+    /// scan-resistant entry cache.
+    #[arg(long, default_value = "20")]
+    pub entry_cache_percent: u8,
+    /// The zstd compression level to use when writing data to disk.
+    /// Defaults to 3.
+    #[arg(long, default_value = "3")]
+    pub zstd_compression_level: i32,
+    /// If set, the executor will open an exported reth
+    /// database, and load it into the MemoryDb, store
+    /// MemoryDb in executor Db and exit.
+    #[arg(long, default_value = "None")]
+    pub reth_path: Option<String>,
+}
