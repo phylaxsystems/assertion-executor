@@ -1,4 +1,5 @@
 mod config;
+
 use clap::Parser;
 
 use assertion_executor::*;
@@ -9,6 +10,8 @@ use anyhow::Result;
 async fn main() -> Result<()> {
 	// Parse CLI args
 	let config = config::ExecutorConfig::parse();
+
+	select_mode!(config);
 
 	Ok(())
 }

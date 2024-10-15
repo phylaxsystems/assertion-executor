@@ -23,3 +23,15 @@ pub struct ExecutorConfig {
     #[arg(long, default_value = "None")]
     pub reth_path: Option<String>,
 }
+
+#[macro_export]
+macro_rules! select_mode {
+    (
+        $config:expr
+    ) => {
+        if $config.reth_path.is_some() {
+            return Ok(());
+        }
+    };
+}
+
