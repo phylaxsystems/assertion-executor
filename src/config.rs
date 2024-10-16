@@ -35,7 +35,7 @@ macro_rules! init_mem_db {
 
         if $config.reth_path.is_some() {
             let config = sled::Config::new()
-                .path($config.db_path.clone())
+                .path($config.reth_path.clone().unwrap())
                 .cache_capacity_bytes($config.cache_size)
                 .zstd_compression_level($config.zstd_compression_level)
                 .entry_cache_percent($config.entry_cache_percent);
@@ -49,6 +49,7 @@ macro_rules! init_mem_db {
     }};
 }
 
+/// Tries to open the sled database given the configuration and panics if unable.
 #[macro_export]
 macro_rules! open_sled {
     (
