@@ -29,7 +29,8 @@ pub struct ExecutorConfig {
 #[macro_export]
 macro_rules! init_mem_db {
     (
-        $config:expr
+        $config:expr,
+        $db:expr
     ) => {{
         let mut mem_db = assertion_executor::db::MemoryDb::default();
 
@@ -42,7 +43,9 @@ macro_rules! init_mem_db {
 
             let exported_sled = sled::Db::open_with_config(&config)?;
 
-            mem_db.load_into_self(&exported_sled)?;
+            mem_db.load_from_exported_sled(&exported_sled)?;
+        } else {
+            
         }
 
         mem_db

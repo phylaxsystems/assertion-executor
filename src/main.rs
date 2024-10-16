@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 	// Open the executor Db
 	let db: Db<LEAF_FANOUT> = open_sled!(config);
 
-	let memory_db: MemoryDb<64> = init_mem_db!(config);
+	let memory_db: MemoryDb<64> = init_mem_db!(config, &db);
 
 	Ok(())
 }
