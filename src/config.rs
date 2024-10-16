@@ -24,7 +24,8 @@ pub struct ExecutorConfig {
     pub reth_path: Option<String>,
 }
 
-/// 
+/// Initialize the `MemoryDb` from either the executor database or from
+/// an exported sled database.
 #[macro_export]
 macro_rules! init_mem_db {
     (
@@ -45,6 +46,24 @@ macro_rules! init_mem_db {
         }
 
         mem_db
+    }};
+}
+
+#[macro_export]
+macro_rules! open_sled {
+    (
+        $config:expr
+    ) => {{
+        let config = sled::Config::new()
+            .path($config.db_path.clone())
+            .cache_capacity_bytes($config.cache_size)
+            .zstd_compression_level($config.zstd_compression_level)
+            .entry_cache_percent($config.entry_cache_percent);
+
+        match sled::Db::open_with_config(&config) {
+            Ok(rax) => rax,
+            Err(e) => panic!("Failed to open sled database: {}", e),
+        }
     }};
 }
 
