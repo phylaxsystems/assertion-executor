@@ -2,8 +2,6 @@ mod config;
 
 use assertion_executor::db::MemoryDb;
 
-use sled::Db;
-
 use clap::Parser;
 
 use anyhow::Result;
@@ -19,10 +17,11 @@ async fn main() -> Result<()> {
 	// Parse CLI args
 	let config = config::ExecutorConfig::parse();
 
-	// Open the executor Db
-	let db: Db<LEAF_FANOUT> = open_sled!(config);
+	// Initialize the memory db
+	let memory_db: MemoryDb<64> = init_mem_db!(config);
 
-	let memory_db: MemoryDb<64> = init_mem_db!(config, &db);
+	// Create the `SharedDb`
+	let shared_db = create_shared_db!(memory_db, config);
 
 	Ok(())
 }

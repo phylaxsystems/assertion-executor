@@ -18,8 +18,6 @@ use crate::{
     },
 };
 
-use tracing::error;
-
 use std::{
     path::Path,
     sync::{
@@ -28,6 +26,10 @@ use std::{
         RwLock,
     },
 };
+
+use sled::Config;
+
+use tracing::error;
 
 /// A shared database that maintains a memory database and a file-system database.
 ///
@@ -83,6 +85,14 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         Ok(Self {
             mem_db: Arc::new(RwLock::new(MemoryDb::default())),
             fs_db: Arc::new(Mutex::new(FsDb::new(path)?)),
+        })
+    }
+
+    /// Creates a new `SharedDb` struct from an existing `MemoryDb` and sled `Config`.
+    pub fn new_with_config(mem_db: MemoryDb<BLOCKS_TO_RETAIN>, config: Config) -> Result<Self, FsDbError> {
+        Ok(Self {
+            mem_db: Arc::new(RwLock::new(mem_db)),
+            fs_db: Arc::new(Mutex::new(FsDb::new_with_config(config)?)),
         })
     }
 

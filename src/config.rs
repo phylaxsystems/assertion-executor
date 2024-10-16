@@ -29,8 +29,7 @@ pub struct ExecutorConfig {
 #[macro_export]
 macro_rules! init_mem_db {
     (
-        $config:expr,
-        $db:expr
+        $config:expr
     ) => {{
         let mut mem_db = assertion_executor::db::MemoryDb::default();
 
@@ -44,8 +43,6 @@ macro_rules! init_mem_db {
             let exported_sled = sled::Db::open_with_config(&config)?;
 
             mem_db.load_from_exported_sled(&exported_sled)?;
-        } else {
-            
         }
 
         mem_db
@@ -54,19 +51,22 @@ macro_rules! init_mem_db {
 
 /// Tries to open the sled database given the configuration and panics if unable.
 #[macro_export]
-macro_rules! open_sled {
+macro_rules! create_shared_db {
     (
+        $mem_db:expr,
         $config:expr
     ) => {{
-        let config = sled::Config::new()
+        let sled_config = sled::Config::new()
             .path($config.db_path.clone())
             .cache_capacity_bytes($config.cache_size)
             .zstd_compression_level($config.zstd_compression_level)
             .entry_cache_percent($config.entry_cache_percent);
 
-        match sled::Db::open_with_config(&config) {
-            Ok(rax) => rax,
-            Err(e) => panic!("Failed to open sled database: {}", e),
+        match assertion_executor::db::SharedDB::new_with_config($mem_db, sled_config) {
+            Ok(db) => db,
+            Err(e) => {
+                panic!("Failed to open sled database: {}", e);
+            }
         }
     }};
 }
