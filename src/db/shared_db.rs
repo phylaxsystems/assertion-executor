@@ -42,16 +42,6 @@ pub struct SharedDB<const BLOCKS_TO_RETAIN: usize> {
     fs_db: Arc<Mutex<FsDb>>,
 }
 
-#[cfg(any(test, feature = "test"))]
-impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
-    pub fn new_test() -> Self {
-        Self {
-            mem_db: Arc::new(RwLock::new(MemoryDb::default())),
-            fs_db: Arc::new(Mutex::new(FsDb::new_test())),
-        }
-    }
-}
-
 impl<const BLOCKS_TO_RETAIN: usize> DatabaseRef for SharedDB<BLOCKS_TO_RETAIN> {
     type Error = NotFoundError;
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -106,13 +96,9 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
 
         let fs_db = self.fs_db.clone();
         if let Some(fs_db_params) = db.handle_reorg(block_hash) {
-            std::thread::spawn({
-                move || {
-                    let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());
-                    let _ = fs_db_lock.handle_reorg(fs_db_params).map_err(|e| {
-                        error!("Error handling reorg in FsDb: {:?}", e);
-                    });
-                }
+            let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = fs_db_lock.handle_reorg(fs_db_params).map_err(|e| {
+                error!("Error handling reorg in FsDb: {:?}", e);
             });
         }
     }
@@ -122,15 +108,21 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         let fs_db_params = db.commit_block(block_changes);
 
         let fs_db = self.fs_db.clone();
-        std::thread::spawn({
-            move || {
-                let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());
-                let _ = fs_db_lock.commit_block(fs_db_params).map_err(|e| {
-                    error!("Error committing block to FsDb: {:?}", e);
-                });
-            }
+        let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = fs_db_lock.commit_block(fs_db_params).map_err(|e| {
+            error!("Error committing block to FsDb: {:?}", e);
         });
     }
 }
 
 //TODO: test block hash not found
+
+#[cfg(any(test, feature = "test"))]
+impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
+    pub fn new_test() -> Self {
+        Self {
+            mem_db: Arc::new(RwLock::new(MemoryDb::default())),
+            fs_db: Arc::new(Mutex::new(FsDb::new_test())),
+        }
+    }
+}
