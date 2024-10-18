@@ -1,11 +1,14 @@
-use crate::primitives::{
-    AccountInfo,
-    Address,
-    BlockChanges,
-    Bytecode,
-    ValueHistory,
-    B256,
-    U256,
+use crate::{
+    db::MemoryDb,
+    primitives::{
+        AccountInfo,
+        Address,
+        BlockChanges,
+        Bytecode,
+        ValueHistory,
+        B256,
+        U256,
+    },
 };
 
 use super::{
@@ -177,6 +180,19 @@ impl FsDb {
         Ok(())
     }
 
+    /// Commits an entire `MemoryDb` to the `FsDb`.
+    pub fn commit_memory_db<const BLOCKS_TO_RETAIN: usize>(
+        &self,
+        mem_db: &MemoryDb<BLOCKS_TO_RETAIN>,
+    ) -> Result<bool, FsDbError> {
+        self.write_storage_to_tree(mem_db)?;
+        self.write_basic_to_tree(mem_db)?;
+        self.write_block_hashes_to_tree(mem_db)?;
+        self.write_code_by_hash_to_tree(mem_db)?;
+
+        Ok(true)
+    }
+
     fn account_value_history_update_batch(value_historys: Vec<AccountValueHistory>) -> Batch {
         value_historys.into_iter().fold(
             Batch::default(),
@@ -226,6 +242,75 @@ impl FsDb {
     }
     fn storage_tree(&self) -> Result<sled::Tree, FsDbError> {
         Ok(self.db.open_tree(Self::STORAGE)?)
+    }
+
+    /// Write the entirety of the storage contents of a `MemoryDb` to a sled batch.
+    fn write_storage_to_tree<const BLOCKS_TO_RETAIN: usize>(
+        &self,
+        mem_db: &MemoryDb<BLOCKS_TO_RETAIN>,
+    ) -> Result<(), FsDbError> {
+        let batch = mem_db
+            .storage
+            .iter()
+            .fold(Batch::default(), |mut batch, (key, value)| {
+                let serialized_value = bincode::serialize(&value).unwrap();
+                batch.insert(key.serialize(), serialized_value);
+                batch
+            });
+
+        self.storage_tree()?.apply_batch(batch)?;
+        Ok(())
+    }
+
+    /// Write the entirety of the `basic` contents of a `MemoryDb` to a sled batch.
+    fn write_basic_to_tree<const BLOCKS_TO_RETAIN: usize>(
+        &self,
+        mem_db: &MemoryDb<BLOCKS_TO_RETAIN>,
+    ) -> Result<(), FsDbError> {
+        let batch = mem_db
+            .basic
+            .iter()
+            .fold(Batch::default(), |mut batch, (key, value)| {
+                batch.insert(key.serialize(), value.serialize());
+                batch
+            });
+
+        self.basic_tree()?.apply_batch(batch)?;
+        Ok(())
+    }
+
+    /// Write the entirety of the `block_hashes` contents of a `MemoryDb` to a sled batch.
+    fn write_block_hashes_to_tree<const BLOCKS_TO_RETAIN: usize>(
+        &self,
+        mem_db: &MemoryDb<BLOCKS_TO_RETAIN>,
+    ) -> Result<(), FsDbError> {
+        let batch = mem_db
+            .block_hashes
+            .iter()
+            .fold(Batch::default(), |mut batch, (key, value)| {
+                batch.insert(key.serialize(), value.serialize());
+                batch
+            });
+
+        self.block_hash_tree()?.apply_batch(batch)?;
+        Ok(())
+    }
+
+    /// Write the entirety of the `code_by_hash` contents of a `MemoryDb` to a sled batch.
+    fn write_code_by_hash_to_tree<const BLOCKS_TO_RETAIN: usize>(
+        &self,
+        mem_db: &MemoryDb<BLOCKS_TO_RETAIN>,
+    ) -> Result<(), FsDbError> {
+        let batch = mem_db
+            .code_by_hash
+            .iter()
+            .fold(Batch::default(), |mut batch, (key, value)| {
+                batch.insert(key.serialize(), value.serialize());
+                batch
+            });
+
+        self.code_by_hash_tree()?.apply_batch(batch)?;
+        Ok(())
     }
 }
 #[cfg(test)]

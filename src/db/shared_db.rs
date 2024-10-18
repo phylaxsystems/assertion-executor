@@ -79,7 +79,10 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
     }
 
     /// Creates a new `SharedDb` struct from an existing `MemoryDb` and sled `Config`.
-    pub fn new_with_config(mem_db: MemoryDb<BLOCKS_TO_RETAIN>, config: Config) -> Result<Self, FsDbError> {
+    pub fn new_with_config(
+        mem_db: MemoryDb<BLOCKS_TO_RETAIN>,
+        config: Config,
+    ) -> Result<Self, FsDbError> {
         Ok(Self {
             mem_db: Arc::new(RwLock::new(mem_db)),
             fs_db: Arc::new(Mutex::new(FsDb::new_with_config(config)?)),
@@ -112,6 +115,20 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         let _ = fs_db_lock.commit_block(fs_db_params).map_err(|e| {
             error!("Error committing block to FsDb: {:?}", e);
         });
+    }
+
+    /// Commits the entire memory database to the file-system database.
+    pub fn commit_mem_db_to_fs(&mut self) -> Result<(), FsDbError> {
+        // Get fsdb lock
+        let fs_db = self.fs_db.clone();
+        let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Get mem_db lock
+        let mem_db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
+
+        fs_db_lock.commit_memory_db(&mem_db)?;
+
+        Ok(())
     }
 }
 

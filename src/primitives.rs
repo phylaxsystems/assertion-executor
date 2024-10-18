@@ -21,6 +21,10 @@ pub use revm::primitives::{
     B256,
     U256,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use std::collections::{
     BTreeMap,
@@ -97,7 +101,7 @@ impl AssertionResult {
 }
 
 /// A history of values at different block numbers.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ValueHistory<T> {
     pub value_history: BTreeMap<u64, T>,
 }

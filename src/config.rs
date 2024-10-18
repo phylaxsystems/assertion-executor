@@ -70,4 +70,3 @@ macro_rules! create_shared_db {
         }
     }};
 }
-

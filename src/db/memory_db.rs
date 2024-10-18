@@ -84,12 +84,12 @@ pub struct MemoryDb<const BLOCKS_TO_RETAIN: usize> {
     pub(super) block_hashes: BTreeMap<u64, B256>,
     /// Maps bytecode hashes to bytecode.
     pub(super) code_by_hash: HashMap<B256, Bytecode>,
+    /// Block Changes for the blocks that have not been pruned.
+    pub(super) block_changes: VecDeque<BlockChanges>,
     /// Hash of the head block.
     pub(super) canonical_block_hash: B256,
     /// Block number of the head block.
     pub(super) canonical_block_num: u64,
-    /// Block Changes for the blocks that have not been pruned.
-    pub(super) block_changes: VecDeque<BlockChanges>,
 }
 
 impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
@@ -801,9 +801,9 @@ mod test {
             Ok(())
         }
 
-
         #[test]
-        fn test_insert_multiple_storage_entries_with_load_from_exported_sled() -> Result<(), Box<dyn std::error::Error>> {
+        fn test_insert_multiple_storage_entries_with_load_from_exported_sled(
+        ) -> Result<(), Box<dyn std::error::Error>> {
             let sled_db = create_mock_sled_db();
             let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
             let header_numbers = sled_db.open_tree("HeaderNumbers")?;
@@ -830,7 +830,6 @@ mod test {
             let mut memory_db: MemoryDb<5> = MemoryDb::default();
             memory_db.load_from_exported_sled(&sled_db)?;
 
-
             assert!(memory_db.storage.contains_key::<Address>(&address.into()));
             let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
             assert_eq!(stored_storage.len(), storage_entries.len());
@@ -845,7 +844,6 @@ mod test {
 
             Ok(())
         }
-
     }
 
     mod memory_db_db_ref_tests {
