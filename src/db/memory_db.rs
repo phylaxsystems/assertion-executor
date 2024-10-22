@@ -55,7 +55,7 @@ use serde::{
 pub struct StorageMap(pub HashMap<Vec<u8>, Vec<u8>>);
 
 /// Type alias for the `MemoryDb` EVM storage struct.
-type EvmStorage = HashMap<Address, HashMap<U256, ValueHistory<U256>>>;
+pub type EvmStorage = HashMap<Address, HashMap<U256, ValueHistory<U256>>>;
 
 #[derive(Error, Debug)]
 pub enum MemoryDbError {

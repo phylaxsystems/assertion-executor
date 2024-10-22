@@ -1,5 +1,8 @@
 use crate::{
-    db::MemoryDb,
+    db::{
+        MemoryDb,
+        memory_db::EvmStorage,
+    },
     primitives::{
         AccountInfo,
         Address,
@@ -14,12 +17,19 @@ use crate::{
 use super::{
     serde::{
         Serialize,
+        Deserialize,
         StorageSlotKey,
     },
     FsDbError,
 };
 
-use std::path::Path;
+use std::{
+    path::Path,
+    collections::{
+        HashMap,
+        BTreeMap,
+    },
+};
 
 use sled::{
     Batch,
@@ -312,7 +322,87 @@ impl FsDb {
         self.code_by_hash_tree()?.apply_batch(batch)?;
         Ok(())
     }
+
+    /// Loads the entirity of the `storage` table into an `EvmStorage` struct.
+    pub fn load_storage(&self) -> Result<EvmStorage, FsDbError> {
+        let tree = self.storage_tree()?;
+        let mut storage = EvmStorage::new();
+
+        // Iterate over the storage tree and insert the values into the `EvmStorage` struct.
+        for result in tree.iter() {
+            let (key, value) = result?;
+            
+            // Get the address from the key bytes using from_slice
+            let address = Address::from_slice(&key);
+            
+            // Deserialize the value using bincode into HashMap<U256, ValueHistory<U256>>
+            let value_history: HashMap<U256, ValueHistory<U256>> = bincode::deserialize(&value).unwrap();
+            
+            // Insert into storage map
+            storage.insert(address, value_history);
+        }
+
+        Ok(storage)
+    }
+
+    /// Loads the entire `basic` table into a `HashMap<Address, ValueHistory<AccountInfo>>`.
+    pub fn load_basic(&self) -> Result<HashMap<Address, ValueHistory<AccountInfo>>, FsDbError> {
+        let tree = self.basic_tree()?;
+        let mut basic = HashMap::new();
+
+        for result in tree.iter() {
+            let (key, value) = result?;
+            
+            // Get the address from the key bytes using from_slice
+            let address = Address::from_slice(&key);
+            
+            // Deserialize value using our custom Deserialize trait
+            let value_history = ValueHistory::<AccountInfo>::deserialize(value).unwrap();
+            
+            basic.insert(address, value_history);
+        }
+
+        Ok(basic)
+    }
+
+    /// Loads the entire `block_hashes` table into a `BTreeMap<u64, B256>`.
+    pub fn load_block_hashes(&self) -> Result<BTreeMap<u64, B256>, FsDbError> {
+        let tree = self.block_hash_tree()?;
+        let mut block_hashes = BTreeMap::new();
+
+        for result in tree.iter() {
+            let (key, value) = result?;
+            
+            // Both key and value use our custom Deserialize trait
+            let block_num = u64::deserialize(key).unwrap();
+            let block_hash = B256::deserialize(value).unwrap();
+            
+            block_hashes.insert(block_num, block_hash);
+        }
+
+        Ok(block_hashes)
+    }
+
+    /// Loads the entire `code_by_hash` table into a `HashMap<B256, Bytecode>`.
+    pub fn load_code_by_hash(&self) -> Result<HashMap<B256, Bytecode>, FsDbError> {
+        let tree = self.code_by_hash_tree()?;
+        let mut code_by_hash = HashMap::new();
+
+        for result in tree.iter() {
+            let (key, value) = result?;
+            
+            // Key uses B256::deserialize, value is raw bytes for Bytecode
+            let code_hash = B256::deserialize(key).unwrap();
+            let code = Bytecode::deserialize(value).unwrap();
+            
+            code_by_hash.insert(code_hash, code);
+        }
+
+        Ok(code_by_hash)
+    }
+
 }
+
 #[cfg(test)]
 mod tests {
     use super::{

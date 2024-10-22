@@ -27,6 +27,7 @@ use std::{
     },
 };
 
+use revm::primitives::EvmStorage;
 use sled::Config;
 
 use tracing::error;
@@ -89,6 +90,11 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         })
     }
 
+    /// Loads whatever we have in the `FsDb` to the `MemoryDb`.
+    pub fn initialize(&mut self) -> Result<(), FsDbError> {
+        unimplemented!()
+    }
+
     pub fn canonicalize(&self, block_hash: B256) {
         let mut db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
 
@@ -130,6 +136,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
 
         Ok(())
     }
+
 }
 
 //TODO: test block hash not found
