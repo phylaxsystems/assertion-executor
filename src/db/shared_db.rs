@@ -89,9 +89,24 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         })
     }
 
-    /// Loads whatever we have in the `FsDb` to the `MemoryDb`.
-    pub fn initialize(&mut self) -> Result<(), FsDbError> {
-        
+    /// Load the entire `FsDb` into the `MemoryDb`.
+    pub fn initialize(&mut self) -> Result<bool, FsDbError> {
+        let mut mem_lock = self.mem_db
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let fs_lock = self.fs_db
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        mem_lock.storage = fs_lock.load_storage()?;
+        mem_lock.basic = fs_lock.load_basic()?;
+        (mem_lock.block_hashes, mem_lock.canonical_block_num, mem_lock.canonical_block_hash) = fs_lock.load_block_hashes()?;
+        mem_lock.code_by_hash = fs_lock.load_code_by_hash()?;
+
+        // TODO: we do not check if we are synced to the chain head
+
+        Ok(true)
     }
 
     pub fn canonicalize(&self, block_hash: B256) {

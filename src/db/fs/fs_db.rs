@@ -31,6 +31,7 @@ use std::{
     },
 };
 
+use revm::primitives::FixedBytes;
 use sled::{
     Batch,
     Config,
@@ -366,9 +367,12 @@ impl FsDb {
     }
 
     /// Loads the entire `block_hashes` table into a `BTreeMap<u64, B256>`.
-    pub fn load_block_hashes(&self) -> Result<BTreeMap<u64, B256>, FsDbError> {
+    pub fn load_block_hashes(&self) -> Result<(BTreeMap<u64, B256>, u64, FixedBytes<32>), FsDbError> {
         let tree = self.block_hash_tree()?;
         let mut block_hashes = BTreeMap::new();
+        let mut canonical_block_num = 0;
+        let mut canonical_block_hash = FixedBytes::<32>::default();
+
 
         for result in tree.iter() {
             let (key, value) = result?;
@@ -376,11 +380,16 @@ impl FsDb {
             // Both key and value use our custom Deserialize trait
             let block_num = u64::deserialize(key).unwrap();
             let block_hash = B256::deserialize(value).unwrap();
-            
+
+            if block_num > canonical_block_num {
+                canonical_block_num = block_num;
+                canonical_block_hash = block_hash;
+            }
+
             block_hashes.insert(block_num, block_hash);
         }
 
-        Ok(block_hashes)
+        Ok((block_hashes, canonical_block_num, canonical_block_hash))
     }
 
     /// Loads the entire `code_by_hash` table into a `HashMap<B256, Bytecode>`.
