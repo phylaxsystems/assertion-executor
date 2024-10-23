@@ -109,12 +109,12 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         Ok(true)
     }
 
-    pub fn canonicalize(&self, block_hash: B256) {
+    pub fn canonicalize(&self, block_hash: B256) -> Result<bool, FsDbError> {
         let mut db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
 
         // Return early if the requested block hash is already the canonical block hash.
         if db.canonical_block_hash == block_hash {
-            return;
+            return Ok(true);
         }
 
         let fs_db = self.fs_db.clone();
@@ -124,9 +124,11 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
                 error!("Error handling reorg in FsDb: {:?}", e);
             });
         }
+
+        Ok(true)
     }
 
-    pub fn commit_block(&mut self, block_changes: BlockChanges) {
+    pub fn commit_block(&mut self, block_changes: BlockChanges) -> Result<bool, FsDbError>{
         let mut db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
         let fs_db_params = db.commit_block(block_changes);
 
@@ -135,10 +137,12 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         let _ = fs_db_lock.commit_block(fs_db_params).map_err(|e| {
             error!("Error committing block to FsDb: {:?}", e);
         });
+
+        Ok(true)
     }
 
     /// Commits the entire memory database to the file-system database.
-    pub fn commit_mem_db_to_fs(&mut self) -> Result<(), FsDbError> {
+    pub fn commit_mem_db_to_fs(&mut self) -> Result<bool, FsDbError> {
         // Get fsdb lock
         let fs_db = self.fs_db.clone();
         let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());
@@ -148,7 +152,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
 
         fs_db_lock.commit_memory_db(&mem_db)?;
 
-        Ok(())
+        Ok(true)
     }
 }
 
