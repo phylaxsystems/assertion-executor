@@ -791,3 +791,304 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod test_fsdb_io {
+    use std::sync::Arc;
+    use super::*;
+    use crate::{
+        primitives::{Account, AccountStatus, Bytes, EvmStorageSlot, TouchedKeys, ValueHistory},
+        test_utils::random_bytes,
+    };
+    use std::collections::HashMap;
+
+    fn create_test_account_info() -> AccountInfo {
+        AccountInfo {
+            nonce: 1,
+            balance: U256::from(1000),
+            code_hash: random_bytes(),
+            code: Some(Bytecode::new_raw(Bytes::from(random_bytes::<64>()))),
+        }
+    }
+
+    mod test_write {
+        use super::*;
+
+        #[test]
+        fn test_write_storage() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Create test storage data
+            let address1: Address = random_bytes().into();
+            let address2: Address = random_bytes().into();
+            
+            let mut storage1 = HashMap::new();
+            let mut value_history1 = ValueHistory::new();
+            value_history1.insert(1, U256::from(100));
+            value_history1.insert(2, U256::from(200));
+            storage1.insert(U256::from(1), value_history1);
+
+            let mut storage2 = HashMap::new();
+            let mut value_history2 = ValueHistory::new();
+            value_history2.insert(1, U256::from(300));
+            value_history2.insert(2, U256::from(400));
+            storage2.insert(U256::from(2), value_history2);
+
+            mem_db.storage.insert(address1, storage1);
+            mem_db.storage.insert(address2, storage2);
+
+            // Verify write succeeds
+            assert!(fs_db.write_storage_to_tree(&mem_db).is_ok());
+
+            // Test writing empty storage
+            let empty_mem_db = MemoryDb::<5>::default();
+            assert!(fs_db.write_storage_to_tree(&empty_mem_db).is_ok());
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_write_basic() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Create test basic account data
+            let address1: Address = random_bytes().into();
+            let address2: Address = random_bytes().into();
+            
+            let mut history1 = ValueHistory::new();
+            history1.insert(1, create_test_account_info());
+            
+            let mut history2 = ValueHistory::new();
+            history2.insert(2, create_test_account_info());
+
+            mem_db.basic.insert(address1, history1);
+            mem_db.basic.insert(address2, history2);
+
+            // Verify write succeeds
+            assert!(fs_db.write_basic_to_tree(&mem_db).is_ok());
+
+            // Test writing account with no code
+            let mut no_code_history = ValueHistory::new();
+            let mut no_code_account = create_test_account_info();
+            no_code_account.code = None;
+            no_code_history.insert(1, no_code_account);
+            
+            mem_db.basic.clear();
+            mem_db.basic.insert(random_bytes().into(), no_code_history);
+            
+            assert!(fs_db.write_basic_to_tree(&mem_db).is_ok());
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_write_block_hashes() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Create test block hash data
+            mem_db.block_hashes.insert(1, random_bytes());
+            mem_db.block_hashes.insert(2, random_bytes());
+            mem_db.block_hashes.insert(3, random_bytes());
+            mem_db.canonical_block_num = 3;
+            mem_db.canonical_block_hash = mem_db.block_hashes[&3];
+
+            // Verify write succeeds
+            assert!(fs_db.write_block_hashes_to_tree(&mem_db).is_ok());
+
+            // Test writing empty block hashes
+            let empty_mem_db = MemoryDb::<5>::default();
+            assert!(fs_db.write_block_hashes_to_tree(&empty_mem_db).is_ok());
+
+            // Test writing non-sequential blocks
+            mem_db.block_hashes.clear();
+            mem_db.block_hashes.insert(1, random_bytes());
+            mem_db.block_hashes.insert(5, random_bytes());
+            mem_db.block_hashes.insert(10, random_bytes());
+            
+            assert!(fs_db.write_block_hashes_to_tree(&mem_db).is_ok());
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_write_code_by_hash() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Create test bytecode data
+            let code_hash1 = random_bytes();
+            let code_hash2 = random_bytes();
+            
+            let bytecode1 = Bytecode::new_raw(Bytes::from(random_bytes::<128>()));
+            let bytecode2 = Bytecode::new_raw(Bytes::from(random_bytes::<256>()));
+
+            mem_db.code_by_hash.insert(code_hash1, bytecode1);
+            mem_db.code_by_hash.insert(code_hash2, bytecode2);
+
+            // Verify write succeeds
+            assert!(fs_db.write_code_by_hash_to_tree(&mem_db).is_ok());
+
+            // Test writing empty code
+            let empty_mem_db = MemoryDb::<5>::default();
+            assert!(fs_db.write_code_by_hash_to_tree(&empty_mem_db).is_ok());
+
+            // Test writing large bytecode
+            let large_bytecode = Bytecode::new_raw(Bytes::from(random_bytes::<100_000>()));
+            mem_db.code_by_hash.clear();
+            mem_db.code_by_hash.insert(random_bytes(), large_bytecode);
+            
+            assert!(fs_db.write_code_by_hash_to_tree(&mem_db).is_ok());
+
+            Ok(())
+        }
+    }
+
+    mod test_load {
+        use super::*;
+
+        #[test]
+        fn test_load_storage() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Set up test data
+            let address1: Address = random_bytes().into();
+            let mut storage1 = HashMap::new();
+            let mut value_history1 = ValueHistory::new();
+            value_history1.insert(1, U256::from(100));
+            storage1.insert(U256::from(1), value_history1);
+            mem_db.storage.insert(address1, storage1.clone());
+
+            fs_db.write_storage_to_tree(&mem_db)?;
+
+            // Test loading data
+            let loaded_storage = fs_db.load_storage()?;
+            assert_eq!(loaded_storage.len(), mem_db.storage.len());
+            assert_eq!(loaded_storage.get(&address1), mem_db.storage.get(&address1));
+
+            // Test loading empty storage
+            fs_db.write_storage_to_tree(&MemoryDb::<5>::default())?;
+            let loaded_empty = fs_db.load_storage()?;
+            assert!(loaded_empty.is_empty());
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_load_basic() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Set up test data
+            let address = random_bytes().into();
+            let mut history = ValueHistory::new();
+            history.insert(1, create_test_account_info());
+            mem_db.basic.insert(address, history.clone());
+
+            fs_db.write_basic_to_tree(&mem_db)?;
+
+            // Test loading data
+            let loaded_basic = fs_db.load_basic()?;
+            assert_eq!(loaded_basic.len(), mem_db.basic.len());
+            assert_eq!(loaded_basic.get(&address), Some(&history));
+
+            // Test loading account with no code
+            let mut no_code_account = create_test_account_info();
+            no_code_account.code = None;
+            let mut no_code_history = ValueHistory::new();
+            no_code_history.insert(1, no_code_account.clone());
+            mem_db.basic.clear();
+            mem_db.basic.insert(address, no_code_history);
+            
+            fs_db.write_basic_to_tree(&mem_db)?;
+            let loaded_no_code = fs_db.load_basic()?;
+            assert_eq!(
+                loaded_no_code.get(&address).unwrap().get_latest().unwrap().code,
+                None
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_load_block_hashes() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Set up test data
+            let block_hash = random_bytes();
+            mem_db.block_hashes.insert(1, block_hash);
+            mem_db.canonical_block_num = 1;
+            mem_db.canonical_block_hash = block_hash;
+
+            fs_db.write_block_hashes_to_tree(&mem_db)?;
+
+            // Test loading data
+            let (loaded_hashes, loaded_num, loaded_hash) = fs_db.load_block_hashes()?;
+            assert_eq!(loaded_hashes, mem_db.block_hashes);
+            assert_eq!(loaded_num, mem_db.canonical_block_num);
+            assert_eq!(loaded_hash, mem_db.canonical_block_hash);
+
+            // Test loading empty state
+            fs_db.write_block_hashes_to_tree(&MemoryDb::<5>::default())?;
+            let (loaded_empty, num, hash) = fs_db.load_block_hashes()?;
+            assert!(loaded_empty.is_empty());
+            assert_eq!(num, 0);
+            assert_eq!(hash, FixedBytes::<32>::default());
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_load_code_by_hash() -> Result<(), FsDbError> {
+            let fs_db = FsDb::new_test();
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Set up test data
+            let code_hash = random_bytes();
+            let bytecode = Bytecode::new_raw(Bytes::from(random_bytes::<128>()));
+            mem_db.code_by_hash.insert(code_hash, bytecode.clone());
+
+            fs_db.write_code_by_hash_to_tree(&mem_db)?;
+
+            // Test loading data
+            let loaded_code = fs_db.load_code_by_hash()?;
+            assert_eq!(loaded_code.len(), mem_db.code_by_hash.len());
+            assert_eq!(loaded_code.get(&code_hash).unwrap().bytes_slice(), bytecode.bytes_slice());
+
+            // Test loading empty code
+            fs_db.write_code_by_hash_to_tree(&MemoryDb::<5>::default())?;
+            let loaded_empty = fs_db.load_code_by_hash()?;
+            assert!(loaded_empty.is_empty());
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_load_persistence() -> Result<(), FsDbError> {
+            // Create temp directory that will persist for test duration
+            let temp_dir = tempfile::tempdir()?;
+            let fs_db = FsDb::new(temp_dir.path())?;
+            let mut mem_db = MemoryDb::<5>::default();
+
+            // Create and write test data
+            let address = random_bytes().into();
+            let mut history = ValueHistory::new();
+            history.insert(1, create_test_account_info());
+            mem_db.basic.insert(address, history.clone());
+            
+            fs_db.write_basic_to_tree(&mem_db)?;
+            drop(fs_db);
+
+            // Create new instance and verify data persists
+            let new_fs_db = FsDb::new(temp_dir.path())?;
+            let loaded_basic = new_fs_db.load_basic()?;
+            assert_eq!(loaded_basic.get(&address), Some(&history));
+
+            Ok(())
+        }
+    }
+}
