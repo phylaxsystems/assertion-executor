@@ -34,6 +34,7 @@ macro_rules! init_mem_db {
         let mut mem_db = assertion_executor::db::MemoryDb::default();
 
         if $config.reth_path.is_some() {
+            println!("reth path present, importing reth data...");
             let config = sled::Config::new()
                 .path($config.reth_path.clone().unwrap())
                 .cache_capacity_bytes($config.cache_size)
@@ -43,6 +44,7 @@ macro_rules! init_mem_db {
             let exported_sled = sled::Db::open_with_config(&config)?;
 
             mem_db.load_from_exported_sled(&exported_sled)?;
+            println!("Done~!");
         }
 
         mem_db
@@ -68,5 +70,7 @@ macro_rules! create_shared_db {
                 panic!("Failed to open sled database: {}", e);
             }
         }
+
+        println!("Created shared db!");
     }};
 }
