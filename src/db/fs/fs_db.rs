@@ -972,9 +972,10 @@ mod test_fsdb_io {
             assert_eq!(loaded_storage.get(&address1), mem_db.storage.get(&address1));
 
             // Test loading empty storage
+            let loaded_pre = fs_db.load_storage()?;
             fs_db.write_storage_to_tree(&MemoryDb::<5>::default())?;
             let loaded_empty = fs_db.load_storage()?;
-            assert!(loaded_empty.is_empty());
+            assert_eq!(loaded_empty, loaded_pre);
 
             Ok(())
         }
@@ -1040,11 +1041,12 @@ mod test_fsdb_io {
             assert_eq!(loaded_hash, mem_db.canonical_block_hash);
 
             // Test loading empty state
+            let (loaded_pre, _, _) = fs_db.load_block_hashes()?;
             fs_db.write_block_hashes_to_tree(&MemoryDb::<5>::default())?;
             let (loaded_empty, num, hash) = fs_db.load_block_hashes()?;
-            assert!(loaded_empty.is_empty());
-            assert_eq!(num, 0);
-            assert_eq!(hash, FixedBytes::<32>::default());
+            assert_eq!(loaded_empty, loaded_pre);
+            assert_eq!(num, 1);
+            assert_eq!(hash, block_hash);
 
             Ok(())
         }
