@@ -128,7 +128,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         Ok(true)
     }
 
-    pub fn commit_block(&mut self, block_changes: BlockChanges) -> Result<bool, FsDbError>{
+    pub fn commit_block(&mut self, block_changes: BlockChanges) -> Result<bool, FsDbError> {
         let mut db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
         let fs_db_params = db.commit_block(block_changes);
 

@@ -323,7 +323,7 @@ fn test_execute_forked_tx() {
         ),
         ..Default::default()
     };
-    shared_db.commit_block(block_changes);
+    let _ = shared_db.commit_block(block_changes);
 
     let assertion_store = AssertionStore::default();
 
@@ -385,7 +385,7 @@ fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
     use std::collections::HashMap;
 
     let mut shared_db = SharedDB::<0>::new_test();
-    shared_db.commit_block(BlockChanges {
+    let _ = shared_db.commit_block(BlockChanges {
         state_changes: HashMap::from_iter(
             vec![(
                 COUNTER_ADDRESS,

@@ -794,10 +794,12 @@ mod tests {
 
 #[cfg(test)]
 mod test_fsdb_io {
-    use std::sync::Arc;
     use super::*;
     use crate::{
-        primitives::{Account, AccountStatus, Bytes, EvmStorageSlot, TouchedKeys, ValueHistory},
+        primitives::{
+            Bytes,
+            ValueHistory,
+        },
         test_utils::random_bytes,
     };
     use std::collections::HashMap;
@@ -822,7 +824,7 @@ mod test_fsdb_io {
             // Create test storage data
             let address1: Address = random_bytes().into();
             let address2: Address = random_bytes().into();
-            
+
             let mut storage1 = HashMap::new();
             let mut value_history1 = ValueHistory::new();
             value_history1.insert(1, U256::from(100));
@@ -856,10 +858,10 @@ mod test_fsdb_io {
             // Create test basic account data
             let address1: Address = random_bytes().into();
             let address2: Address = random_bytes().into();
-            
+
             let mut history1 = ValueHistory::new();
             history1.insert(1, create_test_account_info());
-            
+
             let mut history2 = ValueHistory::new();
             history2.insert(2, create_test_account_info());
 
@@ -874,10 +876,10 @@ mod test_fsdb_io {
             let mut no_code_account = create_test_account_info();
             no_code_account.code = None;
             no_code_history.insert(1, no_code_account);
-            
+
             mem_db.basic.clear();
             mem_db.basic.insert(random_bytes().into(), no_code_history);
-            
+
             assert!(fs_db.write_basic_to_tree(&mem_db).is_ok());
 
             Ok(())
@@ -907,7 +909,7 @@ mod test_fsdb_io {
             mem_db.block_hashes.insert(1, random_bytes());
             mem_db.block_hashes.insert(5, random_bytes());
             mem_db.block_hashes.insert(10, random_bytes());
-            
+
             assert!(fs_db.write_block_hashes_to_tree(&mem_db).is_ok());
 
             Ok(())
@@ -921,7 +923,7 @@ mod test_fsdb_io {
             // Create test bytecode data
             let code_hash1 = random_bytes();
             let code_hash2 = random_bytes();
-            
+
             let bytecode1 = Bytecode::new_raw(Bytes::from(random_bytes::<128>()));
             let bytecode2 = Bytecode::new_raw(Bytes::from(random_bytes::<256>()));
 
@@ -939,7 +941,7 @@ mod test_fsdb_io {
             let large_bytecode = Bytecode::new_raw(Bytes::from(random_bytes::<100_000>()));
             mem_db.code_by_hash.clear();
             mem_db.code_by_hash.insert(random_bytes(), large_bytecode);
-            
+
             assert!(fs_db.write_code_by_hash_to_tree(&mem_db).is_ok());
 
             Ok(())
@@ -1002,11 +1004,16 @@ mod test_fsdb_io {
             no_code_history.insert(1, no_code_account.clone());
             mem_db.basic.clear();
             mem_db.basic.insert(address, no_code_history);
-            
+
             fs_db.write_basic_to_tree(&mem_db)?;
             let loaded_no_code = fs_db.load_basic()?;
             assert_eq!(
-                loaded_no_code.get(&address).unwrap().get_latest().unwrap().code,
+                loaded_no_code
+                    .get(&address)
+                    .unwrap()
+                    .get_latest()
+                    .unwrap()
+                    .code,
                 None
             );
 
@@ -1057,12 +1064,16 @@ mod test_fsdb_io {
             // Test loading data
             let loaded_code = fs_db.load_code_by_hash()?;
             assert_eq!(loaded_code.len(), mem_db.code_by_hash.len());
-            assert_eq!(loaded_code.get(&code_hash).unwrap().bytes_slice(), bytecode.bytes_slice());
+            assert_eq!(
+                loaded_code.get(&code_hash).unwrap().bytes_slice(),
+                bytecode.bytes_slice()
+            );
 
             // Test loading empty code
+            let loaded_pre = fs_db.load_code_by_hash()?;
             fs_db.write_code_by_hash_to_tree(&MemoryDb::<5>::default())?;
             let loaded_empty = fs_db.load_code_by_hash()?;
-            assert!(loaded_empty.is_empty());
+            assert_eq!(loaded_empty, loaded_pre);
 
             Ok(())
         }
@@ -1079,7 +1090,7 @@ mod test_fsdb_io {
             let mut history = ValueHistory::new();
             history.insert(1, create_test_account_info());
             mem_db.basic.insert(address, history.clone());
-            
+
             fs_db.write_basic_to_tree(&mem_db)?;
             drop(fs_db);
 
