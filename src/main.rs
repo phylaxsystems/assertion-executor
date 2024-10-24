@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     let memory_db: MemoryDb<64> = init_mem_db!(config);
 
     // Create the `SharedDb`
-    let shared_db = create_shared_db!(memory_db, config);
+    let _shared_db = create_shared_db!(memory_db, config);
 
     Ok(())
 }
