@@ -194,9 +194,8 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
 
             // Now convert this to revm `Bytecode`
             // absolutely insane typing
-            let bytecode: Bytecode =
-                Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
-                    .map_err(|_| MemoryDbError::EofDecoderError)?;
+            let bytecode: Bytecode = Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
+                .map_err(|_| MemoryDbError::EofDecoderError)?;
 
             // Insert into the memory_db
             self.code_by_hash.insert(key, bytecode);
