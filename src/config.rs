@@ -64,13 +64,15 @@ macro_rules! create_shared_db {
             .zstd_compression_level($config.zstd_compression_level)
             .entry_cache_percent($config.entry_cache_percent);
 
-        match assertion_executor::db::SharedDB::new_with_config($mem_db, sled_config) {
+        let db = match assertion_executor::db::SharedDB::new_with_config($mem_db, sled_config) {
             Ok(db) => db,
             Err(e) => {
                 panic!("Failed to open sled database: {}", e);
             }
-        }
+        };
 
         println!("Created shared db!");
+
+        db
     }};
 }
