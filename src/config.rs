@@ -27,8 +27,8 @@ pub struct ExecutorConfig {
     pub blocks_to_retain: usize,
 }
 
-/// Initialize the `MemoryDb` from either the executor database or from
-/// an exported sled database.
+/// Initialize the `MemoryDb` struct. Will load an exported sled
+/// database if the option is present.
 #[macro_export]
 macro_rules! init_mem_db {
     (

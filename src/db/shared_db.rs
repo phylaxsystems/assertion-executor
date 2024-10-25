@@ -117,9 +117,8 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
             return Ok(true);
         }
 
-        let fs_db = self.fs_db.clone();
         if let Some(fs_db_params) = db.handle_reorg(block_hash) {
-            let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());
+            let fs_db_lock = self.fs_db.lock().unwrap_or_else(|e| e.into_inner());
             let _ = fs_db_lock.handle_reorg(fs_db_params).map_err(|e| {
                 error!("Error handling reorg in FsDb: {:?}", e);
             });
