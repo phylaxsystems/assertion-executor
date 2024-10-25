@@ -1,7 +1,5 @@
 mod config;
 
-use assertion_executor::db::MemoryDb;
-
 use clap::Parser;
 
 use anyhow::Result;
@@ -12,13 +10,12 @@ use anyhow::Result;
 /// The default is 1024 and cannot be changed dynamically.
 pub const LEAF_FANOUT: usize = 1024;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Parse CLI args
     let config = config::ExecutorConfig::parse();
 
     // Initialize the memory db
-    let memory_db: MemoryDb<64> = init_mem_db!(config);
+    let memory_db = init_mem_db!(config);
 
     // Create the `SharedDb`
     let _shared_db = create_shared_db!(memory_db, config);

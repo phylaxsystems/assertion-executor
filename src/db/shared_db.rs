@@ -142,7 +142,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
     }
 
     /// Commits the entire memory database to the file-system database.
-    pub fn commit_mem_db_to_fs(&mut self) -> Result<bool, FsDbError> {
+    pub fn commit_mem_db_to_fs(&self) -> Result<bool, FsDbError> {
         // Get fsdb lock
         let fs_db = self.fs_db.clone();
         let fs_db_lock = fs_db.lock().unwrap_or_else(|e| e.into_inner());

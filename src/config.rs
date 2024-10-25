@@ -22,6 +22,9 @@ pub struct ExecutorConfig {
     /// MemoryDb in executor Db and exit.
     #[arg(long, default_value = "None")]
     pub reth_path: Option<String>,
+    /// The number of blocks to retain in memory.
+    #[arg(long, default_value = "256")]
+    pub blocks_to_retain: usize,
 }
 
 /// Initialize the `MemoryDb` from either the executor database or from
@@ -31,7 +34,9 @@ macro_rules! init_mem_db {
     (
         $config:expr
     ) => {{
-        let mut mem_db = assertion_executor::db::MemoryDb::default();
+        use assertion_executor::db::MemoryDb;
+
+        let mut mem_db: MemoryDb<64> = MemoryDb::default();
 
         if $config.reth_path.is_some() {
             println!("reth path present, importing reth data...");
@@ -70,6 +75,14 @@ macro_rules! create_shared_db {
                 panic!("Failed to open sled database: {}", e);
             }
         };
+
+        if $config.reth_path.is_some() {
+            println!("Exporting memory db to sled db...");
+            db.commit_mem_db_to_fs()?;
+            println!("Done~!");
+            println!("Exiting...");
+            return Ok(());
+        }
 
         println!("Created shared db!");
 
