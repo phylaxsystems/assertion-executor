@@ -988,6 +988,8 @@ dependencies = [
  "alloy 0.4.2",
  "anyhow",
  "bincode",
+ "clap",
+ "clap_derive",
  "mending",
  "rand 0.8.5",
  "rayon",
@@ -1312,9 +1314,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.19"
+version = "4.5.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7be5744db7978a28d9df86a214130d106a89ce49644cbc4e3f0c22c3fba30615"
+checksum = "b97f376d85a664d5837dbae44bf546e6477a679ff6610010f17276f686d867e8"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1322,9 +1324,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.19"
+version = "4.5.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5fbc17d3ef8278f55b282b2a2e75ae6f6c7d4bb70ed3d0382375104bfafdb4b"
+checksum = "19bc80abd44e4bed93ca373a0704ccbd1b710dc5749406201bb018272808dc54"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2174,9 +2176,9 @@ dependencies = [
 
 [[package]]
 name = "inline-array"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e86268f00167193a59f2145028ad707d5c1db9c2d89585ece0b8cc8a2b13fb5e"
+checksum = "b663811b69874e8b05e9257d21b3cf18ca8380684cad0be4339270d00fbd643b"
 dependencies = [
  "concurrent-map",
  "serde",
@@ -3966,9 +3968,9 @@ dependencies = [
 
 [[package]]
 name = "sled"
-version = "1.0.0-alpha.122"
+version = "1.0.0-alpha.124"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f3f153dedaaa21c77a24dd58de48a40bc30fdcdb08a5e2a251983310f42b06d"
+checksum = "863ddb1887c62f8dad18635f6096876c648923e61962057058f92228fee2308f"
 dependencies = [
  "bincode",
  "cache-advisor",
