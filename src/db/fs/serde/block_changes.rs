@@ -8,7 +8,7 @@ use crate::primitives::{
     Account,
     Address,
     BlockChanges,
-    StateChanges,
+    EvmState,
     B256,
 };
 use sled::InlineArray;
@@ -30,7 +30,7 @@ impl Deserialize for BlockChanges {
         bytes = &bytes[8..];
         let block_hash = B256::from_slice(bytes.get(..32)?);
         bytes = &bytes[32..];
-        let state_changes = StateChanges::deserialize(InlineArray::from(bytes))?;
+        let state_changes = EvmState::deserialize(InlineArray::from(bytes))?;
 
         Some(Self {
             block_num,
@@ -40,7 +40,7 @@ impl Deserialize for BlockChanges {
     }
 }
 
-impl Serialize for StateChanges {
+impl Serialize for EvmState {
     fn serialize(&self) -> InlineArray {
         let ser_items = self
             .iter()
@@ -56,10 +56,10 @@ impl Serialize for StateChanges {
     }
 }
 
-impl Deserialize for StateChanges {
+impl Deserialize for EvmState {
     // Deserialization function
     fn deserialize(bytes: InlineArray) -> Option<Self> {
-        let mut state_changes = StateChanges::default();
+        let mut state_changes = EvmState::default();
         for item in deserialize_unsized_vec(bytes)? {
             let address = Address::from_slice(&item[..20]);
             let account = Account::deserialize(InlineArray::from(item[20..].to_vec()))?;
@@ -83,7 +83,7 @@ fn test_block_changes() {
         BlockChanges {
             block_num: 1,
             block_hash: B256::from([0; 32]),
-            state_changes: StateChanges::default(),
+            state_changes: EvmState::default(),
         },
         BlockChanges {
             block_num: u64::MAX,

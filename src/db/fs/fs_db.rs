@@ -1,6 +1,6 @@
 use crate::{
     db::{
-        memory_db::EvmStorage,
+        memory_db::EvmStorageHistory,
         MemoryDb,
     },
     primitives::{
@@ -341,10 +341,10 @@ impl FsDb {
         Ok(())
     }
 
-    /// Loads the entirity of the `storage` table into an `EvmStorage` struct.
-    pub fn load_storage(&self) -> Result<EvmStorage, FsDbError> {
+    /// Loads the entirity of the `storage` table into an `EvmStorageHistory` struct.
+    pub fn load_storage(&self) -> Result<EvmStorageHistory, FsDbError> {
         let tree = self.storage_tree()?;
-        let mut storage = EvmStorage::new();
+        let mut storage = EvmStorageHistory::new();
 
         // Iterate over storage slots in the tree
         for result in tree.iter() {
@@ -522,7 +522,7 @@ mod tests {
 
             db.commit_block(FsCommitBlockParams {
                 account_value_histories: vec![AccountValueHistory {
-                    address: address.clone(),
+                    address,
                     value_history: value_history.clone(),
                 }],
 
@@ -532,7 +532,7 @@ mod tests {
 
             db.handle_reorg(FsHandleReorgParams {
                 account_value_histories: vec![AccountValueHistory {
-                    address: address.clone(),
+                    address,
                     value_history: value_history_reorg.clone(),
                 }],
                 ..Default::default()
@@ -626,7 +626,7 @@ mod tests {
                 BlockChanges::deserialize(block_changes_db).unwrap()
             );
 
-            let block_changes_to_remove = vec![block_changes.block_num.clone()];
+            let block_changes_to_remove = vec![block_changes.block_num];
 
             //Insert block changes @ 2
             block_changes.block_num = 2;
@@ -792,7 +792,7 @@ mod tests {
             // Commit the account value history
             db.commit_block(FsCommitBlockParams {
                 account_value_histories: vec![AccountValueHistory {
-                    address: address.clone(),
+                    address,
                     value_history: value_history.clone(),
                 }],
                 ..Default::default()

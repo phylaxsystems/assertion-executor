@@ -4,6 +4,7 @@ use crate::{
             FsDb,
             FsDbError,
         },
+        CacheDB,
         DatabaseRef,
         MemoryDb,
         NotFoundError,
@@ -152,6 +153,10 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         fs_db_lock.commit_memory_db(&mem_db)?;
 
         Ok(true)
+    }
+
+    pub fn fork(&self) -> CacheDB<Self> {
+        CacheDB::new(self.clone())
     }
 }
 

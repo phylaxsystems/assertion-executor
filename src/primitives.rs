@@ -4,6 +4,7 @@ use crate::{
 };
 pub use revm::primitives::{
     address,
+    uint,
     Account,
     AccountInfo,
     AccountStatus,
@@ -12,6 +13,7 @@ pub use revm::primitives::{
     Bytecode,
     Bytes,
     EVMError,
+    EvmState,
     EvmStorage,
     EvmStorageSlot,
     ExecutionResult,
@@ -24,7 +26,6 @@ pub use revm::primitives::{
 
 use std::collections::{
     BTreeMap,
-    HashMap,
     HashSet,
 };
 
@@ -45,13 +46,11 @@ pub struct AssertionResult {
     pub result: Result<ExecutionResult, ExecutorError>,
 }
 
-pub type StateChanges = HashMap<Address, Account>;
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BlockChanges {
     pub block_num: u64,
     pub block_hash: B256,
-    pub state_changes: StateChanges,
+    pub state_changes: EvmState,
 }
 
 ///code_by_hash mapping is currently append only.

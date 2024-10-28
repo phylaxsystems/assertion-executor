@@ -1,3 +1,5 @@
+#![feature(test)]
+
 mod error;
 pub use error::ExecutorError;
 

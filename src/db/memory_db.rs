@@ -55,7 +55,7 @@ use serde::{
 pub struct StorageMap(pub HashMap<Vec<u8>, Vec<u8>>);
 
 /// Type alias for the `MemoryDb` EVM storage struct.
-pub type EvmStorage = HashMap<Address, HashMap<U256, ValueHistory<U256>>>;
+pub type EvmStorageHistory = HashMap<Address, HashMap<U256, ValueHistory<U256>>>;
 
 #[derive(Error, Debug)]
 pub enum MemoryDbError {
@@ -77,7 +77,7 @@ pub enum MemoryDbError {
 #[derive(Debug, Clone, Default)]
 pub struct MemoryDb<const BLOCKS_TO_RETAIN: usize> {
     /// Maps addresses to storage slots and their history indexed by block.
-    pub(super) storage: EvmStorage,
+    pub(super) storage: EvmStorageHistory,
     /// Maps addresses to their account info and indexes it by block.
     pub(super) basic: HashMap<Address, ValueHistory<AccountInfo>>,
     /// Maps block numbers to block hashes.
@@ -564,7 +564,6 @@ mod test {
         },
         test_utils::random_bytes,
     };
-    use std::collections::HashMap;
 
     #[cfg(test)]
     mod memory_db_insert_tests {
@@ -721,7 +720,7 @@ mod test {
                 value: storage_value,
             };
 
-            let mut storage_map = HashMap::new();
+            let mut storage_map = HashMap::default();
             storage_map.insert(
                 storage_key.to_vec(),
                 storage_value.to_be_bytes::<32>().to_vec(),
@@ -736,9 +735,9 @@ mod test {
 
             let memory_db = new_from_exported_sled::<1024, 0>(&sled_db)?;
 
-            assert!(memory_db.storage.contains_key::<Address>(&address.into()));
+            assert!(memory_db.storage.contains_key::<Address>(&address));
 
-            let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
+            let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
             assert!(stored_storage.contains_key(&storage_key.into()));
             assert_eq!(
                 stored_storage
@@ -822,8 +821,8 @@ mod test {
             let mut memory_db: MemoryDb<5> = MemoryDb::default();
             memory_db.load_from_exported_sled(&sled_db)?;
 
-            assert!(memory_db.storage.contains_key::<Address>(&address.into()));
-            let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
+            assert!(memory_db.storage.contains_key::<Address>(&address));
+            let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
             assert_eq!(stored_storage.len(), storage_entries.len());
 
             for (key, value) in storage_entries {
@@ -852,11 +851,11 @@ mod test {
                 code: Some(code.clone()),
             };
 
-            let state_changes = HashMap::from([(
+            let state_changes = HashMap::from_iter([(
                 address,
                 Account {
                     info: account_info.clone(),
-                    storage: HashMap::new(),
+                    storage: HashMap::from_iter([]),
                     status: AccountStatus::Touched,
                 },
             )]);
@@ -890,7 +889,7 @@ mod test {
             let slot = U256::from(1);
             let value = U256::from(100);
 
-            let state_changes = HashMap::from([(
+            let state_changes = HashMap::from_iter([(
                 address,
                 Account {
                     info: AccountInfo {
@@ -899,7 +898,7 @@ mod test {
                         code_hash: B256::ZERO,
                         code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
                     },
-                    storage: HashMap::from([(
+                    storage: HashMap::from_iter([(
                         slot,
                         EvmStorageSlot {
                             present_value: value,
@@ -933,7 +932,7 @@ mod test {
             let code_hash = random_bytes();
             let code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<96>()));
 
-            let state_changes = HashMap::from([(
+            let state_changes = HashMap::from_iter([(
                 random_bytes().into(),
                 Account {
                     info: AccountInfo {
@@ -942,7 +941,7 @@ mod test {
                         code: Some(code.clone()),
                         code_hash,
                     },
-                    storage: HashMap::new(),
+                    storage: HashMap::default(),
                     status: AccountStatus::Touched,
                 },
             )]);
@@ -968,10 +967,11 @@ mod test {
         use crate::primitives::{
             AccountInfo,
             Bytecode,
+            EvmState,
+            EvmStorage,
             EvmStorageSlot,
         };
 
-        //TODO: improve
         #[test]
         fn test_commit_block() {
             let mut db = MemoryDb::<1>::default();
@@ -983,7 +983,7 @@ mod test {
                 code: None,
             };
             let new_code = Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()));
-            let new_storage = HashMap::from([(
+            let new_storage = EvmStorage::from_iter([(
                 U256::from(1),
                 EvmStorageSlot {
                     present_value: U256::from(200),
@@ -992,7 +992,7 @@ mod test {
                 },
             )]);
 
-            let changes = HashMap::from([(
+            let changes: EvmState = EvmState::from_iter([(
                 address,
                 Account {
                     info: AccountInfo {
@@ -1047,8 +1047,6 @@ mod test {
                 vec![(new_account_info.code_hash, new_code)]
             );
 
-            println!("{:#?}", res.account_value_histories);
-            println!("{:#?}", res.storage_value_histories);
             assert_eq!(res.account_value_histories.len(), 1);
             assert_eq!(res.storage_value_histories.len(), 1);
             assert_eq!(res.account_value_histories[0].value_history.len(), 2);
@@ -1066,7 +1064,7 @@ mod test {
             let block_changes_0 = BlockChanges {
                 block_num: 0,
                 block_hash: random_bytes(),
-                state_changes: HashMap::from([(
+                state_changes: HashMap::from_iter([(
                     random_bytes().into(),
                     Account {
                         info: AccountInfo {
@@ -1075,7 +1073,7 @@ mod test {
                             code_hash: B256::ZERO,
                             code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
                         },
-                        storage: HashMap::from([(
+                        storage: HashMap::from_iter([(
                             U256::from(1),
                             EvmStorageSlot {
                                 present_value: U256::from(100),
@@ -1092,8 +1090,8 @@ mod test {
             let block_changes_1 = BlockChanges {
                 block_num: 1,
                 block_hash: random_bytes(),
-                state_changes: HashMap::from([(
-                    random_bytes().into(),
+                state_changes: HashMap::from_iter([(
+                    Into::<Address>::into(random_bytes()),
                     Account {
                         info: AccountInfo {
                             nonce: 0,
@@ -1101,7 +1099,7 @@ mod test {
                             code_hash: random_bytes(),
                             code: Some(Bytecode::LegacyRaw(Bytes::from(random_bytes::<64>()))),
                         },
-                        storage: HashMap::from([(
+                        storage: HashMap::from_iter([(
                             U256::from(1),
                             EvmStorageSlot {
                                 present_value: U256::from(200),

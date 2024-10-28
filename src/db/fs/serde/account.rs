@@ -100,7 +100,7 @@ fn account_serialize_deserialize() {
                 code_hash: B256::from([11; 32]),
             },
             status: AccountStatus::SelfDestructed,
-            storage: EvmStorage::new(),
+            storage: EvmStorage::default(),
         },
         Account {
             info: AccountInfo {
@@ -110,7 +110,7 @@ fn account_serialize_deserialize() {
                 code_hash: B256::from([11; 32]),
             },
             status: AccountStatus::SelfDestructed,
-            storage: EvmStorage::new(),
+            storage: EvmStorage::default(),
         },
     ] {
         let serialized = account.serialize();

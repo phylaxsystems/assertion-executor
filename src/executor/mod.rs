@@ -17,8 +17,8 @@ use crate::{
         BlockEnv,
         Bytecode,
         EVMError,
+        EvmState,
         FixedBytes,
-        StateChanges,
         TxEnv,
         TxKind,
     },
@@ -64,9 +64,13 @@ impl<DB: PhDB> AssertionExecutor<DB>
 where
     ExecutorError: From<EVMError<<DB as DatabaseRef>::Error>>,
 {
-    const CALLER: Address = address!("0000000000000000000000000000000000000069");
+    /// Used to deploys the assertion contract to the forked db, and to call assertion functions.
+    const CALLER: Address = address!("00000000000000000000000000000000000001A4");
 
-    const ASSERTION_CONTRACT: Address = address!("cb5ee4f88a1b7107fbc4f8668218cee5ecd3264b");
+    /// The address of the assertion contract.
+    /// This is a fixed address that is used to deploy assertion contracts.
+    /// Deploying assertion contracts via the caller address @ nonce 0 results in this address
+    const ASSERTION_CONTRACT: Address = address!("63f9abbe8aa6ba1261ef3b0cbfb25a5ff8eeed10");
 
     /// Executes a transaction against the current state of the fork, and runs the appropriate
     /// assertions.
@@ -78,7 +82,7 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut CacheDB<DB>,
-    ) -> Result<Option<StateChanges>, ExecutorError> {
+    ) -> Result<Option<EvmState>, ExecutorError> {
         let mut temp_db = fork_db.clone();
 
         let (tx_traces, state_changes) =
@@ -177,12 +181,12 @@ where
 
     /// Commits a transaction against a fork of the current state.
     /// Returns the state changes that should be committed if the transaction is valid.
-    fn execute_forked_tx(
+    pub fn execute_forked_tx(
         &self,
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut CacheDB<DB>,
-    ) -> Result<(CallTracer, StateChanges), ExecutorError> {
+    ) -> Result<(CallTracer, EvmState), ExecutorError> {
         let mut evm = Evm::builder()
             .with_ref_db(fork_db.clone())
             .with_external_context(CallTracer::default())
@@ -232,7 +236,7 @@ fn test_deploy_assertion_contract() {
 
     let executor =
         AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
-    let mut fork_db0 = CacheDB::new(shared_db.clone());
+    let mut fork_db0 = shared_db.fork();
 
     let deployed_address0 = executor
         .deploy_assertion_contract(
@@ -242,6 +246,7 @@ fn test_deploy_assertion_contract() {
         )
         .unwrap();
 
+    println!("Deployed address: {:#?}", deployed_address0);
     assert_eq!(
         deployed_address0,
         AssertionExecutor::<SharedDB<0>>::ASSERTION_CONTRACT
@@ -253,12 +258,12 @@ fn test_deploy_assertion_contract() {
         .unwrap()
         .code
         .unwrap();
-    assert!(deployed_code0.len() > 0);
+    assert!(!deployed_code0.is_empty());
 
     let mut shortened_code = SIMPLE_ASSERTION_COUNTER_CODE;
     shortened_code.truncate(SIMPLE_ASSERTION_COUNTER_CODE.len() - 1);
 
-    let mut fork_db1 = CacheDB::new(shared_db);
+    let mut fork_db1 = shared_db.fork();
 
     let deployed_address1 = executor
         .deploy_assertion_contract(
@@ -279,7 +284,7 @@ fn test_deploy_assertion_contract() {
         .unwrap()
         .code
         .unwrap();
-    assert!(deployed_code1.len() > 0);
+    assert!(!deployed_code1.is_empty());
 
     //Assert that the same address is returned for the differing code
     assert_eq!(deployed_address0, deployed_address1);
@@ -311,16 +316,13 @@ fn test_execute_forked_tx() {
     let mut shared_db = SharedDB::<0>::new_test();
 
     let block_changes = BlockChanges {
-        state_changes: HashMap::from_iter(
-            vec![(
-                COUNTER_ADDRESS,
-                Account {
-                    info: counter_acct_info(),
-                    ..Default::default()
-                },
-            )]
-            .into_iter(),
-        ),
+        state_changes: HashMap::from_iter(vec![(
+            COUNTER_ADDRESS,
+            Account {
+                info: counter_acct_info(),
+                ..Default::default()
+            },
+        )]),
         ..Default::default()
     };
     let _ = shared_db.commit_block(block_changes);
@@ -330,7 +332,7 @@ fn test_execute_forked_tx() {
     let executor =
         AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
 
-    let mut fork_db = CacheDB::new(shared_db.clone());
+    let mut fork_db = shared_db.fork();
 
     let (traces, state_changes) = executor
         .execute_forked_tx(BlockEnv::default(), counter_call(), &mut fork_db)
@@ -414,7 +416,7 @@ fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
     let block_env = BlockEnv::default();
     let tx = counter_call();
 
-    let mut fork_db = CacheDB::new(executor.db.clone());
+    let mut fork_db = executor.db.fork();
 
     for (expected_state_before, expected_state_after, expected_result) in [
         (uint!(0_U256), uint!(1_U256), true),  //Counter is incremented
@@ -429,6 +431,7 @@ fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
 
         let result = executor.validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)?;
 
+        println!("Result: {:#?}", result);
         assert_eq!(result.is_some(), expected_result);
 
         //Assert that the state of the counter contract before committing the changes

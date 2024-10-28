@@ -39,7 +39,7 @@ impl Serialize for EvmStorage {
 impl Deserialize for EvmStorage {
     fn deserialize(bytes: InlineArray) -> Option<Self> {
         Some(deserialize_unsized_vec(bytes).into_iter().fold(
-            EvmStorage::new(),
+            EvmStorage::default(),
             |mut map, items| {
                 for item in items {
                     let block_num = U256::from_be_slice(&item[0..32]);
@@ -83,7 +83,7 @@ impl Deserialize for EvmStorageSlot {
 
 #[test]
 fn test_evm_storage() {
-    let mut storage = EvmStorage::new();
+    let mut storage = EvmStorage::default();
     storage.insert(
         U256::from(1),
         EvmStorageSlot {
