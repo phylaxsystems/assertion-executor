@@ -260,14 +260,31 @@ impl FsDb {
         &self,
         mem_db: &MemoryDb<BLOCKS_TO_RETAIN>,
     ) -> Result<(), FsDbError> {
-        let batch = mem_db
-            .storage
-            .iter()
-            .fold(Batch::default(), |mut batch, (key, value)| {
-                let serialized_value = bincode::serialize(&value).unwrap();
-                batch.insert(key.serialize(), serialized_value);
-                batch
-            });
+        let batch =
+            mem_db
+                .storage
+                .iter()
+                .fold(Batch::default(), |mut batch, (address, storage_slots)| {
+                    // For each address and its storage slots
+                    for (slot, value_history) in storage_slots {
+                        // Create StorageSlotKey combining address and slot
+                        let key = StorageSlotKey {
+                            address: *address,
+                            slot: *slot,
+                        };
+
+                        // Apply same rules as storage_value_history_update_batch
+                        if value_history.is_empty()
+                            || (value_history.value_history.len() == 1
+                                && value_history.get_latest().is_some_and(|val| val.is_zero()))
+                        {
+                            batch.remove(key.serialize());
+                        } else {
+                            batch.insert(key.serialize(), value_history.serialize());
+                        }
+                    }
+                    batch
+                });
 
         self.storage_tree()?.apply_batch(batch)?;
         Ok(())
@@ -329,19 +346,21 @@ impl FsDb {
         let tree = self.storage_tree()?;
         let mut storage = EvmStorage::new();
 
-        // Iterate over the storage tree and insert the values into the `EvmStorage` struct.
+        // Iterate over storage slots in the tree
         for result in tree.iter() {
             let (key, value) = result?;
 
-            // Get the address from the key bytes using from_slice
-            let address = Address::from_slice(&key);
+            // StorageSlotKey (address + slot)
+            let storage_key = StorageSlotKey::deserialize(key).unwrap();
 
-            // Deserialize the value using bincode into HashMap<U256, ValueHistory<U256>>
-            let value_history: HashMap<U256, ValueHistory<U256>> =
-                bincode::deserialize(&value).unwrap();
+            // ValueHistory<U256> for this specific slot
+            let value_history = ValueHistory::<U256>::deserialize(value).unwrap();
 
-            // Insert into storage map
-            storage.insert(address, value_history);
+            // Get or create the address's storage map
+            let address_storage = storage.entry(storage_key.address).or_default();
+
+            // Insert this slot's value history
+            address_storage.insert(storage_key.slot, value_history);
         }
 
         Ok(storage)
