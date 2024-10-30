@@ -1,10 +1,10 @@
 use crate::{
+    inspectors::tracer::CallTracer,
     primitives::{
         Address,
         AssertionContract,
         B256,
     },
-    tracer::CallTracer,
 };
 
 use std::collections::HashMap;

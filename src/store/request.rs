@@ -1,10 +1,10 @@
 use crate::{
+    inspectors::tracer::CallTracer,
     primitives::{
         Address,
         AssertionContract,
         U256,
     },
-    tracer::CallTracer,
 };
 use tokio::sync::mpsc;
 

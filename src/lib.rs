@@ -13,7 +13,7 @@ pub mod primitives;
 
 pub mod store;
 
-pub mod tracer;
+pub mod inspectors;
 
 pub mod db;
 

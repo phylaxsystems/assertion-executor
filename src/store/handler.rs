@@ -99,8 +99,8 @@ impl AssertionStoreRequestHandler {
 mod tests {
     use super::*;
     use crate::{
+        inspectors::tracer::CallTracer,
         primitives::Address,
-        tracer::CallTracer,
     };
     use std::collections::HashSet;
 

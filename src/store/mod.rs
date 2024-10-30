@@ -24,13 +24,13 @@ use tracing::error;
 /// #[tokio::main]
 /// async fn main() {
 ///     use assertion_executor::{
+///         inspectors::tracer::CallTracer,
 ///         primitives::{
 ///             Address,
 ///             AssertionContract,
 ///             U256,
 ///         },
 ///         store::AssertionStore,
-///         tracer::CallTracer,
 ///     };
 ///
 ///     let assertion_store = AssertionStore::default();

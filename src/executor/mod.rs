@@ -8,6 +8,7 @@ use crate::{
         PhDB,
     },
     error::ExecutorError,
+    inspectors::tracer::CallTracer,
     primitives::{
         address,
         Address,
@@ -26,7 +27,6 @@ use crate::{
         AssertionStoreReader,
         AssertionStoreRequest,
     },
-    tracer::CallTracer,
 };
 use rayon::prelude::{
     IntoParallelIterator,
