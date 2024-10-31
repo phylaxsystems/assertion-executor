@@ -43,7 +43,7 @@ impl PhEvmInspector {
     /// Execute precompile functions for the PhEvm.
     pub fn execute_precompile(
         &self,
-        context: &mut EvmContext<impl Database>,
+        _context: &mut EvmContext<impl Database>,
         inputs: &mut CallInputs,
     ) -> CallOutcome {
         match inputs
