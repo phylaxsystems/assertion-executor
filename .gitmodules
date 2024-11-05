@@ -1,0 +1,6 @@
+[submodule "contract-mocks/lib/credible-std"]
+	path = contract-mocks/lib/credible-std
+	url = git@github.com:phylaxsystems/credible-std.git
+[submodule "contract-mocks/lib/forge-std"]
+	path = contract-mocks/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std.git

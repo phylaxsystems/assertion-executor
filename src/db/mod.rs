@@ -1,5 +1,9 @@
 pub mod fs;
 
+pub mod fork_db;
+
+pub mod multi_fork_db;
+
 mod memory_db;
 pub use memory_db::MemoryDb;
 
@@ -10,7 +14,7 @@ mod error;
 pub use error::NotFoundError;
 
 pub use revm::{
-    db::CacheDB,
+    Database,
     DatabaseCommit,
     DatabaseRef,
 };

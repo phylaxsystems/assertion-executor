@@ -2,13 +2,20 @@ pub mod builder;
 
 use crate::{
     db::{
-        CacheDB,
+        fork_db::ForkDb,
+        multi_fork_db::MultiForkDb,
         DatabaseCommit,
         DatabaseRef,
         PhDB,
     },
     error::ExecutorError,
-    inspectors::tracer::CallTracer,
+    inspectors::{
+        phevm::{
+            insert_precompile_account,
+            PhEvmInspector,
+        },
+        tracer::CallTracer,
+    },
     primitives::{
         address,
         Address,
@@ -34,7 +41,7 @@ use rayon::prelude::{
 };
 use revm::{
     inspector_handle_register,
-    inspectors::NoOpInspector,
+    primitives::SpecId,
     Evm,
     EvmBuilder,
 };
@@ -45,33 +52,25 @@ use tracing::{
     trace,
 };
 
-#[derive(Debug)]
+/// Used to deploys the assertion contract to the forked db, and to call assertion functions.
+pub const CALLER: Address = address!("00000000000000000000000000000000000001A4");
+
+/// The address of the assertion contract.
+/// This is a fixed address that is used to deploy assertion contracts.
+/// Deploying assertion contracts via the caller address @ nonce 0 results in this address
+pub const ASSERTION_CONTRACT: Address = address!("63f9abbe8aa6ba1261ef3b0cbfb25a5ff8eeed10");
+
+#[derive(Debug, Clone)]
 pub struct AssertionExecutor<DB> {
     pub db: DB,
     pub assertion_store_reader: AssertionStoreReader,
-}
-
-impl<DB: Clone> Clone for AssertionExecutor<DB> {
-    fn clone(&self) -> Self {
-        Self {
-            db: self.db.clone(),
-            assertion_store_reader: self.assertion_store_reader.clone(),
-        }
-    }
+    pub spec_id: SpecId,
 }
 
 impl<DB: PhDB> AssertionExecutor<DB>
 where
     ExecutorError: From<EVMError<<DB as DatabaseRef>::Error>>,
 {
-    /// Used to deploys the assertion contract to the forked db, and to call assertion functions.
-    const CALLER: Address = address!("00000000000000000000000000000000000001A4");
-
-    /// The address of the assertion contract.
-    /// This is a fixed address that is used to deploy assertion contracts.
-    /// Deploying assertion contracts via the caller address @ nonce 0 results in this address
-    const ASSERTION_CONTRACT: Address = address!("63f9abbe8aa6ba1261ef3b0cbfb25a5ff8eeed10");
-
     /// Executes a transaction against the current state of the fork, and runs the appropriate
     /// assertions.
     /// Returns the results of the assertions, as well as the state changes that should be
@@ -81,14 +80,18 @@ where
         &'a mut self,
         block_env: BlockEnv,
         tx_env: TxEnv,
-        fork_db: &mut CacheDB<DB>,
+        fork_db: &mut ForkDb<DB>,
     ) -> Result<Option<EvmState>, ExecutorError> {
-        let mut temp_db = fork_db.clone();
+        let pre_tx_db = fork_db.clone();
+
+        let mut post_tx_db = fork_db.clone();
 
         let (tx_traces, state_changes) =
-            self.execute_forked_tx(block_env.clone(), tx_env, &mut temp_db)?;
+            self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
 
-        let results = self.execute_assertions(block_env, tx_traces, temp_db.clone())?;
+        let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
+
+        let results = self.execute_assertions(block_env, tx_traces, multi_fork_db)?;
 
         match results.all(|r| r.is_success()) {
             true => {
@@ -104,7 +107,7 @@ where
         &'a self,
         block_env: BlockEnv,
         traces: CallTracer,
-        fork_db: CacheDB<DB>,
+        multi_fork_db: MultiForkDb<ForkDb<DB>>,
     ) -> Result<impl ParallelIterator<Item = AssertionResult> + 'a, SendError<AssertionStoreRequest>>
     {
         // Examine contracts that were called to see if they have assertions
@@ -120,7 +123,11 @@ where
         Ok(assertions
             .into_par_iter()
             .map(move |assertion_contract| {
-                self.run_assertion_contract(&assertion_contract, block_env.clone(), fork_db.clone())
+                self.run_assertion_contract(
+                    &assertion_contract,
+                    block_env.clone(),
+                    multi_fork_db.clone(),
+                )
             })
             .flatten())
     }
@@ -129,7 +136,7 @@ where
         &self,
         assertion_contract: &AssertionContract,
         block_env: BlockEnv,
-        mut fork_db: CacheDB<DB>,
+        mut fork_db: MultiForkDb<ForkDb<DB>>,
     ) -> Vec<AssertionResult> {
         let AssertionContract {
             fn_selectors,
@@ -150,14 +157,16 @@ where
             .into_par_iter()
             .map(|fn_selector: &FixedBytes<4>| {
                 let mut evm = EvmBuilder::default()
-                    .with_ref_db(fork_db.clone())
+                    .with_db(fork_db.clone())
+                    .modify_db(insert_precompile_account)
                     .with_block_env(block_env.clone())
-                    .with_external_context(NoOpInspector)
+                    .with_spec_id(self.spec_id)
+                    .with_external_context(PhEvmInspector::new(self.spec_id))
                     .append_handler_register(inspector_handle_register)
                     .modify_tx_env(|env| {
                         *env = TxEnv {
                             transact_to: TxKind::Call(assertion_address),
-                            caller: Self::CALLER,
+                            caller: CALLER,
                             data: (*fn_selector).into(),
                             ..Default::default()
                         }
@@ -185,12 +194,13 @@ where
         &self,
         block_env: BlockEnv,
         tx_env: TxEnv,
-        fork_db: &mut CacheDB<DB>,
+        fork_db: &mut ForkDb<DB>,
     ) -> Result<(CallTracer, EvmState), ExecutorError> {
         let mut evm = Evm::builder()
             .with_ref_db(fork_db.clone())
             .with_external_context(CallTracer::default())
             .with_block_env(block_env)
+            .with_spec_id(self.spec_id)
             .modify_tx_env(|env| *env = tx_env)
             .append_handler_register(inspector_handle_register)
             .build();
@@ -208,18 +218,30 @@ where
         &self,
         block_env: BlockEnv,
         constructor_code: Bytecode,
-        fork_db: &mut CacheDB<DB>,
+        multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
     ) -> Result<Address, ExecutorError> {
         let tx_env = TxEnv {
             transact_to: TxKind::Create,
-            caller: Self::CALLER,
+            caller: CALLER,
             data: constructor_code.original_bytes(),
             ..Default::default()
         };
 
-        self.execute_forked_tx(block_env, tx_env, fork_db)?;
+        let mut evm = Evm::builder()
+            .with_db(multi_fork_db.clone())
+            .modify_db(insert_precompile_account)
+            .with_external_context(PhEvmInspector::new(self.spec_id))
+            .with_spec_id(self.spec_id)
+            .with_block_env(block_env)
+            .modify_tx_env(|env| *env = tx_env)
+            .append_handler_register(inspector_handle_register)
+            .build();
 
-        Ok(Self::ASSERTION_CONTRACT)
+        let result = evm.transact()?;
+
+        multi_fork_db.commit(result.state.clone());
+
+        Ok(ASSERTION_CONTRACT)
     }
 }
 
@@ -236,23 +258,20 @@ fn test_deploy_assertion_contract() {
 
     let executor =
         AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
-    let mut fork_db0 = shared_db.fork();
+
+    let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
     let deployed_address0 = executor
         .deploy_assertion_contract(
             BlockEnv::default(),
             Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE),
-            &mut fork_db0,
+            &mut multi_fork_db0,
         )
         .unwrap();
 
-    println!("Deployed address: {:#?}", deployed_address0);
-    assert_eq!(
-        deployed_address0,
-        AssertionExecutor::<SharedDB<0>>::ASSERTION_CONTRACT
-    );
+    assert_eq!(deployed_address0, ASSERTION_CONTRACT);
 
-    let deployed_code0 = fork_db0
+    let deployed_code0 = multi_fork_db0
         .basic_ref(deployed_address0)
         .unwrap()
         .unwrap()
@@ -263,22 +282,19 @@ fn test_deploy_assertion_contract() {
     let mut shortened_code = SIMPLE_ASSERTION_COUNTER_CODE;
     shortened_code.truncate(SIMPLE_ASSERTION_COUNTER_CODE.len() - 1);
 
-    let mut fork_db1 = shared_db.fork();
+    let mut multi_fork_db1 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
     let deployed_address1 = executor
         .deploy_assertion_contract(
             BlockEnv::default(),
             Bytecode::LegacyRaw(shortened_code),
-            &mut fork_db1,
+            &mut multi_fork_db1,
         )
         .unwrap();
 
-    assert_eq!(
-        deployed_address1,
-        AssertionExecutor::<SharedDB<0>>::ASSERTION_CONTRACT
-    );
+    assert_eq!(deployed_address1, ASSERTION_CONTRACT);
 
-    let deployed_code1 = fork_db1
+    let deployed_code1 = multi_fork_db1
         .basic_ref(deployed_address1)
         .unwrap()
         .unwrap()
@@ -443,13 +459,7 @@ fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     //Assert that the assertion contract is not persisted in the database
-    assert_eq!(
-        executor
-            .db
-            .basic_ref(AssertionExecutor::<SharedDB<0>>::ASSERTION_CONTRACT)
-            .unwrap(),
-        None
-    );
+    assert_eq!(executor.db.basic_ref(ASSERTION_CONTRACT).unwrap(), None);
 
     Ok(())
 }

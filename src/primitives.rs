@@ -2,26 +2,31 @@ use crate::{
     db::fs::serde::StorageSlotKey,
     error::ExecutorError,
 };
-pub use revm::primitives::{
-    address,
-    uint,
-    Account,
-    AccountInfo,
-    AccountStatus,
-    Address,
-    BlockEnv,
-    Bytecode,
-    Bytes,
-    EVMError,
-    EvmState,
-    EvmStorage,
-    EvmStorageSlot,
-    ExecutionResult,
-    FixedBytes,
-    TxEnv,
-    TxKind,
-    B256,
-    U256,
+pub use revm::{
+    db::AccountState,
+    primitives::{
+        address,
+        bytes,
+        uint,
+        Account,
+        AccountInfo,
+        AccountStatus,
+        Address,
+        BlockEnv,
+        Bytecode,
+        Bytes,
+        EVMError,
+        EvmState,
+        EvmStorage,
+        EvmStorageSlot,
+        ExecutionResult,
+        FixedBytes,
+        TxEnv,
+        TxKind,
+        B256,
+        U256,
+    },
+    JournaledState,
 };
 
 use std::collections::{
@@ -36,11 +41,13 @@ pub struct AssertionContract {
     pub code_hash: B256,
 }
 
+#[derive(Debug)]
 pub struct AssertionId {
     pub fn_selector: FixedBytes<4>,
     pub code_hash: B256,
 }
 
+#[derive(Debug)]
 pub struct AssertionResult {
     pub id: AssertionId,
     pub result: Result<ExecutionResult, ExecutorError>,

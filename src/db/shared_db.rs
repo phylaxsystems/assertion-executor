@@ -1,10 +1,10 @@
 use crate::{
     db::{
+        fork_db::ForkDb,
         fs::{
             FsDb,
             FsDbError,
         },
-        CacheDB,
         DatabaseRef,
         MemoryDb,
         NotFoundError,
@@ -155,8 +155,8 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         Ok(true)
     }
 
-    pub fn fork(&self) -> CacheDB<Self> {
-        CacheDB::new(self.clone())
+    pub fn fork(&self) -> ForkDb<Self> {
+        ForkDb::new(self.clone())
     }
 }
 
