@@ -32,7 +32,6 @@ contract ForkTest is Credible, Test {
         require(someInitValue == 1, "someInitValue != 1");
         uint256 sum = 0;
 
-        //target.readStorage(); // Reading twice somehow breaks the test
         require(target.readStorage() == 2, "val != 2");
         expectedSum += target.readStorage();
         sum += target.readStorage();
