@@ -102,6 +102,29 @@ where
         }
     }
 
+    /// Executes a transaction against the current state of the fork, without running
+    /// any assertions.
+    /// Returns the the state changes that should be committed.
+    #[instrument(skip_all)]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use validate_transaction instead, which also runs assertions"
+    )]
+    pub fn run_transaction<'a>(
+        &'a mut self,
+        block_env: BlockEnv,
+        tx_env: TxEnv,
+        fork_db: &mut ForkDb<DB>,
+    ) -> Result<Option<EvmState>, ExecutorError> {
+        let mut post_tx_db = fork_db.clone();
+
+        let (_, state_changes) =
+            self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
+
+        fork_db.commit(state_changes.clone());
+        Ok(Some(state_changes))
+    }
+
     #[instrument(skip_all)]
     fn execute_assertions<'a>(
         &'a self,

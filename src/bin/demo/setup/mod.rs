@@ -20,13 +20,13 @@ use assertion_executor::{
 use std::path::PathBuf;
 
 /// Deploys contracts, loads assertion store, and sets up state dependencies
-pub async fn setup() -> AssertionExecutor<SharedDB<5>> {
+pub fn setup() -> AssertionExecutor<SharedDB<5>> {
     // Remove any existing data directory
-    std::fs::remove_dir_all("data").unwrap();
+    std::fs::remove_dir_all("data").unwrap_or(());
 
     let db = SharedDB::<5>::new(&PathBuf::from("data")).unwrap();
 
-    let assertion_store = setup_assertion_store().await;
+    let assertion_store = setup_assertion_store();
     let mut executor = AssertionExecutorBuilder::new(db, assertion_store.reader()).build();
 
     // Create a block changes object with contract deployments and state deps

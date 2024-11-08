@@ -18,6 +18,7 @@ pub fn bench_execution(
     transactions: Vec<TxEnv>,
     block_env: BlockEnv,
 ) -> Duration {
+    println!("Executing {} transactions", transactions.len());
     let mut fork_db = executor.db.fork();
 
     let start = Instant::now();
@@ -27,7 +28,24 @@ pub fn bench_execution(
     start.elapsed()
 }
 
+/// Benchmarks the execution of transactions
+#[allow(deprecated)]
+pub fn bench_no_assertion_execution(
+    executor: &mut AssertionExecutor<SharedDB<5>>,
+    transactions: Vec<TxEnv>,
+    block_env: BlockEnv,
+) -> Duration {
+    let mut fork_db = executor.db.fork();
+
+    let start = Instant::now();
+    transactions.into_iter().for_each(|tx| {
+        let _ = executor.run_transaction(block_env.clone(), tx, &mut fork_db);
+    });
+    start.elapsed()
+}
+
 /// Counts the number of valid assertions
+#[allow(dead_code)]
 pub fn count_valid_results(
     executor: &mut AssertionExecutor<SharedDB<5>>,
     transactions: Vec<TxEnv>,
@@ -77,13 +95,37 @@ pub fn benchmark_avg<F, T>(iterations: u32, mut f: F) -> Duration
 where
     F: FnMut() -> T,
 {
-    let total_duration = (0..iterations)
-        .map(|_| {
-            let start = Instant::now();
-            f();
-            start.elapsed()
-        })
-        .sum::<Duration>();
+    println!("Starting benchmark with {} iterations", iterations);
+    let mut durations = Vec::with_capacity(iterations as usize);
 
-    total_duration / iterations
+    for i in 0..iterations {
+        println!("Starting iteration {}/{}", i + 1, iterations);
+        let start = Instant::now();
+        f();
+        let elapsed = start.elapsed();
+        // println!(
+        //     "Iteration {}/{} completed in {:?}",
+        //     i + 1,
+        //     iterations,
+        //     elapsed
+        // );
+        durations.push(elapsed);
+    }
+
+    println!("All iterations completed, calculating average");
+    let total_duration: Duration = durations.iter().sum();
+    let avg_duration = total_duration / iterations;
+    println!("Average calculation completed: {:?}", avg_duration);
+
+    // Print individual iteration times to spot any anomalies
+    for (i, duration) in durations.iter().enumerate() {
+        if *duration > avg_duration * 2 {
+            println!(
+                "Warning: Iteration {} took {:?} (more than 2x average)",
+                i, duration
+            );
+        }
+    }
+
+    avg_duration
 }

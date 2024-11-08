@@ -1,5 +1,11 @@
-mod the_dao;
-use the_dao::deploy_the_dao;
+//! `contracts
+//!
+//! The following mod contains setup code to deploy contracts for the benchmark.
+//! All code in the benchmarks can be found in `/contract-mocks` at the root of
+//! this repository.
+
+pub mod fork_test;
+use fork_test::deploy_fork_test;
 
 use assertion_executor::{
     db::SharedDB,
@@ -12,7 +18,7 @@ pub fn deploy_contracts(
     block_changes: &mut BlockChanges,
 ) {
     // Deploy contracts
-    [deploy_the_dao].iter().for_each(|f| {
+    [deploy_fork_test].iter().for_each(|f| {
         f(executor, block_changes);
     });
 }

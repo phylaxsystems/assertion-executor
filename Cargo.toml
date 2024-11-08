@@ -13,6 +13,8 @@ tokio = { version = "1.39.2", features = ["macros", "rt-multi-thread", "sync"] }
 tracing = "0.1.40"
 zerocopy = { version = "0.8.3", features = ["derive"] }
 alloy-sol-types = "0.4.2"
+tempfile = "3.13.0"
+rand = "0.8.5"
 
 # ETL deps
 mending = { git = "ssh://git@github.com/phylaxsystems/mending.git", rev = "3a771745f"}
@@ -25,7 +27,16 @@ alloy = "0.4.2"
 clap = "4.5.20"
 clap_derive = "4.5.18"
 
+# Maxperf profile for absolute maximum performance
+# Only use for builds that are going to get used by end users
+[profile.maxperf]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+incremental = false
+
 [features]
+default = ["test"]
 test = []
 
 [dev-dependencies]
@@ -34,4 +45,4 @@ tempfile = "3.13.0"
 
 [[bin]]
 name = "demo"
-
+required-features = ["test"]
