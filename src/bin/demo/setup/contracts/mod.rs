@@ -4,7 +4,9 @@
 //! All code in the benchmarks can be found in `/contract-mocks` at the root of
 //! this repository.
 
+pub mod demo_lending;
 pub mod fork_test;
+use demo_lending::deploy_demo_lending;
 use fork_test::deploy_fork_test;
 
 use assertion_executor::{
@@ -18,7 +20,9 @@ pub fn deploy_contracts(
     block_changes: &mut BlockChanges,
 ) {
     // Deploy contracts
-    [deploy_fork_test].iter().for_each(|f| {
-        f(executor, block_changes);
-    });
+    [deploy_fork_test, deploy_demo_lending]
+        .iter()
+        .for_each(|f| {
+            f(executor, block_changes);
+        });
 }
