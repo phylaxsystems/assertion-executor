@@ -30,7 +30,9 @@ The benchmark includes the following transactions:
 - Transactions that try to change disallowed state similar to the radiant hack;
 - Transactions that challange lending protocol solvency.
 
-The second two items always trigger assertion due to interacting with Assertion Adopters (Protocols with assertions associated with them).
+The second two items always trigger assertion due to interacting with Assertion Adopters (Protocols with assertions associated with them). The lending protocol triggers 2 assertions, one that checks withdraw invariants, and one that simulates complex lending protocol invariants by wasting gast. The disallowed state transaction triggers a single basic assertion.
+
+All assertions are ran sequentially, **this benchmark demonstrates a worst case scenario for the assertion executor with all assertions running sequentially**.
 
 #### Radiant simulation
 
@@ -51,35 +53,47 @@ The assertion fails if the balance of the account inside of the protocol is grea
 ### Benchmark results
 
 ```bash
+    ~~~~~~~~~~~~~~~~~~~~~~~~~
+    ~                       ~
+    ~ Benchmarking Complete ~
+    ~                       ~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
     =========================
-    = Benchmarking complete =
+    =       Work Load       =
     =========================
 
-> 600 assertions ran against 2600 transactions
+> 600 assertions total ran against 1600 transactions
 
-> Average time elapsed in validating 2600 transactions: 51.155608ms
+> 1600 transactions consuming a total of 49,411,200 gas units
 
-> Average time per transaction: 19.675µs
+> 600 invalidative transactions out of 1600 transactions
 
-> Transactions per second (TPS): 50825.32
 
-> Average time to execute transactions without running assertions: 19.657425ms
+    =========================
+    =        Results        =
+    =========================
 
-> Transactions per second (TPS) without running assertions: 132265.54
+> Average time elapsed in validating 1600 transactions: 62.888375ms
 
-> Difference in time between running assertions and not running assertions: 31.498183ms
+> Average time per transaction: 39.305µs
+
+> Total time of running assertions: 41.016625ms
 ```
 
 For consistency, the benchmark is ran 100 times against the same bundle of transactions.
 
 The following output shows:
 
-- How many transactions and assertions were ran;
-- The average time it took to execute a transaction and associated assertion (`revm` + `phEVM`);
-- The average TPS for exeucting transactions + assertions;
-- The average time it takes to execute transactions without running any assertions (`revm` only);
-- The TPS for executing transactions without running any assertions;
-- How much extra time it takes to run assertions compared to not running them (`phEVM` execution time).
+- The work load:
+  - How many transactions and assertions were ran;
+  - How much gas was consumed by the transactions;
+  - How many transactions were invalidated (transactions with assertions that fail after exection).
+- The results of the execution:
+  - The average time for validating a bundle;
+  - The average time it took to execute a transaction and associated assertion (`revm` + `phEVM`);
+  - How much extra time it takes to run assertions compared to not running them (`phEVM` execution time).
 
 ## How to run
 

@@ -7,6 +7,7 @@ pub use revm::{
     primitives::{
         address,
         bytes,
+        result::ResultAndState,
         uint,
         Account,
         AccountInfo,

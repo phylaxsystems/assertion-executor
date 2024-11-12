@@ -34,8 +34,8 @@ pub fn setup() -> AssertionExecutor<SharedDB<5>> {
 
     deploy_contracts(&mut executor, &mut block_changes);
     setup_state_deps(&mut executor, &mut block_changes);
-
-    let _ = executor.db.commit_block(block_changes);
+    println!("Block changes: {:#?}", block_changes);
+    let _ = executor.db.commit_block(block_changes).unwrap();
 
     executor
 }

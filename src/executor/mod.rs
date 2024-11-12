@@ -27,8 +27,10 @@ use crate::{
         EVMError,
         EvmState,
         FixedBytes,
+        ResultAndState,
         TxEnv,
         TxKind,
+        U256,
     },
     store::{
         AssertionStoreReader,
@@ -86,7 +88,7 @@ where
 
         let mut post_tx_db = fork_db.clone();
 
-        let (tx_traces, state_changes) =
+        let (tx_traces, result_and_state) =
             self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
 
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
@@ -95,34 +97,11 @@ where
 
         match results.all(|r| r.is_success()) {
             true => {
-                fork_db.commit(state_changes.clone());
-                Ok(Some(state_changes))
+                fork_db.commit(result_and_state.state.clone());
+                Ok(Some(result_and_state.state))
             }
             false => Ok(None),
         }
-    }
-
-    /// Executes a transaction against the current state of the fork, without running
-    /// any assertions.
-    /// Returns the the state changes that should be committed.
-    #[instrument(skip_all)]
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use validate_transaction instead, which also runs assertions"
-    )]
-    pub fn run_transaction<'a>(
-        &'a mut self,
-        block_env: BlockEnv,
-        tx_env: TxEnv,
-        fork_db: &mut ForkDb<DB>,
-    ) -> Result<Option<EvmState>, ExecutorError> {
-        let mut post_tx_db = fork_db.clone();
-
-        let (_, state_changes) =
-            self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
-
-        fork_db.commit(state_changes.clone());
-        Ok(Some(state_changes))
     }
 
     #[instrument(skip_all)]
@@ -218,7 +197,7 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> Result<(CallTracer, EvmState), ExecutorError> {
+    ) -> Result<(CallTracer, ResultAndState), ExecutorError> {
         let mut evm = Evm::builder()
             .with_ref_db(fork_db.clone())
             .with_external_context(CallTracer::default())
@@ -232,7 +211,7 @@ where
 
         fork_db.commit(result.state.clone());
 
-        Ok((evm.context.external, result.state))
+        Ok((evm.context.external, result))
     }
 
     /// Deploys an assertion contract to the forked db.
@@ -255,7 +234,10 @@ where
             .modify_db(insert_precompile_account)
             .with_external_context(PhEvmInspector::new(self.spec_id))
             .with_spec_id(self.spec_id)
-            .with_block_env(block_env)
+            .with_block_env(BlockEnv {
+                basefee: U256::ZERO,
+                ..block_env
+            })
             .modify_tx_env(|env| *env = tx_env)
             .append_handler_register(inspector_handle_register)
             .build();
@@ -373,7 +355,7 @@ fn test_execute_forked_tx() {
 
     let mut fork_db = shared_db.fork();
 
-    let (traces, state_changes) = executor
+    let (traces, result_and_state) = executor
         .execute_forked_tx(BlockEnv::default(), counter_call(), &mut fork_db)
         .unwrap();
 
@@ -384,7 +366,7 @@ fn test_execute_forked_tx() {
     );
 
     //State changes should contain the counter contract and the caller accounts
-    let mut accounts = state_changes.keys().cloned().collect::<Vec<_>>();
+    let mut accounts = result_and_state.state.keys().cloned().collect::<Vec<_>>();
     accounts.sort();
 
     assert_eq!(accounts, vec![counter_call().caller, COUNTER_ADDRESS]);

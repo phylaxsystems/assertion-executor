@@ -2,6 +2,7 @@ use assertion_executor::{
     db::SharedDB,
     primitives::{
         BlockEnv,
+        ExecutionResult,
         TxEnv,
     },
     AssertionExecutor,
@@ -28,8 +29,47 @@ pub fn bench_execution(
     start.elapsed()
 }
 
+/// Assert transactions are valid
+/// Return total gas used
+pub fn assert_txs_are_valid_and_compute_gas(
+    executor: &mut AssertionExecutor<SharedDB<5>>,
+    transactions: Vec<TxEnv>,
+    block_env: BlockEnv,
+) -> u64 {
+    let mut fork_db = executor.db.fork();
+
+    let mut total_gas_used = 0;
+
+    transactions
+        .into_iter()
+        .map(|tx| {
+            executor
+                .execute_forked_tx(block_env.clone(), tx, &mut fork_db)
+                .unwrap()
+                .1
+        })
+        .for_each(|result_and_state| {
+            let gas_used = match result_and_state.result {
+                ExecutionResult::Revert { output, .. } => {
+                    panic!("Transaction reverted: {output:#?}")
+                }
+                ExecutionResult::Halt { reason, .. } => {
+                    panic!("TransactionHalted: {reason:#?}")
+                }
+                ExecutionResult::Success { gas_used, .. } => gas_used,
+            };
+
+            total_gas_used += gas_used;
+
+            println!("Gas used: {}", gas_used);
+        });
+
+    total_gas_used
+}
+
+///
+
 /// Benchmarks the execution of transactions
-#[allow(deprecated)]
 pub fn bench_no_assertion_execution(
     executor: &mut AssertionExecutor<SharedDB<5>>,
     transactions: Vec<TxEnv>,
@@ -39,14 +79,14 @@ pub fn bench_no_assertion_execution(
 
     let start = Instant::now();
     transactions.into_iter().for_each(|tx| {
-        let _ = executor.run_transaction(block_env.clone(), tx, &mut fork_db);
+        let _ = executor.execute_forked_tx(block_env.clone(), tx, &mut fork_db);
     });
+
     start.elapsed()
 }
 
 /// Counts the number of valid assertions
-#[allow(dead_code)]
-pub fn count_valid_results(
+pub fn count_valid_assertion_results(
     executor: &mut AssertionExecutor<SharedDB<5>>,
     transactions: Vec<TxEnv>,
     block_env: BlockEnv,
@@ -56,9 +96,13 @@ pub fn count_valid_results(
     transactions
         .into_iter()
         .filter_map(|tx| {
-            executor
-                .validate_transaction(block_env.clone(), tx, &mut fork_db)
-                .unwrap()
+            let res = executor
+                .validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)
+                .unwrap();
+            if res.is_none() {
+                println!("{:#?}", &tx);
+            };
+            res
         })
         .count()
 }
@@ -103,12 +147,6 @@ where
         let start = Instant::now();
         f();
         let elapsed = start.elapsed();
-        // println!(
-        //     "Iteration {}/{} completed in {:?}",
-        //     i + 1,
-        //     iterations,
-        //     elapsed
-        // );
         durations.push(elapsed);
     }
 

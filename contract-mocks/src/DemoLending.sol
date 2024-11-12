@@ -22,9 +22,7 @@ contract DemoLending {
     }
 
     function withdraw(uint256 _amount) public {
-        // Vulnerability: No check for outstanding borrowed amounts and balances
-
-        balances[msg.sender] = balances[msg.sender] - _amount;
+        // Vulnerability: No change to balances
         (bool sent,) = msg.sender.call{value: _amount}("");
         require(sent, "Failed to send ETH");
 
@@ -67,23 +65,21 @@ contract NormalTx {
 
 contract TriggeringTx {
     constructor() payable {
-        target.deposit{value: 10 ether}();
-        target.borrow(5 ether);
-        target.withdraw(10 ether);
+        uint256 value = msg.value;
+        target.deposit{value: value};
+        target.deposit{value: value + 1 ether};
+
+        //    target.withdraw(11 ether);
     }
 }
 
 contract DemoLendingAssertion is Credible, Test {
-
     function testWithdraw() public {
-        uint256 balance_now = address(msg.sender).balance;
-
-        uint256 deposit_before;
-        uint256 borrow_after;
+        uint256 balance_now = address(0x4545454545454545454545454545454545454545).balance;
+        uint256 borrow_after = target.getDebt();
 
         ph.forkPreState();
-        deposit_before = target.getDeposit();
-        borrow_after = target.getDebt();
+        uint256 deposit_before = target.getDeposit();
 
         require(balance_now <= (deposit_before + borrow_after), "Insufficient balance");
     }
