@@ -11,6 +11,12 @@ use assertion_executor::primitives::{
     TxEnv,
 };
 
+// Do 1 run in debug mode, 100 runs when release
+#[cfg(debug_assertions)]
+const BENCHRUNS: u32 = 1;
+#[cfg(not(debug_assertions))]
+const BENCHRUNS: u32 = 100;
+
 pub const CALLER: Address = Address::new([69u8; 20]);
 
 fn main() {
@@ -27,19 +33,19 @@ fn main() {
         ..Default::default()
     };
 
+    let avg_duration_no_assertion = benchmark_avg(BENCHRUNS, || {
+        bench_no_assertion_execution(&mut executor, transactions.clone(), BlockEnv::default())
+    });
+
+    let avg_duration = benchmark_avg(BENCHRUNS, || {
+        bench_execution(&mut executor, transactions.clone(), BlockEnv::default())
+    });
+
     let total_gas_used = assert_txs_are_valid_and_compute_gas(
         &mut executor,
         transactions.clone(),
         block_env.clone(),
     );
-
-    let avg_duration_no_assertion = benchmark_avg(1, || {
-        bench_no_assertion_execution(&mut executor, transactions.clone(), block_env.clone())
-    });
-
-    let avg_duration = benchmark_avg(1, || {
-        bench_execution(&mut executor, transactions.clone(), block_env.clone())
-    });
 
     print!(
         "
