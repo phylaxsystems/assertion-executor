@@ -29,25 +29,6 @@ contract DemoLending {
         emit Withdrawn(msg.sender, _amount);
     }
 
-    function borrow(uint256 _amount) public {
-        uint256 maxBorrow = balances[msg.sender] * 9 / 10;
-        // Vulnerability: Check borrowed amount AFTER transfer
-        (bool sent,) = msg.sender.call{value: _amount}("");
-        require(sent, "Failed to send ETH");
-
-        borrowed[msg.sender] = borrowed[msg.sender] + _amount;
-
-        emit Borrowed(msg.sender, _amount);
-    }
-
-    function repay() public payable {
-        require(msg.value > 0, "Must repay some amount");
-        require(borrowed[msg.sender] >= msg.value, "Repaying too much");
-
-        borrowed[msg.sender] = borrowed[msg.sender] - msg.value;
-        emit Repaid(msg.sender, msg.value);
-    }
-
     function getDeposit() public view returns (uint256) {
         return balances[msg.sender];
     }
@@ -59,7 +40,7 @@ contract DemoLending {
 
 contract NormalTx {
     constructor() payable {
-        target.deposit{value: 10 ether}();
+        target.deposit{value: msg.value};
     }
 }
 
@@ -67,20 +48,25 @@ contract TriggeringTx {
     constructor() payable {
         uint256 value = msg.value;
         target.deposit{value: value};
-        target.deposit{value: value + 1 ether};
-
-        //    target.withdraw(11 ether);
+        target.withdraw(value + 1 ether);
     }
 }
 
 contract DemoLendingAssertion is Credible, Test {
     function testWithdraw() public {
         uint256 balance_now = address(0x4545454545454545454545454545454545454545).balance;
-        uint256 borrow_after = target.getDebt();
 
         ph.forkPreState();
-        uint256 deposit_before = target.getDeposit();
+        uint256 borrow_before = target.getDebt();
+        uint256 balance_before = address(0x4545454545454545454545454545454545454545).balance;
 
-        require(balance_now <= (deposit_before + borrow_after), "Insufficient balance");
+        require(borrow_before <= balance_before + balance_now, "Withdraw: More than debt");
+    }
+
+    // Gas wasting fn
+    function doStuff() public pure {
+        for (uint256 i = 0; i < 256; i++) {
+            keccak256(abi.encodePacked(i));
+        }
     }
 }

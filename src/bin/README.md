@@ -32,7 +32,9 @@ The benchmark includes the following transactions:
 
 The second two items always trigger assertion due to interacting with Assertion Adopters (Protocols with assertions associated with them). The lending protocol triggers 2 assertions, one that checks withdraw invariants, and one that simulates complex lending protocol invariants by wasting gast. The disallowed state transaction triggers a single basic assertion.
 
-All assertions are ran sequentially, **this benchmark demonstrates a worst case scenario for the assertion executor with all assertions running sequentially**.
+The gas consumption of the total group of transactions is 70,770,900 gas units. This is roughly 2x the average base block at the time of writing.
+
+All assertions are ran sequentially, **this benchmark demonstrates a worst case scenario when running assertions**.
 
 #### Radiant simulation
 
@@ -44,19 +46,19 @@ The assertion fails if the value was changed, and removes the transaction changi
 
 #### Lending solvency
 
-We mock a lending protocol that accepts Eth deposits, withdrawals, and borrows. The protocol has multiple vulnerabilities, like reentrancy, and a general lack of invariant and logic checks.
+We mock a lending protocol with deposit and withdrawal functionality. The protocol has a vulnerability in the withdrawal that doesn't check or update balances.
 
 We initiate a transaction that attempts to withdraw too much money from the protocol. Once the transaction suceesfully executes using `revm`, we run the assertions associated with the protocol using `phEvm`. The assertions check the account balance of the address initiating the transaction, and check the protocol solvency by making sure the balance of the account inside of the protocol is not more than the amount of money withdrawn.
 
-The assertion fails if the balance of the account inside of the protocol is greater than the amount of money withdrawn, and removes the transaction from the bundle.
+The assertion fails if the amount withdrawn by the user is greater than the funds deposited by the user.
 
 ### Benchmark results
 
 ```bash
     ~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~                       ~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~
     ~ Benchmarking Complete ~
-    ~                       ~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~
     ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
@@ -64,22 +66,22 @@ The assertion fails if the balance of the account inside of the protocol is grea
     =       Work Load       =
     =========================
 
-> 600 assertions total ran against 1600 transactions
+> 900 assertions ran against 1900 transactions
 
-> 1600 transactions consuming a total of 49,411,200 gas units
+> 1900 transactions consuming a total of 70,770,900 gas units
 
-> 600 invalidative transactions out of 1600 transactions
+> 599 invalidative transactions out of 1900 transactions
 
 
     =========================
     =        Results        =
     =========================
 
-> Average time elapsed in validating 1600 transactions: 62.888375ms
+> Time elapsed in executing 1900 transactions and 900 assertions: Min: 76.277542ms, Max: 100.132542ms, Avg: 81.391543ms
 
-> Average time per transaction: 39.305µs
+> Time elapsed in executing 1900 transactions without assertions: Min: 30.9485ms, Max: 32.33ms, Avg: 31.680728ms
 
-> Total time of running assertions: 41.016625ms
+> Total time of running 900 assertions: 49.710815ms
 ```
 
 For consistency, the benchmark is ran 100 times against the same bundle of transactions.

@@ -32,13 +32,13 @@ pub fn generate_txs() -> Vec<TxEnv> {
         });
     }
 
-    //for _ in 0..300 {
-    //    transactions.push(TxEnv {
-    //        caller: CALLER,
-    //        gas_price: uint!(1_U256),
-    //        ..lending_call_valid()
-    //    });
-    //}
+    for _ in 0..300 {
+        transactions.push(TxEnv {
+            caller: CALLER,
+            gas_price: uint!(1_U256),
+            ..lending_call_valid()
+        });
+    }
 
     let send_eth = TxEnv {
         value: uint!(100_U256),

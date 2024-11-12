@@ -1,5 +1,8 @@
 use crate::{
-    demo_lending::lending_assertion,
+    demo_lending::{
+        lending_assertion,
+        LENDING_ADDRESS,
+    },
     fork_test::{
         counter_assertion,
         FORK_ADDRESS,
@@ -16,7 +19,9 @@ pub fn setup_assertion_store() -> AssertionStore {
     let store = AssertionStore::default();
     let writer = store.writer();
 
-    let assertions = vec![(FORK_ADDRESS, vec![counter_assertion(), lending_assertion()])];
+    let fork_assertion = (FORK_ADDRESS, vec![counter_assertion()]);
+    let lending_assertion = (LENDING_ADDRESS, vec![lending_assertion()]);
+    let assertions = vec![fork_assertion, lending_assertion];
 
     writer.write_sync(U256::ZERO, assertions).unwrap();
 

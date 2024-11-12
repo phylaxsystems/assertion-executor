@@ -19,7 +19,6 @@ pub fn bench_execution(
     transactions: Vec<TxEnv>,
     block_env: BlockEnv,
 ) -> Duration {
-    println!("Executing {} transactions", transactions.len());
     let mut fork_db = executor.db.fork();
 
     let start = Instant::now();
@@ -60,14 +59,10 @@ pub fn assert_txs_are_valid_and_compute_gas(
             };
 
             total_gas_used += gas_used;
-
-            println!("Gas used: {}", gas_used);
         });
 
     total_gas_used
 }
-
-///
 
 /// Benchmarks the execution of transactions
 pub fn bench_no_assertion_execution(
@@ -96,13 +91,9 @@ pub fn count_valid_assertion_results(
     transactions
         .into_iter()
         .filter_map(|tx| {
-            let res = executor
+            executor
                 .validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)
-                .unwrap();
-            if res.is_none() {
-                println!("{:#?}", &tx);
-            };
-            res
+                .unwrap()
         })
         .count()
 }
@@ -134,36 +125,34 @@ pub fn count_assertions(
     })
 }
 
+pub struct BenchMarkResult {
+    pub avg_duration: Duration,
+    pub min_duration: Duration,
+    pub max_duration: Duration,
+}
+
 /// Benchmarks the average time taken to execute a function
-pub fn benchmark_avg<F, T>(iterations: u32, mut f: F) -> Duration
+pub fn benchmark<F, T>(iterations: u32, mut f: F) -> BenchMarkResult
 where
     F: FnMut() -> T,
 {
-    println!("Starting benchmark with {} iterations", iterations);
     let mut durations = Vec::with_capacity(iterations as usize);
 
-    for i in 0..iterations {
-        println!("Starting iteration {}/{}", i + 1, iterations);
+    for _ in 0..iterations {
         let start = Instant::now();
         f();
         let elapsed = start.elapsed();
         durations.push(elapsed);
     }
 
-    println!("All iterations completed, calculating average");
+    let min_duration = durations.iter().min().unwrap();
+    let max_duration = durations.iter().max().unwrap();
     let total_duration: Duration = durations.iter().sum();
     let avg_duration = total_duration / iterations;
-    println!("Average calculation completed: {:?}", avg_duration);
 
-    // Print individual iteration times to spot any anomalies
-    for (i, duration) in durations.iter().enumerate() {
-        if *duration > avg_duration * 2 {
-            println!(
-                "Warning: Iteration {} took {:?} (more than 2x average)",
-                i, duration
-            );
-        }
+    BenchMarkResult {
+        avg_duration,
+        min_duration: *min_duration,
+        max_duration: *max_duration,
     }
-
-    avg_duration
 }

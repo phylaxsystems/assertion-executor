@@ -20,7 +20,6 @@ const BENCHRUNS: u32 = 100;
 pub const CALLER: Address = Address::new([69u8; 20]);
 
 fn main() {
-    println!("caller: {CALLER}");
     // Deploys contracts, loads assertion store, and sets up state dependencies
     let mut executor = setup();
 
@@ -33,26 +32,26 @@ fn main() {
         ..Default::default()
     };
 
-    let avg_duration_no_assertion = benchmark_avg(BENCHRUNS, || {
-        bench_no_assertion_execution(&mut executor, transactions.clone(), BlockEnv::default())
-    });
-
-    let avg_duration = benchmark_avg(BENCHRUNS, || {
-        bench_execution(&mut executor, transactions.clone(), BlockEnv::default())
-    });
-
     let total_gas_used = assert_txs_are_valid_and_compute_gas(
         &mut executor,
         transactions.clone(),
         block_env.clone(),
     );
 
+    let result_no_assertions = benchmark(BENCHRUNS, || {
+        bench_no_assertion_execution(&mut executor, transactions.clone(), block_env.clone())
+    });
+
+    let result = benchmark(BENCHRUNS, || {
+        bench_execution(&mut executor, transactions.clone(), block_env.clone())
+    });
+
     print!(
         "
     ~~~~~~~~~~~~~~~~~~~~~~~~~
-    ~                       ~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~
     ~ Benchmarking Complete ~
-    ~                       ~
+    ~~~~~~~~~~~~~~~~~~~~~~~~~
     ~~~~~~~~~~~~~~~~~~~~~~~~~\n\n"
     );
 
@@ -71,7 +70,7 @@ fn main() {
     );
 
     println!(
-        "> {} assertions total ran against {} transactions\n",
+        "> {} assertions ran against {} transactions\n",
         assertions_ran, tx_count
     );
 
@@ -103,19 +102,18 @@ fn main() {
     );
 
     println!(
-        "> Average time elapsed in validating {} transactions: {:?}\n",
-        tx_count, avg_duration
+        "> Time elapsed in executing {} transactions and {} assertions: Min: {:#?}, Max: {:#?}, Avg: {:#?}\n",
+        tx_count, assertions_ran, result.min_duration, result.max_duration, result.avg_duration
     );
 
     println!(
-        "> Average time per transaction: {:?}\n",
-        if tx_count == 0 {
-            Default::default()
-        } else {
-            avg_duration / tx_count as u32
-        }
+        "> Time elapsed in executing {} transactions without assertions: Min: {:#?}, Max: {:#?}, Avg: {:#?}\n",
+        tx_count, result_no_assertions.min_duration, result_no_assertions.max_duration, result_no_assertions.avg_duration
     );
 
-    let diff = avg_duration - avg_duration_no_assertion;
-    println!("> Total time of running assertions: {:?}\n", diff);
+    let diff = result.avg_duration - result_no_assertions.avg_duration;
+    println!(
+        "> Total time of running {} assertions: {:?}\n",
+        assertions_ran, diff
+    );
 }
