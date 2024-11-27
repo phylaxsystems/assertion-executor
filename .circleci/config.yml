@@ -1,0 +1,95 @@
+version: 2.1
+
+executors:
+  rust:
+    docker:
+      - image: cimg/rust:1.82
+    working_directory: /mnt/ramdisk
+
+commands:
+  git-auth:
+    steps:
+      - run:
+          name: Configure Git Auth
+          command: |
+            git config --global url."https://$GITHUB_TOKEN@github.com".insteadOf ssh://git@github.com
+  install-deps:
+    steps:
+      - run:
+          name: Install Dependencies
+          command: |
+            sudo apt update && sudo apt install --yes clang
+
+
+references:
+  onlyMasterBranch: &onlyMasterBranch
+    filters:
+      branches:
+        only:
+          - main
+  context: &context
+    context:
+      - phylax
+
+jobs:
+  build:
+    executor: rust
+    steps:
+      - checkout
+      - install-deps
+      - git-auth
+      - run:
+          name: Build artifacts
+          command: make build
+      - persist_to_workspace:
+          root: ./
+          paths:
+            - .cargo/
+            - target/
+  format:
+    executor: rust
+    steps:
+      - checkout
+      - git-auth
+      - run:
+          name: Check code formatting
+          command: make format
+  lint:
+    executor: rust
+    steps:
+      - checkout
+      - install-deps
+      - git-auth
+      - run:
+          name: Run linter
+          command: make lint
+  test:
+    executor: rust
+    steps:
+      - checkout
+      - install-deps
+      - git-auth
+      - run:
+          name: Run unit tests
+          command: make test
+
+workflows:
+  Test and Build:
+    jobs:
+      - test:
+          name: Unit Tests
+          <<: *context
+      - lint:
+          name: Lint
+          <<: *context
+      - format:
+          name: Format
+          <<: *context
+      - build:
+          name: Build
+          requires:
+            - Unit Tests
+            - Lint
+            - Format
+          <<: *context
+          <<: *onlyMasterBranch
