@@ -1,11 +1,12 @@
 use crate::{
     primitives::{
         Address,
-        AssertionContract,
+        Bytecode,
         U256,
     },
     store::request::AssertionStoreRequest,
 };
+
 use tokio::sync::mpsc;
 
 /// A writer for writing block based batches to the [`AssertionStore`](super::AssertionStore).
@@ -18,7 +19,7 @@ impl AssertionStoreWriter {
     pub async fn write(
         &self,
         block_num: U256,
-        assertions: Vec<(Address, Vec<AssertionContract>)>,
+        assertions: Vec<(Address, Vec<Bytecode>)>,
     ) -> Result<(), mpsc::error::SendError<AssertionStoreRequest>> {
         self.req_tx
             .send(AssertionStoreRequest::Write {
@@ -34,7 +35,7 @@ impl AssertionStoreWriter {
     pub fn write_sync(
         &self,
         block_num: U256,
-        assertions: Vec<(Address, Vec<AssertionContract>)>,
+        assertions: Vec<(Address, Vec<Bytecode>)>,
     ) -> Result<(), mpsc::error::SendError<AssertionStoreRequest>> {
         self.req_tx.blocking_send(AssertionStoreRequest::Write {
             block_num,

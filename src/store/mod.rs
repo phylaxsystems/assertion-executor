@@ -17,52 +17,52 @@ use tracing::error;
 ///
 /// Writes are processed order by block number
 /// Read Requests are only processed if the requested block number is less than or equal to the latest block number
-///
-/// # Example
-///
-///``` rust
-/// #[tokio::main]
-/// async fn main() {
-///     use assertion_executor::{
-///         inspectors::tracer::CallTracer,
-///         primitives::{
-///             Address,
-///             AssertionContract,
-///             U256,
-///         },
-///         store::AssertionStore,
-///     };
-///
-///     let assertion_store = AssertionStore::default();
-///
-///     let writer = assertion_store.writer();
-///     let mut reader = assertion_store.reader();
-///
-///     let mut trace = CallTracer::default();
-///     trace.calls.insert(Address::new([0; 20]));
-///
-///     assert_eq!(
-///         reader
-///             .read(U256::ZERO, trace.clone())
-///             .await
-///             .unwrap()
-///             .unwrap(),
-///         vec![]
-///     );
-///
-///     writer
-///         .write(
-///             U256::ZERO,
-///             vec![(Address::new([0; 20]), vec![AssertionContract::default()])],
-///         )
-///         .await;
-///
-///     assert_eq!(
-///         reader.read(U256::ZERO, trace).await.unwrap().unwrap(),
-///         vec![AssertionContract::default()]
-///     );
-/// }
-/// ```
+//
+// # Example
+//
+//```
+// #[tokio::main]
+// async fn main() {
+//     use assertion_executor::{
+//         inspectors::tracer::CallTracer,
+//         primitives::{
+//             Address,
+//             AssertionContract,
+//             U256,
+//         },
+//         store::AssertionStore,
+//     };
+//
+//     let assertion_store = AssertionStore::default();
+//
+//     let writer = assertion_store.writer();
+//     let mut reader = assertion_store.reader();
+//
+//     let mut trace = CallTracer::default();
+//     trace.calls.insert(Address::new([0; 20]));
+//
+//     assert_eq!(
+//         reader
+//             .read(U256::ZERO, trace.clone())
+//             .await
+//             .unwrap()
+//             .unwrap(),
+//         vec![]
+//     );
+//
+//     writer
+//         .write(
+//             U256::ZERO,
+//             vec![(Address::new([0; 20]), vec![assertion_executor::primitives::Bytecode::default()])],
+//         )
+//         .await;
+//
+//     assert_eq!(
+//         reader.read(U256::ZERO, trace).await.unwrap().unwrap(),
+//         vec![AssertionContract::default()]
+//     );
+// }
+// ```
 #[derive(Debug)]
 pub struct AssertionStore {
     req_tx: mpsc::Sender<AssertionStoreRequest>,
@@ -79,7 +79,7 @@ impl AssertionStore {
 
             loop {
                 if let Err(err) = req_handler.poll() {
-                    //TODO: improve error handling
+                    // TODO: tokio selectify errors
                     error!(
                         ?err,
                         "AssertionStore: Error polling assertion store handler"

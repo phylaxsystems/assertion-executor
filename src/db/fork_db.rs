@@ -370,10 +370,9 @@ mod fork_db_tests {
     fn test_block_hash() {
         let mut shared_db = SharedDB::<0>::new_test();
 
-        let mut fork_db = shared_db.fork();
         assert_eq!(shared_db.block_hash_ref(0), Err(crate::db::NotFoundError));
 
-        let mut block_changes = BlockChanges {
+        let block_changes = BlockChanges {
             block_num: 0,
             block_hash: KECCAK_EMPTY,
             ..Default::default()
@@ -387,12 +386,11 @@ mod fork_db_tests {
     fn test_commit_self_destruct() {
         let mut shared_db = SharedDB::<0>::new_test();
 
-        let mut block_changes = BlockChanges::default();
         let mut evm_state = EvmState::default();
 
         let mut storage = HashMap::new();
 
-        let mut evm_storage_slot = EvmStorageSlot {
+        let evm_storage_slot = EvmStorageSlot {
             original_value: uint!(0_U256),
             present_value: uint!(1_U256),
             is_cold: false,

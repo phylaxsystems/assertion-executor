@@ -65,7 +65,7 @@ pub enum ForkError {
 }
 
 impl<ExtDb: Clone + DatabaseRef> MultiForkDb<ExtDb> {
-    /// Creates a new MultiForkDb. Defaults to the post-tx state.
+    /// Creates a new `MultiForkDb`. Defaults to the post-tx state.
     pub fn new(pre_tx_db: ExtDb, post_tx_db: ExtDb) -> Self {
         let forks = HashMap::from_iter([(
             ForkId::PreTx,

@@ -105,6 +105,13 @@ impl FsDb {
         })
     }
 
+    /// Creates a new ephemeral database.
+    pub fn new_ephemeral() -> Result<Self, FsDbError> {
+        Ok(Self {
+            db: Config::tmp()?.open()?,
+        })
+    }
+
     /// Create a new file-system database from a sled config.
     pub fn new_with_config(config: Config) -> Result<Self, FsDbError> {
         Ok(Self { db: config.open()? })

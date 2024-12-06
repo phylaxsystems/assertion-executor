@@ -3,6 +3,7 @@ use crate::{
     primitives::{
         Address,
         AssertionContract,
+        Bytecode,
         U256,
     },
 };
@@ -17,6 +18,6 @@ pub enum AssertionStoreRequest {
     },
     Write {
         block_num: U256,
-        assertions: Vec<(Address, Vec<AssertionContract>)>,
+        assertions: Vec<(Address, Vec<Bytecode>)>,
     },
 }

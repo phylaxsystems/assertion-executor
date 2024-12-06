@@ -19,4 +19,9 @@ contract SimpleCounterAssertion {
             revert("Counter cannot be greater than 1");
         }
     }
+
+    function fnSelectors() external pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = this.assertCount.selector;
+    }
 }

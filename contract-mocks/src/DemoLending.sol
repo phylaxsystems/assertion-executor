@@ -69,4 +69,10 @@ contract DemoLendingAssertion is Credible, Test {
             keccak256(abi.encodePacked(i));
         }
     }
+
+    function fnSelectors() external pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = this.testWithdraw.selector;
+        selectors[1] = this.doStuff.selector;
+    }
 }

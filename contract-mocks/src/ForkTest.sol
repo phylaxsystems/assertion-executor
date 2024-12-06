@@ -54,6 +54,12 @@ contract ForkTest is Credible, Test {
         require(sum == expectedSum, "sum != expectedSum");
         require(sum == 6, "sum != 6");
     }
+
+    function fnSelectors() external pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](2);
+        selectors[0] = this.testForkSwitch.selector;
+        selectors[1] = this.testPersistTargetContracts.selector;
+    }
 }
 
 contract Target {

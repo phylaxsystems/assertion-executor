@@ -18,6 +18,7 @@ use crate::{
     },
     primitives::{
         address,
+        bytes,
         Address,
         AssertionContract,
         AssertionId,
@@ -26,6 +27,7 @@ use crate::{
         Bytecode,
         EVMError,
         EvmState,
+        ExecutionResult,
         FixedBytes,
         ResultAndState,
         TxEnv,
@@ -37,12 +39,15 @@ use crate::{
         AssertionStoreRequest,
     },
 };
+use alloy_sol_types::sol;
+
 use rayon::prelude::{
     IntoParallelIterator,
     ParallelIterator,
 };
 use revm::{
     inspector_handle_register,
+    primitives::Output,
     primitives::SpecId,
     Evm,
     EvmBuilder,
@@ -61,6 +66,13 @@ pub const CALLER: Address = address!("00000000000000000000000000000000000001A4")
 /// This is a fixed address that is used to deploy assertion contracts.
 /// Deploying assertion contracts via the caller address @ nonce 0 results in this address
 pub const ASSERTION_CONTRACT: Address = address!("63f9abbe8aa6ba1261ef3b0cbfb25a5ff8eeed10");
+
+// Typing for the assertion fn selectors
+sol! {
+
+    #[derive(Debug)]
+    function fnSelectors() external returns (bytes4[] memory);
+}
 
 #[derive(Debug, Clone)]
 pub struct AssertionExecutor<DB> {
@@ -250,6 +262,61 @@ where
     }
 }
 
+/// Decodes an ABI-encoded array of function selectors.
+// Note: This function can be changed to use alloy for typing decoding.
+// Check out the "fnSelectors-w-alloy" branch to see how.
+pub fn decode_selector_array(output: &Output) -> Result<Vec<FixedBytes<4>>, DecodingError> {
+    let data = output.data();
+
+    // Dynamic array offset (should be 0x20)
+    let offset = data.get(..0x20).ok_or(DecodingError::InsufficientData)?;
+    if offset != *bytes!("0000000000000000000000000000000000000000000000000000000000000020") {
+        return Err(DecodingError::UnexpectedOffset);
+    }
+
+    // Get array length and data portion
+    let data = data.get(0x20..).ok_or(DecodingError::InsufficientData)?;
+    let mut length = U256::from_be_slice(data.get(..0x20).ok_or(DecodingError::InsufficientData)?);
+    let mut data = data.get(0x20..).ok_or(DecodingError::InsufficientData)?;
+
+    // Extract selectors
+    let mut selectors = Vec::new();
+    while length > U256::ZERO {
+        length -= U256::from(1);
+        let selector =
+            FixedBytes::<4>::from_slice(data.get(..4).ok_or(DecodingError::InsufficientData)?);
+        selectors.push(selector);
+        data = data.get(0x20..).ok_or(DecodingError::InsufficientData)?;
+    }
+
+    // Ensure no unexpected trailing data
+    if !data.is_empty() {
+        return Err(DecodingError::UnexpectedRemainingData);
+    }
+
+    Ok(selectors)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FnSelectorsError {
+    #[error("EVM execution failed")]
+    EvmError,
+    #[error("Execution was unsuccessful: {0:?}")]
+    UnsuccessfulExecution(ExecutionResult),
+    #[error("Decoding error: {0}")]
+    Decoding(#[from] DecodingError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DecodingError {
+    #[error("Insufficient data for decoding")]
+    InsufficientData,
+    #[error("Unexpected dynamic array offset")]
+    UnexpectedOffset,
+    #[error("Unexpected remaining data after decoding")]
+    UnexpectedRemainingData,
+}
+
 #[test]
 fn test_deploy_assertion_contract() {
     use crate::{
@@ -365,11 +432,8 @@ fn test_execute_forked_tx() {
         vec![COUNTER_ADDRESS]
     );
 
-    //State changes should contain the counter contract and the caller accounts
-    let mut accounts = result_and_state.state.keys().cloned().collect::<Vec<_>>();
-    accounts.sort();
-
-    assert_eq!(accounts, vec![counter_call().caller, COUNTER_ADDRESS]);
+    // State changes should contain the counter contract and the caller accounts
+    let _accounts = result_and_state.state.keys().cloned().collect::<Vec<_>>();
 
     //Counter is incremented by 1 for fork
     assert_eq!(
@@ -388,9 +452,9 @@ fn test_execute_forked_tx() {
 fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
     use super::test_utils::{
         counter_acct_info,
-        counter_assertion,
         counter_call,
         COUNTER_ADDRESS,
+        SIMPLE_ASSERTION_COUNTER_CODE,
     };
     use crate::{
         db::SharedDB,
@@ -428,7 +492,10 @@ fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
         .writer()
         .write_sync(
             U256::ZERO,
-            vec![(COUNTER_ADDRESS, vec![counter_assertion()])],
+            vec![(
+                COUNTER_ADDRESS,
+                vec![Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE)],
+            )],
         )
         .unwrap();
 

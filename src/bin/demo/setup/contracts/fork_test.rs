@@ -23,7 +23,6 @@ use assertion_executor::{
 // Re-export test util items
 pub use assertion_executor::test_utils::{
     counter_acct_info,
-    counter_assertion,
     counter_call,
     COUNTER_ADDRESS as FORK_ADDRESS,
 };

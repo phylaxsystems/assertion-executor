@@ -72,10 +72,19 @@ impl<const BLOCKS_TO_RETAIN: usize> DatabaseRef for SharedDB<BLOCKS_TO_RETAIN> {
 }
 
 impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
+    /// Creates a new `SharedDb` struct from a path.
     pub fn new(path: &Path) -> Result<Self, FsDbError> {
         Ok(Self {
             mem_db: Arc::new(RwLock::new(MemoryDb::default())),
             fs_db: Arc::new(Mutex::new(FsDb::new(path)?)),
+        })
+    }
+
+    /// Creates a new ephemeral `SharedDb`. Used when we do not need to store data.
+    pub fn new_ephemeral() -> Result<Self, FsDbError> {
+        Ok(Self {
+            mem_db: Arc::new(RwLock::new(MemoryDb::default())),
+            fs_db: Arc::new(Mutex::new(FsDb::new_ephemeral()?)),
         })
     }
 

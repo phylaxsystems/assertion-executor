@@ -7,6 +7,7 @@ pub use revm::{
     primitives::{
         address,
         bytes,
+        fixed_bytes,
         result::ResultAndState,
         uint,
         Account,
@@ -22,6 +23,7 @@ pub use revm::{
         EvmStorageSlot,
         ExecutionResult,
         FixedBytes,
+        Output,
         TxEnv,
         TxKind,
         B256,
