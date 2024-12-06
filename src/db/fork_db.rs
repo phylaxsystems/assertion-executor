@@ -12,7 +12,10 @@ use crate::{
         U256,
     },
 };
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 
 /// Maps storage slots to their values.
 /// Also contains a flag to indicate if the account is self destructed.
@@ -24,7 +27,7 @@ pub(super) struct ForkStorageMap {
 }
 
 /// Contains mutations on top of an existing database.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ForkDb<ExtDb> {
     /// Maps addresses to storage slots and their history indexed by block.
     pub(super) storage: HashMap<Address, ForkStorageMap>,
@@ -33,7 +36,18 @@ pub struct ForkDb<ExtDb> {
     /// Maps bytecode hashes to bytecode.
     pub(super) code_by_hash: HashMap<B256, Bytecode>,
     /// Inner database.
-    pub(super) inner_db: ExtDb,
+    pub(super) inner_db: Arc<ExtDb>,
+}
+
+impl<ExtDb> Clone for ForkDb<ExtDb> {
+    fn clone(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+            basic: self.basic.clone(),
+            code_by_hash: self.code_by_hash.clone(),
+            inner_db: self.inner_db.clone(),
+        }
+    }
 }
 
 impl<ExtDb: DatabaseRef> DatabaseRef for ForkDb<ExtDb> {
@@ -131,14 +145,18 @@ impl<ExtDb> ForkDb<ExtDb> {
             storage: Default::default(),
             basic: Default::default(),
             code_by_hash: Default::default(),
-            inner_db,
+            inner_db: Arc::new(inner_db),
         }
     }
 
     /// Replace the inner database with a new one.
     /// Returns the previous inner database.
-    pub fn replace_inner_db(&mut self, new_db: ExtDb) -> ExtDb {
-        std::mem::replace(&mut self.inner_db, new_db)
+    pub fn replace_inner_db(&mut self, new_db: Arc<ExtDb>) -> Arc<ExtDb> {
+        let prev_inner_db = Arc::clone(&self.inner_db);
+
+        self.inner_db = new_db;
+
+        prev_inner_db
     }
 
     /// Inserts an account info into the fork db.

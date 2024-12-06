@@ -22,7 +22,10 @@ use crate::{
     },
 };
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 
 /// Default persistent accounts.
 /// Journaled state of these accounts will be persisted across forks.
@@ -33,7 +36,7 @@ const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] = [ASSERTION_CONTRACT, CALLER, P
 #[derive(Debug, Clone)]
 pub(crate) struct Fork<ExtDb> {
     /// The database.
-    pub db: ExtDb,
+    pub db: Arc<ExtDb>,
     /// Journaled state of the fork.
     /// None if the fork has not been initialized.
     pub journaled_state: Option<JournaledState>,
@@ -64,13 +67,13 @@ pub enum ForkError {
     ForkNotFound(ForkId),
 }
 
-impl<ExtDb: Clone + DatabaseRef> MultiForkDb<ExtDb> {
-    /// Creates a new `MultiForkDb`. Defaults to the post-tx state.
+impl<ExtDb: DatabaseRef> MultiForkDb<ExtDb> {
+    /// Creates a new MultiForkDb. Defaults to the post-tx state.
     pub fn new(pre_tx_db: ExtDb, post_tx_db: ExtDb) -> Self {
         let forks = HashMap::from_iter([(
             ForkId::PreTx,
             Fork {
-                db: pre_tx_db,
+                db: Arc::new(pre_tx_db),
                 journaled_state: None,
             },
         )]);

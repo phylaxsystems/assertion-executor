@@ -19,6 +19,6 @@ pub use revm::{
     DatabaseRef,
 };
 
-pub trait PhDB: DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}
+pub trait PhDB: DatabaseRef + Sync + Send {}
 
-impl<T> PhDB for T where T: DatabaseRef + Clone + Sync + Send + std::fmt::Debug {}
+impl<T> PhDB for T where T: DatabaseRef + Sync + Send {}
