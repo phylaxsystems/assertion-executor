@@ -9,3 +9,6 @@ format:
 
 lint:
 	cargo clippy  -- -D warnings
+
+forge-test:
+	forge test -vvv

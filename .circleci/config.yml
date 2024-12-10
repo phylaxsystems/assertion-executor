@@ -1,6 +1,10 @@
 version: 2.1
 
 executors:
+  foundry:
+    docker:
+      - image: ghcr.io/foundry-rs/foundry:latest
+    working_directory: /mnt/ramdisk
   rust:
     docker:
       - image: cimg/rust:1.82
@@ -13,13 +17,19 @@ commands:
           name: Configure Git Auth
           command: |
             git config --global url."https://$GITHUB_TOKEN@github.com".insteadOf ssh://git@github.com
+            git config --global url."https://$GITHUB_TOKEN@github.com/".insteadOf git@github.com:
   install-deps:
     steps:
       - run:
           name: Install Dependencies
           command: |
             sudo apt update && sudo apt install --yes clang
-
+  build-contracts:
+    steps:
+      - run:
+          name: Build Smart Contracts
+          command: |
+            forge build --root contract-mocks
 
 references:
   onlyMasterBranch: &onlyMasterBranch
@@ -46,6 +56,18 @@ jobs:
           paths:
             - .cargo/
             - target/
+  forge-build:
+    executor: foundry
+    steps:
+      - checkout
+      - git-auth
+      - run:
+          name: Build smart contract mocks
+          command: forge build --root contract-mocks
+      - persist_to_workspace:
+          root: ./
+          paths:
+            - contract-mocks/
   format:
     executor: rust
     steps:
@@ -63,12 +85,14 @@ jobs:
       - run:
           name: Run linter
           command: make lint
-  test:
+  unit-test:
     executor: rust
     steps:
       - checkout
       - install-deps
       - git-auth
+      - attach_workspace:
+          at: .
       - run:
           name: Run unit tests
           command: make test
@@ -76,8 +100,13 @@ jobs:
 workflows:
   Test and Build:
     jobs:
-      - test:
+      - forge-build:
+          name: Build Smart Contracts
+          <<: *context
+      - unit-test:
           name: Unit Tests
+          requires:
+            - Build Smart Contracts
           <<: *context
       - lint:
           name: Lint
