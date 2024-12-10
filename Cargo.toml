@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 rayon = "1.10.0"
-revm = "14.0.3"
+revm = "18.0.0"
 serde = { version = "1.0.208", features = ["derive"] }
 sled = { version = "1.0.0-alpha.124" }
 thiserror = "1.0.63"
