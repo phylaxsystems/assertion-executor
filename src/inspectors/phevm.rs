@@ -242,8 +242,8 @@ mod test {
     };
     use revm::primitives::bytes;
 
-    #[test]
-    fn test_fork_switching() {
+    #[tokio::test]
+    async fn test_fork_switching() {
         let caller = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
         let target = address!("118dd24a3b0d02f90d8896e242d3838b4d37c181");
 
@@ -259,10 +259,11 @@ mod test {
 
         let writer = assertion_store.writer();
         writer
-            .write_sync(
+            .write(
                 U256::ZERO,
                 vec![(target, vec![Bytecode::LegacyRaw(assertion_code)])],
             )
+            .await
             .unwrap();
 
         let mut executor = AssertionExecutor {
@@ -296,6 +297,7 @@ mod test {
         //Execute triggering tx.
         assert!(executor
             .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)
+            .await
             .unwrap()
             .is_some());
     }

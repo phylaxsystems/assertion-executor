@@ -14,7 +14,7 @@ use std::time::{
 };
 
 /// Benchmarks the execution of transactions & assertions
-pub fn bench_execution(
+pub async fn bench_execution(
     executor: &mut AssertionExecutor<SharedDB<5>>,
     transactions: Vec<TxEnv>,
     block_env: BlockEnv,
@@ -22,9 +22,11 @@ pub fn bench_execution(
     let mut fork_db = executor.db.fork();
 
     let start = Instant::now();
-    transactions.into_iter().for_each(|tx| {
-        let _ = executor.validate_transaction(block_env.clone(), tx, &mut fork_db);
-    });
+    for tx in transactions {
+        let _ = executor
+            .validate_transaction(block_env.clone(), tx, &mut fork_db)
+            .await;
+    }
     start.elapsed()
 }
 
@@ -81,32 +83,35 @@ pub fn bench_no_assertion_execution(
 }
 
 /// Counts the number of valid assertions
-pub fn count_valid_assertion_results(
+pub async fn count_valid_assertion_results(
     executor: &mut AssertionExecutor<SharedDB<5>>,
     transactions: Vec<TxEnv>,
     block_env: BlockEnv,
 ) -> usize {
     let mut fork_db = executor.db.fork();
 
-    transactions
-        .into_iter()
-        .filter_map(|tx| {
-            executor
-                .validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)
-                .unwrap()
-        })
-        .count()
+    let mut count = 0;
+    for tx in transactions {
+        if let Ok(Some(_)) = executor
+            .validate_transaction(block_env.clone(), tx, &mut fork_db)
+            .await
+        {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Counts the number of assertions ran against a set of transactions
-pub fn count_assertions(
+pub async fn count_assertions(
     executor: &mut AssertionExecutor<SharedDB<5>>,
     transactions: Vec<TxEnv>,
     block_env: BlockEnv,
 ) -> usize {
     let mut fork_db = executor.db.fork();
 
-    transactions.into_iter().fold(0, |acc, tx| {
+    let mut count = 0;
+    for tx in transactions {
         let call_traces = executor
             .execute_forked_tx(block_env.clone(), tx, &mut fork_db)
             .unwrap()
@@ -115,14 +120,13 @@ pub fn count_assertions(
         let mut assertion_store_reader = executor.assertion_store_reader.clone();
 
         let assertions = assertion_store_reader
-            .read_sync(block_env.number, call_traces)
-            .expect("Failed to send request")
-            .expect("Failed to receive response, channel empty and closed");
+            .read(block_env.number, call_traces)
+            .await
+            .expect("Failed to read assertions");
 
-        acc + assertions
-            .into_iter()
-            .fold(0, |acc, contract| acc + contract.fn_selectors.len())
-    })
+        count += assertions.len();
+    }
+    count
 }
 
 pub struct BenchMarkResult {
@@ -132,15 +136,15 @@ pub struct BenchMarkResult {
 }
 
 /// Benchmarks the average time taken to execute a function
-pub fn benchmark<F, T>(iterations: u32, mut f: F) -> BenchMarkResult
+pub async fn benchmark<F, T>(iterations: u32, mut f: F) -> BenchMarkResult
 where
-    F: FnMut() -> T,
+    F: AsyncFnMut() -> T,
 {
     let mut durations = Vec::with_capacity(iterations as usize);
 
     for _ in 0..iterations {
         let start = Instant::now();
-        f();
+        f().await;
         let elapsed = start.elapsed();
         durations.push(elapsed);
     }

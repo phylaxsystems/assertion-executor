@@ -10,5 +10,11 @@ format:
 lint:
 	cargo clippy  -- -D warnings
 
-forge-test:
-	forge test -vvv
+test-mocks:
+	forge test --root contract-mocks -vvv
+
+build-mocks:
+	forge build --root contract-mocks
+
+test-local:
+	make build-mocks && make test

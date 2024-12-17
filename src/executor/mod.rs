@@ -34,10 +34,7 @@ use crate::{
         TxKind,
         U256,
     },
-    store::{
-        AssertionStoreReader,
-        AssertionStoreRequest,
-    },
+    store::AssertionStoreReader,
 };
 use alloy_sol_types::sol;
 
@@ -53,7 +50,6 @@ use revm::{
     EvmBuilder,
 };
 
-use tokio::sync::mpsc::error::SendError;
 use tracing::{
     instrument,
     trace,
@@ -90,7 +86,7 @@ where
     /// Returns the results of the assertions, as well as the state changes that should be
     /// committed if the assertions pass.
     #[instrument(skip_all)]
-    pub fn validate_transaction<'a>(
+    pub async fn validate_transaction<'a>(
         &'a mut self,
         block_env: BlockEnv,
         tx_env: TxEnv,
@@ -105,7 +101,9 @@ where
 
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
 
-        let results = self.execute_assertions(block_env, tx_traces, multi_fork_db)?;
+        let results = self
+            .execute_assertions(block_env, tx_traces, multi_fork_db)
+            .await?;
 
         match results.all(|r| r.is_success()) {
             true => {
@@ -117,22 +115,19 @@ where
     }
 
     #[instrument(skip_all)]
-    fn execute_assertions<'a>(
+    async fn execute_assertions<'a>(
         &'a self,
         block_env: BlockEnv,
         traces: CallTracer,
         multi_fork_db: MultiForkDb<ForkDb<DB>>,
-    ) -> Result<impl ParallelIterator<Item = AssertionResult> + 'a, SendError<AssertionStoreRequest>>
-    {
+    ) -> Result<impl ParallelIterator<Item = AssertionResult> + 'a, ExecutorError> {
         // Examine contracts that were called to see if they have assertions
         // associated, and dispatch accordingly
         let mut assertion_store_reader = self.assertion_store_reader.clone();
 
-        // TODO: improve channel error handling
         let assertions = assertion_store_reader
-            .read_sync(block_env.number, traces)
-            .expect("Failed to send request")
-            .expect("Failed to receive response, channel empty and closed");
+            .read(block_env.number, traces)
+            .await?;
 
         Ok(assertions
             .into_par_iter()
@@ -317,72 +312,15 @@ pub enum DecodingError {
     UnexpectedRemainingData,
 }
 
-#[test]
-fn test_deploy_assertion_contract() {
+#[cfg(test)]
+mod test {
+
+    use super::*;
     use crate::{
-        db::SharedDB,
-        store::AssertionStore,
-        test_utils::SIMPLE_ASSERTION_COUNTER_CODE,
-        AssertionExecutorBuilder,
-    };
-    let shared_db = SharedDB::<0>::new_test();
-    let assertion_store = AssertionStore::default();
-
-    let executor =
-        AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
-
-    let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
-
-    let deployed_address0 = executor
-        .deploy_assertion_contract(
-            BlockEnv::default(),
-            Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE),
-            &mut multi_fork_db0,
-        )
-        .unwrap();
-
-    assert_eq!(deployed_address0, ASSERTION_CONTRACT);
-
-    let deployed_code0 = multi_fork_db0
-        .basic_ref(deployed_address0)
-        .unwrap()
-        .unwrap()
-        .code
-        .unwrap();
-    assert!(!deployed_code0.is_empty());
-
-    let mut shortened_code = SIMPLE_ASSERTION_COUNTER_CODE;
-    shortened_code.truncate(SIMPLE_ASSERTION_COUNTER_CODE.len() - 1);
-
-    let mut multi_fork_db1 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
-
-    let deployed_address1 = executor
-        .deploy_assertion_contract(
-            BlockEnv::default(),
-            Bytecode::LegacyRaw(shortened_code),
-            &mut multi_fork_db1,
-        )
-        .unwrap();
-
-    assert_eq!(deployed_address1, ASSERTION_CONTRACT);
-
-    let deployed_code1 = multi_fork_db1
-        .basic_ref(deployed_address1)
-        .unwrap()
-        .unwrap()
-        .code
-        .unwrap();
-    assert!(!deployed_code1.is_empty());
-
-    //Assert that the same address is returned for the differing code
-    assert_eq!(deployed_address0, deployed_address1);
-    assert_ne!(deployed_code0, deployed_code1);
-}
-
-#[test]
-fn test_execute_forked_tx() {
-    use crate::{
-        db::SharedDB,
+        db::{
+            DatabaseRef,
+            SharedDB,
+        },
         primitives::{
             Account,
             BlockChanges,
@@ -390,148 +328,192 @@ fn test_execute_forked_tx() {
             U256,
         },
         store::AssertionStore,
-        test_utils::{
-            counter_acct_info,
-            counter_call,
-            COUNTER_ADDRESS,
-        },
+        test_utils::*,
         AssertionExecutorBuilder,
     };
 
     use revm::primitives::uint;
     use std::collections::HashMap;
 
-    let mut shared_db = SharedDB::<0>::new_test();
+    #[tokio::test]
+    async fn test_deploy_assertion_contract() {
+        let shared_db = SharedDB::<0>::new_test();
+        let assertion_store = AssertionStore::default();
 
-    let block_changes = BlockChanges {
-        state_changes: HashMap::from_iter(vec![(
-            COUNTER_ADDRESS,
-            Account {
-                info: counter_acct_info(),
-                ..Default::default()
-            },
-        )]),
-        ..Default::default()
-    };
-    let _ = shared_db.commit_block(block_changes);
+        let executor =
+            AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
 
-    let assertion_store = AssertionStore::default();
+        let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
-    let executor =
-        AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
+        let deployed_address0 = executor
+            .deploy_assertion_contract(
+                BlockEnv::default(),
+                Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER)),
+                &mut multi_fork_db0,
+            )
+            .unwrap();
 
-    let mut fork_db = shared_db.fork();
+        assert_eq!(deployed_address0, ASSERTION_CONTRACT);
 
-    let (traces, result_and_state) = executor
-        .execute_forked_tx(BlockEnv::default(), counter_call(), &mut fork_db)
-        .unwrap();
+        let deployed_code0 = multi_fork_db0
+            .basic_ref(deployed_address0)
+            .unwrap()
+            .unwrap()
+            .code
+            .unwrap();
+        assert!(!deployed_code0.is_empty());
 
-    //Traces should contain the call to the counter contract
-    assert_eq!(
-        traces.calls.into_iter().collect::<Vec<Address>>(),
-        vec![COUNTER_ADDRESS]
-    );
+        let mut shortened_code = bytecode(SIMPLE_ASSERTION_COUNTER);
+        let len = shortened_code.len();
+        shortened_code.truncate(len - 1);
 
-    // State changes should contain the counter contract and the caller accounts
-    let _accounts = result_and_state.state.keys().cloned().collect::<Vec<_>>();
+        let mut multi_fork_db1 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
-    //Counter is incremented by 1 for fork
-    assert_eq!(
-        fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
-        Ok(uint!(1_U256))
-    );
+        let deployed_address1 = executor
+            .deploy_assertion_contract(
+                BlockEnv::default(),
+                Bytecode::LegacyRaw(shortened_code),
+                &mut multi_fork_db1,
+            )
+            .unwrap();
 
-    //Counter is not incremented in the shared db
-    assert_eq!(
-        executor.db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
-        Ok(U256::ZERO)
-    );
-}
+        assert_eq!(deployed_address1, ASSERTION_CONTRACT);
 
-#[test]
-fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
-    use super::test_utils::{
-        counter_acct_info,
-        counter_call,
-        COUNTER_ADDRESS,
-        SIMPLE_ASSERTION_COUNTER_CODE,
-    };
-    use crate::{
-        db::SharedDB,
-        primitives::{
-            Account,
-            BlockChanges,
-            BlockEnv,
-            U256,
-        },
-        store::AssertionStore,
-        AssertionExecutorBuilder,
-    };
+        let deployed_code1 = multi_fork_db1
+            .basic_ref(deployed_address1)
+            .unwrap()
+            .unwrap()
+            .code
+            .unwrap();
+        assert!(!deployed_code1.is_empty());
 
-    use revm::primitives::uint;
-    use std::collections::HashMap;
+        //Assert that the same address is returned for the differing code
+        assert_eq!(deployed_address0, deployed_address1);
+        assert_ne!(deployed_code0, deployed_code1);
+    }
 
-    let mut shared_db = SharedDB::<0>::new_test();
-    let _ = shared_db.commit_block(BlockChanges {
-        state_changes: HashMap::from_iter(
-            vec![(
+    #[tokio::test]
+    async fn test_execute_forked_tx() {
+        let mut shared_db = SharedDB::<0>::new_test();
+
+        let block_changes = BlockChanges {
+            state_changes: HashMap::from_iter(vec![(
                 COUNTER_ADDRESS,
                 Account {
                     info: counter_acct_info(),
                     ..Default::default()
                 },
-            )]
-            .into_iter(),
-        ),
-        ..Default::default()
-    });
+            )]),
+            ..Default::default()
+        };
+        let _ = shared_db.commit_block(block_changes);
 
-    let assertion_store = AssertionStore::default();
+        let assertion_store = AssertionStore::default();
 
-    assertion_store
-        .writer()
-        .write_sync(
-            U256::ZERO,
-            vec![(
-                COUNTER_ADDRESS,
-                vec![Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE)],
-            )],
-        )
-        .unwrap();
+        let executor =
+            AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
 
-    let mut executor = AssertionExecutorBuilder::new(shared_db, assertion_store.reader()).build();
+        let mut fork_db = shared_db.fork();
 
-    let block_env = BlockEnv::default();
-    let tx = counter_call();
+        let (traces, result_and_state) = executor
+            .execute_forked_tx(BlockEnv::default(), counter_call(), &mut fork_db)
+            .unwrap();
 
-    let mut fork_db = executor.db.fork();
-
-    for (expected_state_before, expected_state_after, expected_result) in [
-        (uint!(0_U256), uint!(1_U256), true),  //Counter is incremented
-        (uint!(1_U256), uint!(1_U256), false), //Counter is not incremented as assertion fails
-    ] {
-        //Assert that the state of the counter contract before committing the changes
+        //Traces should contain the call to the counter contract
         assert_eq!(
-            fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
-            Ok(expected_state_before),
-            "Expected state before: {expected_state_before}",
+            traces.calls.into_iter().collect::<Vec<Address>>(),
+            vec![COUNTER_ADDRESS]
         );
 
-        let result = executor.validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)?;
+        // State changes should contain the counter contract and the caller accounts
+        let _accounts = result_and_state.state.keys().cloned().collect::<Vec<_>>();
 
-        println!("Result: {:#?}", result);
-        assert_eq!(result.is_some(), expected_result);
-
-        //Assert that the state of the counter contract before committing the changes
+        //Counter is incremented by 1 for fork
         assert_eq!(
             fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
-            Ok(expected_state_after),
-            "Expected state after: {expected_state_after}",
+            Ok(uint!(1_U256))
+        );
+
+        //Counter is not incremented in the shared db
+        assert_eq!(
+            executor.db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
+            Ok(U256::ZERO)
         );
     }
 
-    //Assert that the assertion contract is not persisted in the database
-    assert_eq!(executor.db.basic_ref(ASSERTION_CONTRACT).unwrap(), None);
+    #[tokio::test]
+    async fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
+        let mut shared_db = SharedDB::<0>::new_test();
+        let _ = shared_db.commit_block(BlockChanges {
+            state_changes: HashMap::from_iter(
+                vec![(
+                    COUNTER_ADDRESS,
+                    Account {
+                        info: counter_acct_info(),
+                        ..Default::default()
+                    },
+                )]
+                .into_iter(),
+            ),
+            ..Default::default()
+        });
 
-    Ok(())
+        let assertion_store = AssertionStore::default();
+
+        assertion_store
+            .writer()
+            .write(
+                U256::ZERO,
+                vec![(
+                    COUNTER_ADDRESS,
+                    vec![Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER))],
+                )],
+            )
+            .await
+            .unwrap();
+
+        let reader = assertion_store.reader();
+
+        let mut executor = AssertionExecutorBuilder::new(shared_db, reader).build();
+
+        let block_env = BlockEnv {
+            number: uint!(1_U256),
+            ..Default::default()
+        };
+
+        let tx = counter_call();
+
+        let mut fork_db = executor.db.fork();
+
+        for (expected_state_before, expected_state_after, expected_result) in [
+            (uint!(0_U256), uint!(1_U256), true),  //Counter is incremented
+            (uint!(1_U256), uint!(1_U256), false), //Counter is not incremented as assertion fails
+        ] {
+            //Assert that the state of the counter contract before committing the changes
+            assert_eq!(
+                fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
+                Ok(expected_state_before),
+                "Expected state before: {expected_state_before}",
+            );
+
+            let result = executor
+                .validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)
+                .await
+                .unwrap();
+
+            assert_eq!(result.is_some(), expected_result);
+
+            //Assert that the state of the counter contract before committing the changes
+            assert_eq!(
+                fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
+                Ok(expected_state_after),
+                "Expected state after: {expected_state_after}",
+            );
+        }
+
+        //Assert that the assertion contract is not persisted in the database
+        assert_eq!(executor.db.basic_ref(ASSERTION_CONTRACT).unwrap(), None);
+
+        Ok(())
+    }
 }

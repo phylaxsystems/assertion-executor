@@ -16,6 +16,7 @@ use crate::{
         PhEvmInspector,
     },
     primitives::{
+        uint,
         Address,
         AssertionContract,
         Bytecode,
@@ -26,7 +27,8 @@ use crate::{
     },
     store::{
         map::AssertionStoreMap,
-        request::AssertionStoreRequest,
+        AssertionStoreReadParams,
+        AssertionStoreWriteParams,
     },
 };
 
@@ -42,7 +44,10 @@ use revm::{
     EvmBuilder,
 };
 
-use std::collections::HashMap;
+use std::collections::{
+    btree_map::Entry,
+    BTreeMap,
+};
 use tokio::sync::mpsc;
 
 // TODO: Support reorgs
@@ -52,9 +57,11 @@ use tokio::sync::mpsc;
 /// Match Requests are only processed if the requested block number is less than or equal to the latest block number
 pub struct AssertionStoreRequestHandler {
     assertion_store: AssertionStoreMap,
-    req_rx: mpsc::Receiver<AssertionStoreRequest>,
+    read_req_rx: mpsc::Receiver<AssertionStoreReadParams>,
+    write_req_rx: mpsc::Receiver<AssertionStoreWriteParams>,
     latest_block_num: Option<U256>,
-    pending_reqs: HashMap<U256, Vec<AssertionStoreRequest>>,
+    pending_read_reqs: BTreeMap<U256, Vec<AssertionStoreReadParams>>,
+    pending_write_reqs: BTreeMap<U256, AssertionStoreWriteParams>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -62,79 +69,126 @@ pub struct AssertionStoreRequestHandler {
 pub enum AssertionStoreRequestHandlerError {
     #[error("Failed to send Assertions, receiver dropped")]
     FailedToSendAssertions(#[from] mpsc::error::TrySendError<Vec<AssertionContract>>),
+    #[error("Failed to receive requests")]
+    FailedToReceiveRequests,
     #[error("Write requests not in order by block number")]
     WriteRequestsNotInOrder,
+    #[error("Multiple write requests for the same block number")]
+    MultipleWriteRequestsForSameBlock,
+    #[error("Error processing assertion selectors")]
+    AssertionSelectorError(#[from] FnSelectorsError),
 }
 
 impl AssertionStoreRequestHandler {
-    pub fn new(req_rx: mpsc::Receiver<AssertionStoreRequest>) -> Self {
+    pub fn new(
+        read_req_rx: mpsc::Receiver<AssertionStoreReadParams>,
+        write_req_rx: mpsc::Receiver<AssertionStoreWriteParams>,
+    ) -> Self {
         Self {
             assertion_store: AssertionStoreMap::default(),
-            pending_reqs: HashMap::new(),
-            req_rx,
+            pending_read_reqs: BTreeMap::new(),
+            pending_write_reqs: BTreeMap::new(),
+            read_req_rx,
+            write_req_rx,
             latest_block_num: None,
         }
     }
 
     /// Polls the request receiver for new requests related to the assertion store.
-    pub fn poll(&mut self) -> Result<(), AssertionStoreRequestHandlerError> {
-        while let Ok(req) = self.req_rx.try_recv() {
-            match req {
-                AssertionStoreRequest::Match {
-                    block_num,
-                    ref traces,
-                    ref resp_sender,
-                } => {
-                    // Check if the requested block number is greater than the latest block number, if so, store the request
-                    if block_num > self.latest_block_num.unwrap_or_default() {
-                        self.pending_reqs.entry(block_num).or_default().push(req);
-                    } else {
-                        let assertions = self.assertion_store.match_traces(traces);
-                        resp_sender.try_send(assertions)?;
-                    }
+    pub async fn poll(&mut self) -> Result<(), AssertionStoreRequestHandlerError> {
+        tokio::select! {
+            read_req = self.read_req_rx.recv() => {
+                if let Some(read_req) = read_req {
+                       self.pending_read_reqs.entry(read_req.block_num).or_default().push(read_req);
+                       self.process_read_requests()?;
                 }
-                AssertionStoreRequest::Write {
-                    block_num,
-                    assertions,
-                } => {
-                    if let Some(ref latest_block_num) = self.latest_block_num {
-                        if block_num <= *latest_block_num {
-                            return Err(AssertionStoreRequestHandlerError::WriteRequestsNotInOrder);
+                else {
+                    return Err(AssertionStoreRequestHandlerError::FailedToReceiveRequests);
+                }
+
+            }
+            write_req = self.write_req_rx.recv() => {
+                if let Some(AssertionStoreWriteParams { block_num, assertions }) = write_req {
+                    match self.pending_write_reqs.entry(block_num) {
+                        Entry::Occupied(_) => {
+                            return Err(AssertionStoreRequestHandlerError::MultipleWriteRequestsForSameBlock);
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(AssertionStoreWriteParams { assertions, block_num });
                         }
                     }
 
-                    self.latest_block_num = Some(block_num);
-
-                    let forkb = SharedDB::<0>::new_ephemeral().unwrap();
-
-                    for (addr, assertions) in assertions {
-                        let assertions = Vec::from_iter(assertions.into_iter().map(|bytecode| {
-                            let multi_fork_db = MultiForkDb::new(forkb.fork(), forkb.fork());
-                            get_assertion_selectors(bytecode, BlockEnv::default(), multi_fork_db)
-                                .unwrap()
-                        }));
-                        self.assertion_store.insert(addr, assertions);
-                    }
-
-                    // Check if there are any pending match requests for the new block number
-                    let pending_reqs = self.pending_reqs.remove(&block_num);
-                    if let Some(pending_reqs) = pending_reqs {
-                        for pending_req in pending_reqs {
-                            if let AssertionStoreRequest::Match {
-                                traces,
-                                resp_sender,
-                                ..
-                            } = pending_req
-                            {
-                                let assertions = self.assertion_store.match_traces(&traces);
-                                resp_sender.try_send(assertions)?;
-                            }
-                        }
-                    }
+                    self.process_write_requests()?;
+                    self.process_read_requests()?;
+                }
+                else {
+                    return Err(AssertionStoreRequestHandlerError::FailedToReceiveRequests);
                 }
             }
         }
         Ok(())
+    }
+    /// Processes pending write requests
+    fn process_write_requests(&mut self) -> Result<(), AssertionStoreRequestHandlerError> {
+        while let Some(entry) = self.pending_write_reqs.first_entry() {
+            if *entry.key() == Self::valid_block_num(self.latest_block_num) {
+                let write_req = entry.remove();
+
+                let AssertionStoreWriteParams {
+                    block_num,
+                    assertions,
+                } = write_req;
+
+                self.latest_block_num = Some(block_num);
+
+                let forkb = SharedDB::<0>::new_ephemeral().unwrap();
+
+                for (addr, assertions) in assertions {
+                    let mut assertion_contracts = vec![];
+                    for bytecode in assertions {
+                        let multi_fork_db = MultiForkDb::new(forkb.fork(), forkb.fork());
+                        let assertion =
+                            get_assertion_selectors(bytecode, BlockEnv::default(), multi_fork_db)?;
+                        assertion_contracts.push(assertion);
+                    }
+
+                    self.assertion_store.insert(addr, assertion_contracts);
+                }
+            } else {
+                return Err(AssertionStoreRequestHandlerError::WriteRequestsNotInOrder);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Processes pending read requests
+    fn process_read_requests(&mut self) -> Result<(), AssertionStoreRequestHandlerError> {
+        let valid_block_num = Self::valid_block_num(self.latest_block_num);
+        while let Some(entry) = self.pending_read_reqs.first_entry() {
+            if *entry.key() > valid_block_num {
+                break;
+            }
+
+            let reqs = entry.remove();
+
+            for req in reqs {
+                let AssertionStoreReadParams {
+                    traces, resp_tx, ..
+                } = req;
+                let assertions = self.assertion_store.match_traces(&traces);
+                let _ = resp_tx.send(assertions);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Returns the valid block number for read and write requests
+    fn valid_block_num(latest_block_num: Option<U256>) -> U256 {
+        latest_block_num
+            .map(|latest| latest + uint!(1_U256))
+            .unwrap_or_default()
     }
 }
 
@@ -237,143 +291,132 @@ fn deploy_assertion_contract<DB: revm::DatabaseRef + std::clone::Clone>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::Bytecode;
     use crate::{
         inspectors::tracer::CallTracer,
-        primitives::Address,
+        primitives::{
+            uint,
+            Address,
+            Bytecode,
+        },
+        test_utils::*,
     };
     use std::collections::HashSet;
+    use tokio::sync::{
+        mpsc,
+        oneshot,
+    };
 
-    fn setup() -> mpsc::Sender<AssertionStoreRequest> {
-        let (req_tx, req_rx) = mpsc::channel(1000);
+    fn setup() -> (
+        mpsc::Sender<AssertionStoreReadParams>,
+        mpsc::Sender<AssertionStoreWriteParams>,
+    ) {
+        let (read_req_tx, read_req_rx) = mpsc::channel(1000);
+        let (write_req_tx, write_req_rx) = mpsc::channel(1000);
 
-        let mut handler = AssertionStoreRequestHandler::new(req_rx);
+        let mut handler = AssertionStoreRequestHandler::new(read_req_rx, write_req_rx);
 
-        std::thread::spawn(move || {
+        tokio::spawn(async move {
             loop {
-                if handler.poll().is_err() {
+                if handler.poll().await.is_err() {
                     break;
                 }
             }
         });
-        req_tx
+        (read_req_tx, write_req_tx)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_assertion_store_handler() {
-        use crate::test_utils::{
-            counter_assertion,
-            COUNTER_ADDRESS,
-            SIMPLE_ASSERTION_COUNTER_CODE,
+        let (read_req_tx, write_req_tx) = setup();
+
+        let block_num = uint!(0_U256);
+        let write_req = AssertionStoreWriteParams {
+            block_num,
+            assertions: vec![(
+                COUNTER_ADDRESS,
+                vec![Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER))],
+            )],
         };
-        use revm::primitives::uint;
 
-        let req_tx = setup();
+        write_req_tx
+            .send(write_req)
+            .await
+            .expect("Failed to send write request");
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
-        for block_num in [uint!(0_U256), uint!(1_U256)] {
-            let write_req = AssertionStoreRequest::Write {
-                block_num,
-                assertions: vec![(
-                    COUNTER_ADDRESS,
-                    vec![Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE)],
-                )],
-            };
-
-            req_tx
-                .send(write_req)
-                .await
-                .expect("Failed to send write request");
-
-            let (match_resp_tx, mut match_resp_rx) = tokio::sync::mpsc::channel(1000);
-            req_tx
-                .send(AssertionStoreRequest::Match {
-                    block_num,
-                    traces: CallTracer {
-                        calls: HashSet::from_iter(
-                            vec![COUNTER_ADDRESS, Address::new([2u8; 20])].into_iter(),
-                        ),
-                    },
-                    resp_sender: match_resp_tx,
-                })
-                .await
-                .expect("Failed to send match request");
-
-            let res = match_resp_rx
-                .recv()
-                .await
-                .expect("Failed to receive match response");
-
-            assert_eq!(res, vec![counter_assertion()]);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_assertion_store_handler_blocking_match() {
-        use crate::test_utils::{
-            counter_assertion,
-            COUNTER_ADDRESS,
-            SIMPLE_ASSERTION_COUNTER_CODE,
-        };
-        use revm::primitives::uint;
-        use tokio::sync::mpsc::error::TryRecvError;
-
-        let req_tx = setup();
-
-        let (match_resp_tx, mut match_resp_rx) = mpsc::channel(1000);
-        req_tx
-            .send(AssertionStoreRequest::Match {
-                block_num: uint!(1_U256),
+        let (read_resp_tx, read_resp_rx) = oneshot::channel();
+        read_req_tx
+            .send(AssertionStoreReadParams {
+                block_num: block_num + uint!(1_U256),
                 traces: CallTracer {
                     calls: HashSet::from_iter(
                         vec![COUNTER_ADDRESS, Address::new([2u8; 20])].into_iter(),
                     ),
                 },
-                resp_sender: match_resp_tx,
+                resp_tx: read_resp_tx,
             })
             .await
             .expect("Failed to send match request");
 
-        assert_eq!(match_resp_rx.try_recv(), Err(TryRecvError::Empty));
-
-        let write_req = AssertionStoreRequest::Write {
-            block_num: uint!(1_U256),
-            assertions: vec![(
-                COUNTER_ADDRESS,
-                vec![Bytecode::LegacyRaw(SIMPLE_ASSERTION_COUNTER_CODE)],
-            )],
-        };
-
-        req_tx
-            .send(write_req)
-            .await
-            .expect("Failed to send write request");
-
-        let res = match_resp_rx
-            .recv()
+        let res = read_resp_rx
             .await
             .expect("Failed to receive match response");
 
         assert_eq!(res, vec![counter_assertion()]);
     }
 
-    #[test]
-    fn test_get_assertion_selectors() {
-        use crate::{
-            db::SharedDB,
-            test_utils::{
-                selector_assertion,
-                BAD_FN_SELECTOR_CODE,
-                FN_SELECTOR_CODE,
-            },
+    #[tokio::test]
+    async fn test_assertion_store_handler_blocking_match() {
+        use tokio::sync::{
+            oneshot,
+            oneshot::error::TryRecvError,
         };
 
+        let (read_req_tx, write_req_tx) = setup();
+
+        let (read_resp_tx, mut read_resp_rx) = oneshot::channel();
+        read_req_tx
+            .send(AssertionStoreReadParams {
+                block_num: uint!(1_U256),
+                traces: CallTracer {
+                    calls: HashSet::from_iter(
+                        vec![COUNTER_ADDRESS, Address::new([2u8; 20])].into_iter(),
+                    ),
+                },
+                resp_tx: read_resp_tx,
+            })
+            .await
+            .expect("Failed to send match request");
+
+        assert_eq!(read_resp_rx.try_recv(), Err(TryRecvError::Empty));
+
+        let write_req = AssertionStoreWriteParams {
+            block_num: uint!(0_U256),
+            assertions: vec![(
+                COUNTER_ADDRESS,
+                vec![Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER))],
+            )],
+        };
+
+        write_req_tx
+            .send(write_req)
+            .await
+            .expect("Failed to send write request");
+
+        let res = read_resp_rx.await.expect("Failed to receive read response");
+
+        assert_eq!(res, vec![counter_assertion()]);
+    }
+
+    #[test]
+    fn test_get_assertion_selectors() {
         let shared_db = SharedDB::<0>::new_test();
 
         let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
         // Test with valid assertion contract
         let assertion_contract = get_assertion_selectors(
-            Bytecode::LegacyRaw(FN_SELECTOR_CODE),
+            Bytecode::LegacyRaw(bytecode(FN_SELECTOR)),
             BlockEnv::default(),
             multi_fork_db.clone(),
         )
@@ -390,7 +433,7 @@ mod tests {
         // Test with invalid return
         let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
         let result = get_assertion_selectors(
-            Bytecode::LegacyRaw(BAD_FN_SELECTOR_CODE),
+            Bytecode::LegacyRaw(bytecode(BAD_FN_SELECTOR)),
             BlockEnv::default(),
             multi_fork_db,
         );
@@ -412,14 +455,6 @@ mod tests {
 
     #[test]
     fn test_get_assertion_selectors_with_different_block_envs() {
-        use crate::{
-            db::SharedDB,
-            test_utils::{
-                selector_assertion,
-                FN_SELECTOR_CODE,
-            },
-        };
-
         let shared_db = SharedDB::<0>::new_test();
 
         // Test with different block numbers
@@ -429,7 +464,7 @@ mod tests {
 
             let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
             let assertion_contract = get_assertion_selectors(
-                Bytecode::LegacyRaw(FN_SELECTOR_CODE),
+                Bytecode::LegacyRaw(bytecode(FN_SELECTOR)),
                 block_env,
                 multi_fork_db,
             )

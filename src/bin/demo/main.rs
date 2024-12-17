@@ -19,9 +19,10 @@ const BENCHRUNS: u32 = 100;
 
 pub const CALLER: Address = Address::new([69u8; 20]);
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Deploys contracts, loads assertion store, and sets up state dependencies
-    let mut executor = setup();
+    let mut executor = setup().await;
 
     let transactions: Vec<TxEnv> = generate_txs();
 
@@ -38,13 +39,15 @@ fn main() {
         block_env.clone(),
     );
 
-    let result_no_assertions = benchmark(BENCHRUNS, || {
+    let result_no_assertions = benchmark(BENCHRUNS, async || {
         bench_no_assertion_execution(&mut executor, transactions.clone(), block_env.clone())
-    });
+    })
+    .await;
 
-    let result = benchmark(BENCHRUNS, || {
-        bench_execution(&mut executor, transactions.clone(), block_env.clone())
-    });
+    let result = benchmark(BENCHRUNS, async || {
+        bench_execution(&mut executor, transactions.clone(), block_env.clone()).await
+    })
+    .await;
 
     print!(
         "
@@ -56,10 +59,12 @@ fn main() {
     );
 
     // Collect metrics
-    let assertions_ran = count_assertions(&mut executor, transactions.clone(), BlockEnv::default());
+    let assertions_ran =
+        count_assertions(&mut executor, transactions.clone(), BlockEnv::default()).await;
 
     let valid_results =
-        count_valid_assertion_results(&mut executor, transactions.clone(), BlockEnv::default());
+        count_valid_assertion_results(&mut executor, transactions.clone(), BlockEnv::default())
+            .await;
 
     // Print results
     print!(

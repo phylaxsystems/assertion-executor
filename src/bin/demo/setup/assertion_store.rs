@@ -9,21 +9,24 @@ use assertion_executor::{
         U256,
     },
     store::AssertionStore,
-    test_utils::COUNTER_CODE,
+    test_utils::*,
 };
 
-use super::demo_lending::LENDING_CODE;
+use super::demo_lending::LENDING;
 
 /// Loads the assertion store with demo assertions
-pub fn setup_assertion_store() -> AssertionStore {
+pub async fn setup_assertion_store() -> AssertionStore {
     let store = AssertionStore::default();
     let writer = store.writer();
 
-    let fork_assertion = (FORK_ADDRESS, vec![Bytecode::LegacyRaw(COUNTER_CODE)]);
-    let lending_assertion = (LENDING_ADDRESS, vec![Bytecode::LegacyRaw(LENDING_CODE)]);
+    let fork_assertion = (FORK_ADDRESS, vec![Bytecode::LegacyRaw(bytecode(COUNTER))]);
+    let lending_assertion = (
+        LENDING_ADDRESS,
+        vec![Bytecode::LegacyRaw(bytecode(LENDING))],
+    );
     let assertions = vec![fork_assertion, lending_assertion];
 
-    writer.write_sync(U256::ZERO, assertions).unwrap();
+    writer.write(U256::ZERO, assertions).await.unwrap();
 
     store
 }

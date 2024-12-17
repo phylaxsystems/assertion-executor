@@ -4,27 +4,32 @@ use crate::{
         AssertionContract,
         U256,
     },
-    store::request::AssertionStoreRequest,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{
+    mpsc,
+    oneshot,
+};
 
 /// A reader for matching [`CallTracer`] against assertions in the [`AssertionStore`](crate::store::AssertionStore) at a specific block.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssertionStoreReader {
-    pub(super) req_tx: mpsc::Sender<AssertionStoreRequest>,
-    pub(super) match_tx: mpsc::Sender<Vec<AssertionContract>>,
-    pub(super) match_rx: mpsc::Receiver<Vec<AssertionContract>>,
+    pub(super) req_tx: mpsc::Sender<AssertionStoreReadParams>,
 }
 
-impl Clone for AssertionStoreReader {
-    fn clone(&self) -> Self {
-        let (match_tx, match_rx) = mpsc::channel(self.match_rx.max_capacity());
-        Self {
-            req_tx: self.req_tx.clone(),
-            match_rx,
-            match_tx,
-        }
-    }
+/// Parameters for reading assertions from the assertion store.
+#[derive(Debug)]
+pub struct AssertionStoreReadParams {
+    pub block_num: U256,
+    pub traces: CallTracer,
+    pub resp_tx: oneshot::Sender<Vec<AssertionContract>>,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum AssertionStoreReaderError {
+    #[error("Failed to send request to assertion store")]
+    SendError(#[from] mpsc::error::SendError<AssertionStoreReadParams>),
+    #[error("Failed to receive response from assertion store")]
+    RecvError(#[from] oneshot::error::RecvError),
 }
 
 impl AssertionStoreReader {
@@ -34,30 +39,15 @@ impl AssertionStoreReader {
         &mut self,
         block_num: U256,
         traces: CallTracer,
-    ) -> Result<Option<Vec<AssertionContract>>, mpsc::error::SendError<AssertionStoreRequest>> {
+    ) -> Result<Vec<AssertionContract>, AssertionStoreReaderError> {
+        let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(AssertionStoreRequest::Match {
+            .send(AssertionStoreReadParams {
                 block_num,
                 traces,
-                resp_sender: self.match_tx.clone(),
+                resp_tx,
             })
             .await?;
-        Ok(self.match_rx.recv().await)
-    }
-
-    /// Matches the given traces from the [`CallTracer`] with the assertions in the assertion store,
-    /// ensuring the assertions have been written for the block.
-    /// For use in synchronous contexts, will fail in async runtimes.
-    pub fn read_sync(
-        &mut self,
-        block_num: U256,
-        traces: CallTracer,
-    ) -> Result<Option<Vec<AssertionContract>>, mpsc::error::SendError<AssertionStoreRequest>> {
-        self.req_tx.blocking_send(AssertionStoreRequest::Match {
-            block_num,
-            traces,
-            resp_sender: self.match_tx.clone(),
-        })?;
-        Ok(self.match_rx.blocking_recv())
+        Ok(resp_rx.await?)
     }
 }

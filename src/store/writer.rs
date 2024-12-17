@@ -1,18 +1,23 @@
-use crate::{
-    primitives::{
-        Address,
-        Bytecode,
-        U256,
-    },
-    store::request::AssertionStoreRequest,
+use crate::primitives::{
+    Address,
+    Bytecode,
+    U256,
 };
 
 use tokio::sync::mpsc;
 
 /// A writer for writing block based batches to the [`AssertionStore`](super::AssertionStore).
 pub struct AssertionStoreWriter {
-    pub(super) req_tx: mpsc::Sender<AssertionStoreRequest>,
+    pub(super) req_tx: mpsc::Sender<AssertionStoreWriteParams>,
 }
+
+/// Parameters for writing assertions to the assertion store.
+#[derive(Debug)]
+pub struct AssertionStoreWriteParams {
+    pub block_num: U256,
+    pub assertions: Vec<(Address, Vec<Bytecode>)>,
+}
+
 impl AssertionStoreWriter {
     /// Writes a batch of assertions to the [`AssertionStore`](super::AssertionStore) for a given block number.
     /// Must be called in order of block number.
@@ -20,26 +25,12 @@ impl AssertionStoreWriter {
         &self,
         block_num: U256,
         assertions: Vec<(Address, Vec<Bytecode>)>,
-    ) -> Result<(), mpsc::error::SendError<AssertionStoreRequest>> {
+    ) -> Result<(), mpsc::error::SendError<AssertionStoreWriteParams>> {
         self.req_tx
-            .send(AssertionStoreRequest::Write {
+            .send(AssertionStoreWriteParams {
                 block_num,
                 assertions,
             })
             .await
-    }
-
-    /// Writes a batch of assertions to the [`AssertionStore`](super::AssertionStore) for a given block number.
-    /// Must be called in order of block number.
-    /// For use in synchronous contexts, will fail in async runtimes.
-    pub fn write_sync(
-        &self,
-        block_num: U256,
-        assertions: Vec<(Address, Vec<Bytecode>)>,
-    ) -> Result<(), mpsc::error::SendError<AssertionStoreRequest>> {
-        self.req_tx.blocking_send(AssertionStoreRequest::Write {
-            block_num,
-            assertions,
-        })
     }
 }
