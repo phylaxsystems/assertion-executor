@@ -207,7 +207,7 @@ mod fork_db_tests {
                     balance: uint!(1000_U256),
                     ..Default::default()
                 },
-                storage: HashMap::new(),
+                storage: HashMap::from_iter([]),
                 status: AccountStatus::Touched,
             },
         );
@@ -249,7 +249,7 @@ mod fork_db_tests {
         let mut block_changes = BlockChanges::default();
         let mut evm_state = EvmState::default();
 
-        let mut storage = HashMap::new();
+        let mut storage = HashMap::from_iter([]);
 
         let mut evm_storage_slot = EvmStorageSlot {
             original_value: uint!(0_U256),
@@ -333,7 +333,7 @@ mod fork_db_tests {
                     code: Some(bytecode.clone()),
                     ..Default::default()
                 },
-                storage: HashMap::new(),
+                storage: HashMap::from_iter([]),
                 status: AccountStatus::Touched,
             },
         );
@@ -366,7 +366,7 @@ mod fork_db_tests {
                     code: Some(bytecode.clone()),
                     ..Default::default()
                 },
-                storage: HashMap::new(),
+                storage: HashMap::from_iter([]),
                 status: AccountStatus::Touched,
             },
         );
@@ -406,7 +406,7 @@ mod fork_db_tests {
 
         let mut evm_state = EvmState::default();
 
-        let mut storage = HashMap::new();
+        let mut storage = HashMap::from_iter([]);
 
         let evm_storage_slot = EvmStorageSlot {
             original_value: uint!(0_U256),
@@ -443,7 +443,7 @@ mod fork_db_tests {
             Address::ZERO,
             Account {
                 info: AccountInfo::default(),
-                storage: HashMap::new(),
+                storage: HashMap::from_iter([]),
                 status: AccountStatus::SelfDestructed | AccountStatus::Touched,
             },
         );

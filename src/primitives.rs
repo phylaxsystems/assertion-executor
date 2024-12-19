@@ -1,13 +1,11 @@
-use crate::{
-    db::fs::serde::StorageSlotKey,
-    error::ExecutorError,
-};
+use crate::db::fs::serde::StorageSlotKey;
 pub use revm::{
     db::AccountState,
     primitives::{
         address,
         bytes,
         fixed_bytes,
+        hex,
         result::ResultAndState,
         uint,
         Account,
@@ -53,7 +51,13 @@ pub struct AssertionId {
 #[derive(Debug)]
 pub struct AssertionResult {
     pub id: AssertionId,
-    pub result: Result<ExecutionResult, ExecutorError>,
+    pub result: ExecutionResult,
+}
+
+impl AssertionResult {
+    pub fn is_success(&self) -> bool {
+        self.result.is_success()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -96,12 +100,6 @@ impl BlockChanges {
                 touched_keys
             },
         )
-    }
-}
-
-impl AssertionResult {
-    pub fn is_success(&self) -> bool {
-        self.result.is_ok() && self.result.as_ref().unwrap().is_success()
     }
 }
 

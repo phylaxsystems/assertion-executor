@@ -18,14 +18,12 @@ use crate::{
     },
     primitives::{
         address,
-        bytes,
         Address,
         AssertionContract,
         AssertionId,
         AssertionResult,
         BlockEnv,
         Bytecode,
-        EVMError,
         EvmState,
         ExecutionResult,
         FixedBytes,
@@ -36,7 +34,11 @@ use crate::{
     },
     store::AssertionStoreReader,
 };
-use alloy_sol_types::sol;
+
+use alloy_sol_types::{
+    sol,
+    SolCall,
+};
 
 use rayon::prelude::{
     IntoParallelIterator,
@@ -44,8 +46,10 @@ use rayon::prelude::{
 };
 use revm::{
     inspector_handle_register,
-    primitives::Output,
-    primitives::SpecId,
+    primitives::{
+        keccak256,
+        SpecId,
+    },
     Evm,
     EvmBuilder,
 };
@@ -77,9 +81,11 @@ pub struct AssertionExecutor<DB> {
     pub spec_id: SpecId,
 }
 
+type ExecutorResult<T, DB> = Result<T, ExecutorError<<DB as DatabaseRef>::Error>>;
+
 impl<DB: PhDB> AssertionExecutor<DB>
 where
-    ExecutorError: From<EVMError<<DB as DatabaseRef>::Error>>,
+    DB: DatabaseRef<Error: std::fmt::Debug + Send>,
 {
     /// Executes a transaction against the current state of the fork, and runs the appropriate
     /// assertions.
@@ -91,7 +97,7 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> Result<Option<EvmState>, ExecutorError> {
+    ) -> ExecutorResult<Option<EvmState>, DB> {
         let pre_tx_db = fork_db.clone();
 
         let mut post_tx_db = fork_db.clone();
@@ -105,7 +111,7 @@ where
             .execute_assertions(block_env, tx_traces, multi_fork_db)
             .await?;
 
-        match results.all(|r| r.is_success()) {
+        match results.iter().all(|r| r.is_success()) {
             true => {
                 fork_db.commit(result_and_state.state.clone());
                 Ok(Some(result_and_state.state))
@@ -120,7 +126,7 @@ where
         block_env: BlockEnv,
         traces: CallTracer,
         multi_fork_db: MultiForkDb<ForkDb<DB>>,
-    ) -> Result<impl ParallelIterator<Item = AssertionResult> + 'a, ExecutorError> {
+    ) -> ExecutorResult<Vec<AssertionResult>, DB> {
         // Examine contracts that were called to see if they have assertions
         // associated, and dispatch accordingly
         let mut assertion_store_reader = self.assertion_store_reader.clone();
@@ -129,7 +135,9 @@ where
             .read(block_env.number, traces)
             .await?;
 
-        Ok(assertions
+        let mut valid_results = vec![];
+
+        let results = assertions
             .into_par_iter()
             .map(move |assertion_contract| {
                 self.run_assertion_contract(
@@ -138,7 +146,16 @@ where
                     multi_fork_db.clone(),
                 )
             })
-            .flatten())
+            .collect::<Vec<ExecutorResult<Vec<AssertionResult>, DB>>>();
+
+        for result in results {
+            match result {
+                Ok(results) => valid_results.extend(results),
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(valid_results)
     }
 
     fn run_assertion_contract(
@@ -146,7 +163,7 @@ where
         assertion_contract: &AssertionContract,
         block_env: BlockEnv,
         mut fork_db: MultiForkDb<ForkDb<DB>>,
-    ) -> Vec<AssertionResult> {
+    ) -> ExecutorResult<Vec<AssertionResult>, DB> {
         let AssertionContract {
             fn_selectors,
             code,
@@ -162,7 +179,7 @@ where
 
         //Execute the functions in parallel against cloned forks of the intermediate state, with
         //the deployed assertion contract as the target.
-        fn_selectors
+        let results_vec = fn_selectors
             .into_par_iter()
             .map(|fn_selector: &FixedBytes<4>| {
                 let mut evm = EvmBuilder::default()
@@ -184,17 +201,26 @@ where
 
                 let result = evm
                     .transact()
-                    .map(|result_and_state| result_and_state.result)
-                    .map_err(Into::into);
+                    .map(|result_and_state| result_and_state.result)?;
 
                 let id = AssertionId {
                     fn_selector: *fn_selector,
                     code_hash: *code_hash,
                 };
 
-                AssertionResult { id, result }
+                Ok(AssertionResult { id, result })
             })
-            .collect()
+            .collect::<Vec<ExecutorResult<AssertionResult, DB>>>();
+
+        let mut valid_results = vec![];
+        for result in results_vec {
+            match result {
+                Ok(result) => valid_results.push(result),
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(valid_results)
     }
 
     /// Commits a transaction against a fork of the current state.
@@ -204,7 +230,7 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> Result<(CallTracer, ResultAndState), ExecutorError> {
+    ) -> ExecutorResult<(CallTracer, ResultAndState), DB> {
         let mut evm = Evm::builder()
             .with_ref_db(fork_db.clone())
             .with_external_context(CallTracer::default())
@@ -228,7 +254,7 @@ where
         block_env: BlockEnv,
         constructor_code: Bytecode,
         multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
-    ) -> Result<Address, ExecutorError> {
+    ) -> ExecutorResult<Address, DB> {
         let tx_env = TxEnv {
             transact_to: TxKind::Create,
             caller: CALLER,
@@ -255,61 +281,63 @@ where
 
         Ok(ASSERTION_CONTRACT)
     }
-}
 
-/// Decodes an ABI-encoded array of function selectors.
-// Note: This function can be changed to use alloy for typing decoding.
-// Check out the "fnSelectors-w-alloy" branch to see how.
-pub fn decode_selector_array(output: &Output) -> Result<Vec<FixedBytes<4>>, DecodingError> {
-    let data = output.data();
+    /// As a part of the spec, assertions must implement the `fnSelectors()` function.
+    /// The function returns `bytes4[] memory` of function selectors.
+    ///
+    /// This function executes the `fnSelectors` function and returns an `AssertionContract`.
+    /// If the function is unimplemented, or otherwise errors, it returns `None`.
+    pub fn get_assertion_selectors(
+        &self,
+        block_env: BlockEnv,
+        assertion_code: Bytecode,
+        mut fork_db: MultiForkDb<ForkDb<DB>>,
+    ) -> ExecutorResult<Option<AssertionContract>, DB> {
+        // Deploy the contract first
+        let assertion_address = self.deploy_assertion_contract(
+            block_env.clone(),
+            assertion_code.clone(),
+            &mut fork_db,
+        )?;
 
-    // Dynamic array offset (should be 0x20)
-    let offset = data.get(..0x20).ok_or(DecodingError::InsufficientData)?;
-    if offset != *bytes!("0000000000000000000000000000000000000000000000000000000000000020") {
-        return Err(DecodingError::UnexpectedOffset);
+        // Set up and execute the call
+        let result = EvmBuilder::default()
+            .with_db(fork_db)
+            .modify_db(insert_precompile_account)
+            .with_external_context(PhEvmInspector::new(SpecId::LATEST))
+            .with_spec_id(SpecId::LATEST)
+            .with_block_env(block_env)
+            .modify_tx_env(|env| {
+                *env = TxEnv {
+                    transact_to: TxKind::Call(assertion_address),
+                    caller: CALLER,
+                    data: fnSelectorsCall::SELECTOR.into(),
+                    ..Default::default()
+                }
+            })
+            .append_handler_register(inspector_handle_register)
+            .build()
+            .transact()?;
+
+        // Extract and decode selectors from the result
+        let selectors = match result.result {
+            ExecutionResult::Success { output, .. } => {
+                match fnSelectorsCall::abi_decode_returns(output.data(), true) {
+                    Ok(selectors) => selectors._0,
+                    Err(_) => {
+                        return Ok(None);
+                    }
+                }
+            }
+            _ => return Ok(None),
+        };
+
+        Ok(Some(AssertionContract {
+            code_hash: keccak256(assertion_code.original_bytes()),
+            code: assertion_code,
+            fn_selectors: selectors,
+        }))
     }
-
-    // Get array length and data portion
-    let data = data.get(0x20..).ok_or(DecodingError::InsufficientData)?;
-    let mut length = U256::from_be_slice(data.get(..0x20).ok_or(DecodingError::InsufficientData)?);
-    let mut data = data.get(0x20..).ok_or(DecodingError::InsufficientData)?;
-
-    // Extract selectors
-    let mut selectors = Vec::new();
-    while length > U256::ZERO {
-        length -= U256::from(1);
-        let selector =
-            FixedBytes::<4>::from_slice(data.get(..4).ok_or(DecodingError::InsufficientData)?);
-        selectors.push(selector);
-        data = data.get(0x20..).ok_or(DecodingError::InsufficientData)?;
-    }
-
-    // Ensure no unexpected trailing data
-    if !data.is_empty() {
-        return Err(DecodingError::UnexpectedRemainingData);
-    }
-
-    Ok(selectors)
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum FnSelectorsError {
-    #[error("EVM execution failed")]
-    EvmError,
-    #[error("Execution was unsuccessful: {0:?}")]
-    UnsuccessfulExecution(ExecutionResult),
-    #[error("Decoding error: {0}")]
-    Decoding(#[from] DecodingError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum DecodingError {
-    #[error("Insufficient data for decoding")]
-    InsufficientData,
-    #[error("Unexpected dynamic array offset")]
-    UnexpectedOffset,
-    #[error("Unexpected remaining data after decoding")]
-    UnexpectedRemainingData,
 }
 
 #[cfg(test)]
@@ -322,6 +350,7 @@ mod test {
             SharedDB,
         },
         primitives::{
+            uint,
             Account,
             BlockChanges,
             BlockEnv,
@@ -332,7 +361,6 @@ mod test {
         AssertionExecutorBuilder,
     };
 
-    use revm::primitives::uint;
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -515,5 +543,92 @@ mod test {
         assert_eq!(executor.db.basic_ref(ASSERTION_CONTRACT).unwrap(), None);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_assertion_selectors() {
+        let shared_db = SharedDB::<0>::new_test();
+
+        let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
+
+        let executor =
+            AssertionExecutorBuilder::new(shared_db.clone(), AssertionStore::default().reader())
+                .build();
+
+        // Test with valid assertion contract
+        let assertion_contract = executor
+            .get_assertion_selectors(
+                BlockEnv::default(),
+                Bytecode::LegacyRaw(bytecode(FN_SELECTOR)),
+                multi_fork_db.clone(),
+            )
+            .unwrap()
+            .unwrap();
+
+        // Verify the contract has the expected selectors from the counter assertion
+        let expected_assertion = selector_assertion();
+        assert_eq!(
+            assertion_contract.fn_selectors,
+            expected_assertion.fn_selectors
+        );
+        assert_eq!(assertion_contract.code_hash, expected_assertion.code_hash);
+
+        // Test with invalid return
+        let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
+        let result = executor
+            .get_assertion_selectors(
+                BlockEnv::default(),
+                Bytecode::LegacyRaw(bytecode(BAD_FN_SELECTOR)),
+                multi_fork_db,
+            )
+            .unwrap();
+
+        // Should return None for invalid code
+        assert!(result.is_none(), "Should return none");
+
+        // Test with empty code
+        let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
+        let result = executor
+            .get_assertion_selectors(
+                BlockEnv::default(),
+                Bytecode::LegacyRaw(vec![].into()),
+                multi_fork_db,
+            )
+            .unwrap();
+
+        // Should return None for empty code
+        assert!(result.is_none(), "Should return None for empty code");
+    }
+
+    #[tokio::test]
+    async fn test_get_assertion_selectors_with_different_block_envs() {
+        let shared_db = SharedDB::<0>::new_test();
+
+        let executor =
+            AssertionExecutorBuilder::new(shared_db.clone(), AssertionStore::default().reader())
+                .build();
+
+        // Test with different block numbers
+        for block_number in [0u64, 1u64, 1000u64].map(U256::from) {
+            let mut block_env = BlockEnv::default();
+            block_env.number = block_number;
+
+            let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
+            let assertion_contract = executor
+                .get_assertion_selectors(
+                    block_env,
+                    Bytecode::LegacyRaw(bytecode(FN_SELECTOR)),
+                    multi_fork_db,
+                )
+                .unwrap()
+                .unwrap();
+
+            // Verify the selectors are consistent across different block numbers
+            let expected_assertion = selector_assertion();
+            assert_eq!(
+                assertion_contract.fn_selectors, expected_assertion.fn_selectors,
+                "Selectors should be consistent at block {block_number}"
+            );
+        }
     }
 }

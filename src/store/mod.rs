@@ -81,9 +81,13 @@ impl AssertionStore {
         let (read_req_tx, read_req_rx) = mpsc::channel(req_channel_size);
         let (write_req_tx, write_req_rx) = mpsc::channel(req_channel_size);
 
+        let read_req_tx_clone = read_req_tx.clone();
         tokio::spawn(async {
-            let mut req_handler =
-                handler::AssertionStoreRequestHandler::new(read_req_rx, write_req_rx);
+            let mut req_handler = handler::AssertionStoreRequestHandler::new(
+                read_req_tx_clone,
+                read_req_rx,
+                write_req_rx,
+            );
 
             loop {
                 if let Err(err) = req_handler.poll().await {

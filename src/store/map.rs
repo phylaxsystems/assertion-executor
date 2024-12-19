@@ -37,8 +37,11 @@ impl AssertionStoreMap {
         assertion_contracts
     }
 
-    pub fn insert(&mut self, address: Address, assertions: Vec<AssertionContract>) {
-        self.0.insert(address, assertions);
+    pub fn entry(
+        &mut self,
+        address: Address,
+    ) -> std::collections::hash_map::Entry<Address, Vec<AssertionContract>> {
+        self.0.entry(address)
     }
 }
 
@@ -50,7 +53,7 @@ fn test_assertion_store_map() {
     let address = Address::new([1u8; 20]);
     let assertion = crate::test_utils::counter_assertion();
 
-    store.insert(address, vec![assertion.clone()]);
+    store.entry(address).or_insert(vec![assertion.clone()]);
 
     let traces = CallTracer {
         calls: HashSet::from_iter(vec![address, Address::new([2u8; 20])]),

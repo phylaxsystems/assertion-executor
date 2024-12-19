@@ -274,7 +274,7 @@ mod test_multi_fork {
         let mut db = MultiForkDb::new(pre_tx_fork_db, post_tx_fork_db);
 
         let mut journaled_state =
-            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::new());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::from_iter([]));
         let init_journaled_state = journaled_state.clone();
 
         let pre_tx_fork = db.inactive_forks.get(&ForkId::PreTx).unwrap();
@@ -326,7 +326,7 @@ mod test_multi_fork {
     fn test_journaled_state_persistence() {
         // Test that journaled state is persisted across forks for
         let init_journaled_state =
-            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::new());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::from_iter([]));
         let mut active_journaled_state = init_journaled_state.clone();
 
         let address: Address = random_bytes::<20>().into();

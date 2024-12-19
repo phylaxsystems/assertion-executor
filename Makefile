@@ -1,20 +1,22 @@
 build:
 	cargo build --verbose
 
+# Build the contract mocks and run the rust tests
 test:
-	cargo test --verbose
+	forge build --root contract-mocks && cargo test --verbose
 
+# Validate formatting
 format:
 	cargo fmt --check
 
+# Errors if there is a warning with clippy
 lint:
 	cargo clippy  -- -D warnings
 
+# Run foundry tests against the contract mocks
 test-mocks:
 	forge test --root contract-mocks -vvv
 
-build-mocks:
-	forge build --root contract-mocks
-
-test-local:
-	make build-mocks && make test
+# Can be used as a manual pre-commit check
+pre-commit:
+	cargo fmt && make lint

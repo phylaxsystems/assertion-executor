@@ -14,9 +14,20 @@ zerocopy = { version = "0.8.3", features = ["derive"] }
 tempfile = "3.13.0"
 
 # ETH deps
-alloy = "0.4.2"
-alloy-provider = "0.4.2"
-alloy-sol-types = "0.4.2"
+alloy = "0.8.1"
+alloy-provider = { version = "0.8.1", features = ["ws", "anvil-node"] }
+alloy-sol-types = "0.8.1"
+alloy-consensus = "0.8.1"
+alloy-rpc-types = "0.8.1"
+alloy-rpc-types-anvil = "0.8.1"
+alloy-pubsub = "0.8.1"
+alloy-rpc-client = "0.8.1"
+alloy-node-bindings = "0.8.1"
+alloy-network = "0.8.1"
+alloy-signer = "0.8.1"
+alloy-signer-local = "0.8.1"
+alloy-transport = "0.8.1"
+alloy-transport-ws = "0.8.1"
 revm = "18.0.0"
 
 # ETL deps
@@ -32,6 +43,7 @@ clap_derive = "4.5.18"
 # Test deps
 serde_json = { optional = true, version = "1.0.133" }
 rand = { version = "0.8.5", optional = true }
+jsonrpsee = { version = "0.24.7", features = ["client", "http-client", "server"] }
 
 # Maxperf profile for absolute maximum performance
 # Only use for builds that are going to get used by end users
