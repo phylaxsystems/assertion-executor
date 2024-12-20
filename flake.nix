@@ -32,6 +32,7 @@
             pkgs.clang_18
             pkgs.valgrind
             pkgs.gdb
+            pkgs.openssl.dev
             pkgs.linuxPackages_latest.perf
           ] ++ lib.optionals stdenv.isDarwin [
             darwin.apple_sdk.frameworks.SystemConfiguration

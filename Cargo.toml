@@ -28,14 +28,14 @@ alloy-signer = "0.8.1"
 alloy-signer-local = "0.8.1"
 alloy-transport = "0.8.1"
 alloy-transport-ws = "0.8.1"
-revm = "18.0.0"
+revm = "17.0.0"
 
 # ETL deps
 mending = { git = "ssh://git@github.com/phylaxsystems/mending.git", rev = "3a771745f"}
 anyhow = "1.0.89"
-reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "17aa3d61f"}
-reth-db = { git = "https://github.com/paradigmxyz/reth.git", rev = "17aa3d61f"}
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth.git", rev = "17aa3d61f"}
+reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
+reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
 bincode = "1.3.3"
 clap = "4.5.20"
 clap_derive = "4.5.18"
