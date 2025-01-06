@@ -1,23 +1,18 @@
 use crate::{
-    db::{
-        fork_db::ForkDb,
-        DatabaseRef,
-        MultiForkDb,
-    },
+    db::DatabaseRef,
     primitives::{
         Address,
-        BlockEnv,
         Bytecode,
         Bytes,
         FixedBytes,
+        SpecId,
         B256,
     },
     store::{
+        AssertionContractExtractor,
         AssertionStoreReadParams,
         AssertionStoreReader,
     },
-    AssertionExecutor,
-    AssertionExecutorBuilder,
     ExecutorError,
 };
 use serde::{
@@ -57,6 +52,8 @@ use std::{
     collections::BTreeMap,
     thread::JoinHandle,
 };
+
+use tracing::error;
 
 use tokio::sync::mpsc;
 
@@ -114,8 +111,8 @@ pub struct RpcStore<P> {
     provider: P,
     state_oracle: Address,
     db: sled::Db,
-    executor: AssertionExecutor<EmptyDB>,
-    tx: mpsc::Sender<AssertionStoreReadParams>,
+    assertion_contract_extractor: AssertionContractExtractor,
+    reader: AssertionStoreReader,
     #[allow(dead_code)]
     rx: mpsc::Receiver<AssertionStoreReadParams>,
     da_client: HttpClient,
@@ -156,30 +153,29 @@ impl<P> RpcStore<P> {
         state_oracle: Address,
         config: sled::Config,
         da_url: impl AsRef<str>,
+        spec_id: SpecId,
+        chain_id: u64,
     ) -> Result<Self, RpcStoreError> {
         let (tx, rx) = mpsc::channel(1_000);
-        let exe_db = EmptyDB::new();
-        let reader = AssertionStoreReader { req_tx: tx.clone() };
-        let executor = AssertionExecutorBuilder::new(exe_db, reader).build();
 
-        let client = HttpClientBuilder::default().build(da_url)?;
+        let reader = AssertionStoreReader::new(tx, std::time::Duration::from_secs(15));
+
+        let da_client = HttpClientBuilder::default().build(da_url)?;
 
         Ok(RpcStore {
             provider,
             state_oracle,
             db: config.open()?,
-            tx,
+            assertion_contract_extractor: AssertionContractExtractor::new(spec_id, chain_id),
             rx,
-            executor,
-            da_client: client,
+            reader,
+            da_client,
         })
     }
 
     /// Gets a reader for the store
     pub fn get_reader(&self) -> AssertionStoreReader {
-        AssertionStoreReader {
-            req_tx: self.tx.clone(),
-        }
+        self.reader.clone()
     }
 }
 
@@ -325,27 +321,29 @@ impl RpcStore<RootProvider<PubSubFrontend>> {
                         .fetch_assertion_bytecode(event.inner.assertionId)
                         .await?;
 
-                    let fork = ForkDb::new(self.executor.db);
+                    let assertion_contract_res = self
+                        .assertion_contract_extractor
+                        .extract_assertion_contract(Bytecode::LegacyRaw(bytecode.clone()));
+                    match assertion_contract_res {
+                        Ok(assertion_contract) => {
+                            let active_at_block = event
+                                .inner
+                                .activeAtBlock
+                                .try_into()
+                                .map_err(|_| RpcStoreError::BlockNumberExceedsU64)?;
 
-                    if let Some(assertion_contract) = self.executor.get_assertion_selectors(
-                        BlockEnv::default(),
-                        Bytecode::LegacyRaw(bytecode.clone()),
-                        MultiForkDb::new(fork.clone(), fork),
-                    )? {
-                        let active_at_block = event
-                            .inner
-                            .activeAtBlock
-                            .try_into()
-                            .map_err(|_| RpcStoreError::BlockNumberExceedsU64)?;
-                        Some(PendingModification::Add {
-                            active_at_block,
-                            log_index,
-                            fn_selectors: assertion_contract.fn_selectors,
-                            code: bytecode,
-                            code_hash: event.inner.assertionId,
-                        })
-                    } else {
-                        None
+                            Some(PendingModification::Add {
+                                active_at_block,
+                                log_index,
+                                fn_selectors: assertion_contract.fn_selectors,
+                                code: bytecode,
+                                code_hash: event.inner.assertionId,
+                            })
+                        }
+                        Err(e) => {
+                            error!("Failed to extract assertion contract: {:?}", e);
+                            None
+                        }
                     }
                 }
 
@@ -467,7 +465,15 @@ mod test {
         let state_oracle = Address::new([0; 20]);
         let config = Config::tmp().unwrap();
 
-        RpcStore::new(provider, state_oracle, config, "http://127.0.0.1:6969").unwrap()
+        RpcStore::new(
+            provider,
+            state_oracle,
+            config,
+            "http://127.0.0.1:6969",
+            SpecId::LATEST,
+            1,
+        )
+        .unwrap()
     }
 
     async fn mock_da_server() -> ServerHandle {

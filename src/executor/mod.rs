@@ -1,6 +1,7 @@
 pub mod builder;
 
 use crate::{
+    build_evm::new_evm,
     db::{
         fork_db::ForkDb,
         multi_fork_db::MultiForkDb,
@@ -10,10 +11,7 @@ use crate::{
     },
     error::ExecutorError,
     inspectors::{
-        phevm::{
-            insert_precompile_account,
-            PhEvmInspector,
-        },
+        phevm::PhEvmInspector,
         tracer::CallTracer,
     },
     primitives::{
@@ -25,34 +23,19 @@ use crate::{
         BlockEnv,
         Bytecode,
         EvmState,
-        ExecutionResult,
         FixedBytes,
         ResultAndState,
         TxEnv,
         TxKind,
-        U256,
     },
     store::AssertionStoreReader,
-};
-
-use alloy_sol_types::{
-    sol,
-    SolCall,
 };
 
 use rayon::prelude::{
     IntoParallelIterator,
     ParallelIterator,
 };
-use revm::{
-    inspector_handle_register,
-    primitives::{
-        keccak256,
-        SpecId,
-    },
-    Evm,
-    EvmBuilder,
-};
+use revm::primitives::SpecId;
 
 use tracing::{
     instrument,
@@ -67,18 +50,12 @@ pub const CALLER: Address = address!("00000000000000000000000000000000000001A4")
 /// Deploying assertion contracts via the caller address @ nonce 0 results in this address
 pub const ASSERTION_CONTRACT: Address = address!("63f9abbe8aa6ba1261ef3b0cbfb25a5ff8eeed10");
 
-// Typing for the assertion fn selectors
-sol! {
-
-    #[derive(Debug)]
-    function fnSelectors() external returns (bytes4[] memory);
-}
-
 #[derive(Debug, Clone)]
 pub struct AssertionExecutor<DB> {
     pub db: DB,
     pub assertion_store_reader: AssertionStoreReader,
     pub spec_id: SpecId,
+    pub chain_id: u64,
 }
 
 type ExecutorResult<T, DB> = Result<T, ExecutorError<<DB as DatabaseRef>::Error>>;
@@ -162,7 +139,7 @@ where
         &self,
         assertion_contract: &AssertionContract,
         block_env: BlockEnv,
-        mut fork_db: MultiForkDb<ForkDb<DB>>,
+        mut multi_fork_db: MultiForkDb<ForkDb<DB>>,
     ) -> ExecutorResult<Vec<AssertionResult>, DB> {
         let AssertionContract {
             fn_selectors,
@@ -170,34 +147,34 @@ where
             code_hash,
         } = assertion_contract;
 
-        trace!(?code_hash, "Running assertion contract");
+        trace!(?code_hash, "Deploying assertion contract");
 
         //Deploy the assertion contract
-        let assertion_address = self
-            .deploy_assertion_contract(block_env.clone(), code.clone(), &mut fork_db)
-            .expect("Failed to deploy assertion contract");
+        let assertion_address =
+            self.deploy_assertion_contract(block_env.clone(), code.clone(), &mut multi_fork_db)?;
 
         //Execute the functions in parallel against cloned forks of the intermediate state, with
         //the deployed assertion contract as the target.
         let results_vec = fn_selectors
             .into_par_iter()
             .map(|fn_selector: &FixedBytes<4>| {
-                let mut evm = EvmBuilder::default()
-                    .with_db(fork_db.clone())
-                    .modify_db(insert_precompile_account)
-                    .with_block_env(block_env.clone())
-                    .with_spec_id(self.spec_id)
-                    .with_external_context(PhEvmInspector::new(self.spec_id))
-                    .append_handler_register(inspector_handle_register)
-                    .modify_tx_env(|env| {
-                        *env = TxEnv {
-                            transact_to: TxKind::Call(assertion_address),
-                            caller: CALLER,
-                            data: (*fn_selector).into(),
-                            ..Default::default()
-                        }
-                    })
-                    .build();
+                let mut multi_fork_db = multi_fork_db.clone();
+
+                let inspector = PhEvmInspector::new(self.spec_id, &mut multi_fork_db);
+                let mut evm = new_evm(
+                    TxEnv {
+                        transact_to: TxKind::Call(assertion_address),
+                        caller: CALLER,
+                        data: (*fn_selector).into(),
+                        gas_limit: block_env.gas_limit.try_into().unwrap_or(u64::MAX),
+                        ..Default::default()
+                    },
+                    block_env.clone(),
+                    self.chain_id,
+                    self.spec_id,
+                    &mut multi_fork_db,
+                    inspector,
+                );
 
                 let result = evm
                     .transact()
@@ -231,25 +208,29 @@ where
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
     ) -> ExecutorResult<(CallTracer, ResultAndState), DB> {
-        let mut evm = Evm::builder()
-            .with_ref_db(fork_db.clone())
-            .with_external_context(CallTracer::default())
-            .with_block_env(block_env)
-            .with_spec_id(self.spec_id)
-            .modify_tx_env(|env| *env = tx_env)
-            .append_handler_register(inspector_handle_register)
-            .build();
+        let mut db = revm::db::WrapDatabaseRef(&fork_db);
+
+        let mut evm = new_evm(
+            tx_env,
+            block_env,
+            self.chain_id,
+            self.spec_id,
+            &mut db,
+            CallTracer::default(),
+        );
 
         let result = evm.transact()?;
+        let call_tracer = evm.context.external.clone();
+        std::mem::drop(evm);
 
         fork_db.commit(result.state.clone());
 
-        Ok((evm.context.external, result))
+        Ok((call_tracer, result))
     }
 
     /// Deploys an assertion contract to the forked db.
     /// Returns the address of the deployed contract.
-    fn deploy_assertion_contract(
+    pub fn deploy_assertion_contract(
         &self,
         block_env: BlockEnv,
         constructor_code: Bytecode,
@@ -259,84 +240,25 @@ where
             transact_to: TxKind::Create,
             caller: CALLER,
             data: constructor_code.original_bytes(),
+            gas_limit: block_env.gas_limit.try_into().unwrap_or(u64::MAX),
             ..Default::default()
         };
 
-        let mut evm = Evm::builder()
-            .with_db(multi_fork_db.clone())
-            .modify_db(insert_precompile_account)
-            .with_external_context(PhEvmInspector::new(self.spec_id))
-            .with_spec_id(self.spec_id)
-            .with_block_env(BlockEnv {
-                basefee: U256::ZERO,
-                ..block_env
-            })
-            .modify_tx_env(|env| *env = tx_env)
-            .append_handler_register(inspector_handle_register)
-            .build();
+        let inspector = PhEvmInspector::new(self.spec_id, multi_fork_db);
 
-        let result = evm.transact()?;
+        let result = new_evm(
+            tx_env,
+            block_env,
+            self.chain_id,
+            self.spec_id,
+            multi_fork_db,
+            inspector,
+        )
+        .transact()?;
 
         multi_fork_db.commit(result.state.clone());
 
         Ok(ASSERTION_CONTRACT)
-    }
-
-    /// As a part of the spec, assertions must implement the `fnSelectors()` function.
-    /// The function returns `bytes4[] memory` of function selectors.
-    ///
-    /// This function executes the `fnSelectors` function and returns an `AssertionContract`.
-    /// If the function is unimplemented, or otherwise errors, it returns `None`.
-    pub fn get_assertion_selectors(
-        &self,
-        block_env: BlockEnv,
-        assertion_code: Bytecode,
-        mut fork_db: MultiForkDb<ForkDb<DB>>,
-    ) -> ExecutorResult<Option<AssertionContract>, DB> {
-        // Deploy the contract first
-        let assertion_address = self.deploy_assertion_contract(
-            block_env.clone(),
-            assertion_code.clone(),
-            &mut fork_db,
-        )?;
-
-        // Set up and execute the call
-        let result = EvmBuilder::default()
-            .with_db(fork_db)
-            .modify_db(insert_precompile_account)
-            .with_external_context(PhEvmInspector::new(SpecId::LATEST))
-            .with_spec_id(SpecId::LATEST)
-            .with_block_env(block_env)
-            .modify_tx_env(|env| {
-                *env = TxEnv {
-                    transact_to: TxKind::Call(assertion_address),
-                    caller: CALLER,
-                    data: fnSelectorsCall::SELECTOR.into(),
-                    ..Default::default()
-                }
-            })
-            .append_handler_register(inspector_handle_register)
-            .build()
-            .transact()?;
-
-        // Extract and decode selectors from the result
-        let selectors = match result.result {
-            ExecutionResult::Success { output, .. } => {
-                match fnSelectorsCall::abi_decode_returns(output.data(), true) {
-                    Ok(selectors) => selectors._0,
-                    Err(_) => {
-                        return Ok(None);
-                    }
-                }
-            }
-            _ => return Ok(None),
-        };
-
-        Ok(Some(AssertionContract {
-            code_hash: keccak256(assertion_code.original_bytes()),
-            code: assertion_code,
-            fn_selectors: selectors,
-        }))
     }
 }
 
@@ -356,7 +278,7 @@ mod test {
             BlockEnv,
             U256,
         },
-        store::AssertionStore,
+        store::MockStore,
         test_utils::*,
         AssertionExecutorBuilder,
     };
@@ -366,10 +288,9 @@ mod test {
     #[tokio::test]
     async fn test_deploy_assertion_contract() {
         let shared_db = SharedDB::<0>::new_test();
-        let assertion_store = AssertionStore::default();
 
         let executor =
-            AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
+            AssertionExecutorBuilder::new(shared_db.clone(), MockStore::default().reader()).build();
 
         let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
@@ -436,10 +357,8 @@ mod test {
         };
         let _ = shared_db.commit_block(block_changes);
 
-        let assertion_store = AssertionStore::default();
-
         let executor =
-            AssertionExecutorBuilder::new(shared_db.clone(), assertion_store.reader()).build();
+            AssertionExecutorBuilder::new(shared_db.clone(), MockStore::default().reader()).build();
 
         let mut fork_db = shared_db.fork();
 
@@ -486,23 +405,17 @@ mod test {
             ..Default::default()
         });
 
-        let assertion_store = AssertionStore::default();
+        let mut assertion_store = MockStore::default();
 
         assertion_store
-            .writer()
-            .write(
-                U256::ZERO,
-                vec![(
-                    COUNTER_ADDRESS,
-                    vec![Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER))],
-                )],
+            .insert(
+                COUNTER_ADDRESS,
+                vec![Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER))],
             )
-            .await
             .unwrap();
 
-        let reader = assertion_store.reader();
-
-        let mut executor = AssertionExecutorBuilder::new(shared_db, reader).build();
+        let mut executor =
+            AssertionExecutorBuilder::new(shared_db, assertion_store.reader()).build();
 
         let block_env = BlockEnv {
             number: uint!(1_U256),
@@ -543,92 +456,5 @@ mod test {
         assert_eq!(executor.db.basic_ref(ASSERTION_CONTRACT).unwrap(), None);
 
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_get_assertion_selectors() {
-        let shared_db = SharedDB::<0>::new_test();
-
-        let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
-
-        let executor =
-            AssertionExecutorBuilder::new(shared_db.clone(), AssertionStore::default().reader())
-                .build();
-
-        // Test with valid assertion contract
-        let assertion_contract = executor
-            .get_assertion_selectors(
-                BlockEnv::default(),
-                Bytecode::LegacyRaw(bytecode(FN_SELECTOR)),
-                multi_fork_db.clone(),
-            )
-            .unwrap()
-            .unwrap();
-
-        // Verify the contract has the expected selectors from the counter assertion
-        let expected_assertion = selector_assertion();
-        assert_eq!(
-            assertion_contract.fn_selectors,
-            expected_assertion.fn_selectors
-        );
-        assert_eq!(assertion_contract.code_hash, expected_assertion.code_hash);
-
-        // Test with invalid return
-        let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
-        let result = executor
-            .get_assertion_selectors(
-                BlockEnv::default(),
-                Bytecode::LegacyRaw(bytecode(BAD_FN_SELECTOR)),
-                multi_fork_db,
-            )
-            .unwrap();
-
-        // Should return None for invalid code
-        assert!(result.is_none(), "Should return none");
-
-        // Test with empty code
-        let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
-        let result = executor
-            .get_assertion_selectors(
-                BlockEnv::default(),
-                Bytecode::LegacyRaw(vec![].into()),
-                multi_fork_db,
-            )
-            .unwrap();
-
-        // Should return None for empty code
-        assert!(result.is_none(), "Should return None for empty code");
-    }
-
-    #[tokio::test]
-    async fn test_get_assertion_selectors_with_different_block_envs() {
-        let shared_db = SharedDB::<0>::new_test();
-
-        let executor =
-            AssertionExecutorBuilder::new(shared_db.clone(), AssertionStore::default().reader())
-                .build();
-
-        // Test with different block numbers
-        for block_number in [0u64, 1u64, 1000u64].map(U256::from) {
-            let mut block_env = BlockEnv::default();
-            block_env.number = block_number;
-
-            let multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
-            let assertion_contract = executor
-                .get_assertion_selectors(
-                    block_env,
-                    Bytecode::LegacyRaw(bytecode(FN_SELECTOR)),
-                    multi_fork_db,
-                )
-                .unwrap()
-                .unwrap();
-
-            // Verify the selectors are consistent across different block numbers
-            let expected_assertion = selector_assertion();
-            assert_eq!(
-                assertion_contract.fn_selectors, expected_assertion.fn_selectors,
-                "Selectors should be consistent at block {block_number}"
-            );
-        }
     }
 }

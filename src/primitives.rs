@@ -6,6 +6,7 @@ pub use revm::{
         bytes,
         fixed_bytes,
         hex,
+        keccak256,
         result::ResultAndState,
         uint,
         Account,
@@ -22,6 +23,7 @@ pub use revm::{
         ExecutionResult,
         FixedBytes,
         Output,
+        SpecId,
         TxEnv,
         TxKind,
         B256,
@@ -35,7 +37,7 @@ use std::collections::{
     HashSet,
 };
 
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq, Hash, Eq)]
 pub struct AssertionContract {
     pub fn_selectors: Vec<FixedBytes<4>>,
     pub code: Bytecode,

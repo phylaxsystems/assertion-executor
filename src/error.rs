@@ -6,7 +6,7 @@ use crate::{
 use std::fmt::Debug;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ExecutorError<DbError: Debug> {
     #[error("Expected value not found in database")]
     TxError(#[from] EVMError<DbError>),

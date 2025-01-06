@@ -26,8 +26,8 @@ pub async fn setup() -> AssertionExecutor<SharedDB<5>> {
 
     let db = SharedDB::<5>::new(&PathBuf::from("data")).unwrap();
 
-    let assertion_store = setup_assertion_store().await;
-    let mut executor = AssertionExecutorBuilder::new(db, assertion_store.reader()).build();
+    let assertion_store_reader = setup_assertion_store();
+    let mut executor = AssertionExecutorBuilder::new(db, assertion_store_reader).build();
 
     // Create a block changes object with contract deployments and state deps
     let mut block_changes = BlockChanges::default();

@@ -18,7 +18,7 @@ use revm::{
 
 use std::collections::HashSet;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CallTracer {
     pub calls: HashSet<Address>,
 }

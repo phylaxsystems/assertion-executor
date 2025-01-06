@@ -28,7 +28,8 @@ alloy-signer = "0.8.1"
 alloy-signer-local = "0.8.1"
 alloy-transport = "0.8.1"
 alloy-transport-ws = "0.8.1"
-revm = "17.0.0"
+revm_18 = { version = "18.0.0", package = "revm", optional = true }
+revm_17 = { version = "17.0.0", package = "revm", optional = true }
 
 # ETL deps
 mending = { git = "ssh://git@github.com/phylaxsystems/mending.git", rev = "3a771745f"}
@@ -44,6 +45,7 @@ clap_derive = "4.5.18"
 serde_json = { optional = true, version = "1.0.133" }
 rand = { version = "0.8.5", optional = true }
 jsonrpsee = { version = "0.24.7", features = ["client", "http-client", "server"] }
+tokio-util = "0.7.13"
 
 # Maxperf profile for absolute maximum performance
 # Only use for builds that are going to get used by end users
@@ -54,8 +56,9 @@ codegen-units = 1
 incremental = false
 
 [features]
-default = ["test"]
-test = ["serde_json", "rand"]
+default = ["revm_17"]
+test = ["serde_json", "rand", "revm_17"]
+phoundry = ["revm_18"]
 
 [dev-dependencies]
 rand = "0.8.5"
