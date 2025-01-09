@@ -93,14 +93,17 @@ impl AssertionContractExtractor {
 
         let mut multi_fork_db = self.empty_multi_fork.clone();
 
+        let binding = &[];
+
         // Deploy the contract first
         let assertion_address = self.executor.deploy_assertion_contract(
             block_env.clone(),
             assertion_code.clone(),
             &mut multi_fork_db,
+            binding,
         )?;
 
-        let inspector = PhEvmInspector::new(self.executor.spec_id, &mut multi_fork_db);
+        let inspector = PhEvmInspector::new(self.executor.spec_id, &mut multi_fork_db, binding);
 
         // Set up and execute the call
         let mut evm = new_evm(

@@ -35,7 +35,10 @@ use rayon::prelude::{
     IntoParallelIterator,
     ParallelIterator,
 };
-use revm::primitives::SpecId;
+use revm::primitives::{
+    Log,
+    SpecId,
+};
 
 use tracing::{
     instrument,
@@ -85,7 +88,12 @@ where
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
 
         let results = self
-            .execute_assertions(block_env, tx_traces, multi_fork_db)
+            .execute_assertions(
+                block_env,
+                tx_traces,
+                multi_fork_db,
+                result_and_state.result.logs(),
+            )
             .await?;
 
         match results.iter().all(|r| r.is_success()) {
@@ -103,6 +111,7 @@ where
         block_env: BlockEnv,
         traces: CallTracer,
         multi_fork_db: MultiForkDb<ForkDb<DB>>,
+        tx_logs: &[Log],
     ) -> ExecutorResult<Vec<AssertionResult>, DB> {
         // Examine contracts that were called to see if they have assertions
         // associated, and dispatch accordingly
@@ -121,6 +130,7 @@ where
                     &assertion_contract,
                     block_env.clone(),
                     multi_fork_db.clone(),
+                    tx_logs,
                 )
             })
             .collect::<Vec<ExecutorResult<Vec<AssertionResult>, DB>>>();
@@ -140,6 +150,7 @@ where
         assertion_contract: &AssertionContract,
         block_env: BlockEnv,
         mut multi_fork_db: MultiForkDb<ForkDb<DB>>,
+        tx_logs: &[Log],
     ) -> ExecutorResult<Vec<AssertionResult>, DB> {
         let AssertionContract {
             fn_selectors,
@@ -150,8 +161,12 @@ where
         trace!(?code_hash, "Deploying assertion contract");
 
         //Deploy the assertion contract
-        let assertion_address =
-            self.deploy_assertion_contract(block_env.clone(), code.clone(), &mut multi_fork_db)?;
+        let assertion_address = self.deploy_assertion_contract(
+            block_env.clone(),
+            code.clone(),
+            &mut multi_fork_db,
+            tx_logs,
+        )?;
 
         //Execute the functions in parallel against cloned forks of the intermediate state, with
         //the deployed assertion contract as the target.
@@ -160,7 +175,7 @@ where
             .map(|fn_selector: &FixedBytes<4>| {
                 let mut multi_fork_db = multi_fork_db.clone();
 
-                let inspector = PhEvmInspector::new(self.spec_id, &mut multi_fork_db);
+                let inspector = PhEvmInspector::new(self.spec_id, &mut multi_fork_db, tx_logs);
                 let mut evm = new_evm(
                     TxEnv {
                         transact_to: TxKind::Call(assertion_address),
@@ -235,6 +250,7 @@ where
         block_env: BlockEnv,
         constructor_code: Bytecode,
         multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
+        tx_logs: &[Log],
     ) -> ExecutorResult<Address, DB> {
         let tx_env = TxEnv {
             transact_to: TxKind::Create,
@@ -244,7 +260,7 @@ where
             ..Default::default()
         };
 
-        let inspector = PhEvmInspector::new(self.spec_id, multi_fork_db);
+        let inspector = PhEvmInspector::new(self.spec_id, multi_fork_db, tx_logs);
 
         let result = new_evm(
             tx_env,
@@ -299,6 +315,7 @@ mod test {
                 BlockEnv::default(),
                 Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER)),
                 &mut multi_fork_db0,
+                &[],
             )
             .unwrap();
 
@@ -323,6 +340,7 @@ mod test {
                 BlockEnv::default(),
                 Bytecode::LegacyRaw(shortened_code),
                 &mut multi_fork_db1,
+                &[],
             )
             .unwrap();
 
