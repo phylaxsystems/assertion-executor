@@ -21,7 +21,7 @@ use std::{
 /// Also contains a flag to indicate if the account is self destructed.
 /// If the account is self destructed, it won't read from the inner database.
 #[derive(Debug, Clone, Default)]
-pub(super) struct ForkStorageMap {
+pub struct ForkStorageMap {
     pub map: HashMap<U256, U256>,
     self_destructed: bool,
 }
@@ -30,7 +30,7 @@ pub(super) struct ForkStorageMap {
 #[derive(Debug)]
 pub struct ForkDb<ExtDb> {
     /// Maps addresses to storage slots and their history indexed by block.
-    pub(super) storage: HashMap<Address, ForkStorageMap>,
+    pub storage: HashMap<Address, ForkStorageMap>,
     /// Maps addresses to their account info and indexes it by block.
     pub(super) basic: HashMap<Address, AccountInfo>,
     /// Maps bytecode hashes to bytecode.

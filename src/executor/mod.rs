@@ -22,7 +22,6 @@ use crate::{
         AssertionResult,
         BlockEnv,
         Bytecode,
-        EvmState,
         FixedBytes,
         ResultAndState,
         TxEnv,
@@ -77,13 +76,17 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> ExecutorResult<Option<EvmState>, DB> {
+    ) -> ExecutorResult<Option<ResultAndState>, DB> {
         let pre_tx_db = fork_db.clone();
 
         let mut post_tx_db = fork_db.clone();
 
         let (tx_traces, result_and_state) =
             self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
+
+        if !result_and_state.result.is_success() {
+            return Ok(Some(result_and_state));
+        }
 
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
 
@@ -99,7 +102,7 @@ where
         match results.iter().all(|r| r.is_success()) {
             true => {
                 fork_db.commit(result_and_state.state.clone());
-                Ok(Some(result_and_state.state))
+                Ok(Some(result_and_state))
             }
             false => Ok(None),
         }

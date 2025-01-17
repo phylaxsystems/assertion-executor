@@ -1,14 +1,21 @@
 #![cfg(any(test, feature = "test"))]
 
-use crate::primitives::{
-    AccountInfo,
-    Address,
-    AssertionContract,
-    Bytecode,
-    TxEnv,
-    TxKind,
-    U256,
+use crate::{
+    db::fork_db::{
+        ForkDb,
+        ForkStorageMap,
+    },
+    primitives::{
+        AccountInfo,
+        Address,
+        AssertionContract,
+        Bytecode,
+        TxEnv,
+        TxKind,
+        U256,
+    },
 };
+use std::collections::HashMap;
 
 use revm::primitives::{
     fixed_bytes,

@@ -23,6 +23,7 @@
             pkg-config
             cargo-flamegraph
             cargo-tarpaulin
+            lldb
             (rust-bin.nightly.latest.default.override {
               extensions = [ "rust-src" "rustfmt-preview" "rust-analyzer" ];
             })

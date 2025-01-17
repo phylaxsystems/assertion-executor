@@ -1,5 +1,6 @@
+# Build the binary
 build:
-	cargo build --verbose
+	cargo build --verbose --release
 
 # Build the contract mocks and run the rust tests
 test:

@@ -7,6 +7,7 @@ use crate::{
         },
         DatabaseRef,
     },
+    inspectors::precompiles::load::load_external_slot,
     primitives::{
         address,
         bytes,
@@ -55,6 +56,7 @@ pub const PRECOMPILE_ADDRESS: Address = address!("4461812e00718ff8D80929E3bF595A
 
 sol! {
     interface PhEvm {
+        // Forks to the state prior to the assertion triggering transaction.
 
         // An Ethereum log
         struct Log {
@@ -69,8 +71,11 @@ sol! {
         //Forks to the state prior to the assertion triggering transaction.
         function forkPreState() external;
 
-        //Forks to the state after the assertion triggering transaction.
+        // Forks to the state after the assertion triggering transaction.
         function forkPostState() external;
+
+        // Loads a storage slot from an address
+        function load(address target, bytes32 slot) external view returns (bytes32 data);
 
         // Get the logs from the assertion triggering transaction.
         function getLogs() external returns (Log[] memory logs);
@@ -147,6 +152,7 @@ impl<'a> PhEvmInspector<'a> {
 
                 fork_result_to_call_outcome(result, gas)
             }
+            PhEvm::loadCall::SELECTOR => load_external_slot(&context.inner, inputs, gas),
             PhEvm::getLogsCall::SELECTOR => {
                 let sol_logs: Vec<PhEvm::Log> = self
                     .tx_logs
