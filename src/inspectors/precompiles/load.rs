@@ -1,9 +1,7 @@
 use crate::{
     db::MultiForkDb,
-    inspectors::{
-        phevm::PhEvm::loadCall,
-        precompiles::empty_outcome,
-    },
+    inspectors::precompiles::empty_outcome,
+    inspectors::sol_primitives::PhEvm::loadCall,
     primitives::Address,
     revm::DatabaseRef,
 };
@@ -57,74 +55,13 @@ pub fn load_external_slot(
 
 #[cfg(test)]
 mod test {
-    use crate::{
-        db::SharedDB,
-        primitives::{
-            address,
-            BlockEnv,
-            Bytecode,
-            SpecId,
-            TxEnv,
-            TxKind,
-            U256,
-        },
-        store::MockStore,
-        test_utils::bytecode,
-        AssertionExecutor,
-    };
+    use crate::test_utils::run_precompile_test;
 
     #[tokio::test]
     async fn test_get_storage() {
-        let caller = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
-        let target = address!("118dd24a3b0d02f90d8896e242d3838b4d37c181");
-
-        let db = SharedDB::<0>::new_test();
-        let mut assertion_store = MockStore::default();
-
-        let assertion_code = bytecode("TestGetStorage.sol:GetStorageTest");
-        let target_code = bytecode("TestGetStorage.sol:Target");
-
-        assertion_store
-            .insert(target, vec![Bytecode::LegacyRaw(assertion_code.clone())])
-            .unwrap();
-
-        let mut executor = AssertionExecutor {
-            db: db.clone(),
-            assertion_store_reader: assertion_store.reader(),
-            spec_id: SpecId::LATEST,
-            chain_id: 1,
-        };
-
-        let mut fork_db = db.fork();
-
-        // Deploy mock using bytecode of contract-mocks/src/GetLogsTest.sol:Target
-        let target_deployment_tx = TxEnv {
-            caller,
-            data: bytecode("TestGetStorage.sol:Target"),
-            transact_to: TxKind::Create,
-            ..Default::default()
-        };
-
-        // Execute target deployment tx
-        executor
-            .execute_forked_tx(BlockEnv::default(), target_deployment_tx, &mut fork_db)
-            .unwrap();
-
-        let trigger_tx = TxEnv {
-            caller,
-            data: bytecode("TestGetStorage.sol:TriggeringTx"),
-            transact_to: TxKind::Create,
-            ..Default::default()
-        };
-
-        let result = executor
-            .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)
-            .await
-            .unwrap()
-            .unwrap();
-
-        println!("{:#?}", result);
-
-        assert!(result.result.is_success());
+        let result = run_precompile_test("TestLoad").await;
+        assert!(result.is_some());
+        let result_and_state = result.unwrap();
+        assert!(result_and_state.result.is_success());
     }
 }

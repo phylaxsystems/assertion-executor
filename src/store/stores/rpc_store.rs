@@ -306,7 +306,7 @@ impl RpcStore<RootProvider<PubSubFrontend>> {
             .open_tree(ACTIVE_ASSERTIONS)?;
 
         let mut assertion_contracts = HashSet::new();
-        for address in read_params.traces.calls.iter() {
+        for address in read_params.traces.calls().iter() {
             let ser_address = bincode::serialize(address)?;
             if let Some(ser_active_assertions) = active_assertions_tree.get(&ser_address)? {
                 let active_assertions: Vec<ActiveAssertion> =
@@ -742,6 +742,11 @@ mod test {
         },
     };
 
+    use revm::interpreter::{
+        CallInputs,
+        CallScheme,
+        CallValue,
+    };
     use sled::Config;
 
     use alloy::hex::FromHex;
@@ -1540,12 +1545,28 @@ mod test {
             )
             .unwrap();
 
+        let call_inputs = HashMap::from_iter(vec![(
+            (test_address, test_selector),
+            vec![CallInputs {
+                input: test_selector.into(),
+                return_memory_offset: 0..4,
+                gas_limit: 1000000,
+                bytecode_address: test_address,
+                target_address: test_address,
+                caller: test_address,
+                value: CallValue::Transfer(U256::from(0)),
+                scheme: CallScheme::CallCode,
+                is_static: false,
+                is_eof: false,
+            }],
+        )]);
+
         // Create read request
         let (tx, mut rx) = oneshot::channel();
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(block_number + 1),
             traces: CallTracer {
-                calls: HashSet::from_iter(vec![test_address]),
+                call_inputs: call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,
@@ -1615,13 +1636,28 @@ mod test {
             )
             .unwrap();
 
+        let call_inputs = HashMap::from_iter(vec![(
+            (test_address, test_selector),
+            vec![CallInputs {
+                input: test_selector.into(),
+                return_memory_offset: 0..4,
+                gas_limit: 1000000,
+                bytecode_address: test_address,
+                target_address: test_address,
+                caller: test_address,
+                value: CallValue::Transfer(U256::from(0)),
+                scheme: CallScheme::CallCode,
+                is_static: false,
+                is_eof: false,
+            }],
+        )]);
         // Create pending read request
         let read_req_block_number = 2u64;
         let (tx, mut rx) = oneshot::channel();
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(read_req_block_number),
             traces: CallTracer {
-                calls: HashSet::from_iter(vec![test_address]),
+                call_inputs: call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,
@@ -1679,12 +1715,29 @@ mod test {
             )
             .unwrap();
 
+        let test_address = Address::random();
+        let test_selector = FixedBytes::<4>::random();
+        let call_inputs = HashMap::from_iter(vec![(
+            (test_address, test_selector),
+            vec![CallInputs {
+                input: test_selector.into(),
+                return_memory_offset: 0..4,
+                gas_limit: 1000000,
+                bytecode_address: test_address,
+                target_address: test_address,
+                caller: test_address,
+                value: CallValue::Transfer(U256::from(0)),
+                scheme: CallScheme::CallCode,
+                is_static: false,
+                is_eof: false,
+            }],
+        )]);
         // Create read request with address that has no assertions
         let (tx, mut rx) = oneshot::channel();
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(block_number + 1),
             traces: CallTracer {
-                calls: HashSet::from_iter(vec![Address::random()]),
+                call_inputs: call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,
@@ -1746,12 +1799,29 @@ mod test {
             )
             .unwrap();
 
+        let test_selector = FixedBytes::<4>::random();
+        let call_inputs = HashMap::from_iter(vec![(
+            (test_address, test_selector),
+            vec![CallInputs {
+                input: test_selector.into(),
+                return_memory_offset: 0..4,
+                gas_limit: 1000000,
+                bytecode_address: test_address,
+                target_address: test_address,
+                caller: test_address,
+                value: CallValue::Transfer(U256::from(0)),
+                scheme: CallScheme::CallCode,
+                is_static: false,
+                is_eof: false,
+            }],
+        )]);
+
         // Create read request
         let (tx, mut rx) = oneshot::channel();
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(block_number + 1),
             traces: CallTracer {
-                calls: HashSet::from_iter(vec![test_address]),
+                call_inputs: call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,

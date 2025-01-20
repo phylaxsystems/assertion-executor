@@ -141,7 +141,7 @@ impl MockStoreRequestHandler {
             } = read_req;
 
             let assertion_contracts = traces
-                .calls
+                .calls()
                 .iter()
                 .filter_map(|to: &Address| {
                     let maybe_assertions = self.store.get(to).cloned();
@@ -177,7 +177,14 @@ mod tests {
             FN_SELECTOR,
         },
     };
-    use std::collections::HashSet;
+    use revm::interpreter::{
+        CallInputs,
+        CallScheme,
+    };
+    use revm::primitives::{
+        Bytes,
+        FixedBytes,
+    };
 
     #[test]
     fn test_insert() {
@@ -212,7 +219,21 @@ mod tests {
 
         // Create read request parameters
         let traces = CallTracer {
-            calls: HashSet::from_iter([address]),
+            call_inputs: HashMap::from_iter([(
+                (address, FixedBytes::default()),
+                vec![CallInputs {
+                    input: Bytes::default(),
+                    return_memory_offset: 0..0,
+                    gas_limit: 0,
+                    bytecode_address: address,
+                    target_address: address,
+                    caller: Address::default(),
+                    value: Default::default(),
+                    scheme: CallScheme::Call,
+                    is_static: false,
+                    is_eof: false,
+                }],
+            )]),
         };
 
         // Send read request
@@ -240,7 +261,21 @@ mod tests {
 
         // Create read request parameters
         let traces = CallTracer {
-            calls: HashSet::from_iter([address]),
+            call_inputs: HashMap::from_iter([(
+                (address, FixedBytes::default()),
+                vec![CallInputs {
+                    input: Bytes::default(),
+                    return_memory_offset: 0..0,
+                    gas_limit: 0,
+                    bytecode_address: address,
+                    target_address: address,
+                    caller: Address::default(),
+                    value: Default::default(),
+                    scheme: CallScheme::Call,
+                    is_static: false,
+                    is_eof: false,
+                }],
+            )]),
         };
 
         // Send read request

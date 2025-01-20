@@ -15,7 +15,10 @@ use revm::interpreter::{
     InterpreterResult,
 };
 
+pub mod calls;
+pub mod fork;
 pub mod load;
+pub mod logs;
 
 // Helper fn to return an empty calloutcome early.
 pub fn empty_outcome(gas: Gas) -> CallOutcome {

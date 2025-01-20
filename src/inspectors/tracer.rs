@@ -1,5 +1,6 @@
 use crate::primitives::{
     Address,
+    FixedBytes,
     U256,
 };
 
@@ -16,11 +17,43 @@ use revm::{
     Inspector,
 };
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CallTracer {
-    pub calls: HashSet<Address>,
+    pub call_inputs: HashMap<(Address, FixedBytes<4>), Vec<CallInputs>>,
+}
+
+impl CallTracer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn record_call(&mut self, inputs: CallInputs) {
+        // If the input is at least 4 bytes long, use the first 4 bytes as the selector
+        // Otherwise, use 0x00000000 as the default selector
+        // Note: It doesn't mean that the selector is a valid function selector of the target contract
+        // but the goal is to have actual function selectors available for filtering in the getCall precompile
+        let selector = if inputs.input.len() >= 4 {
+            FixedBytes::from_slice(&inputs.input[..4])
+        } else {
+            FixedBytes::default() // 0x00000000 for ETH transfers/no-input calls
+        };
+
+        self.call_inputs
+            .entry((inputs.target_address, selector))
+            .or_default()
+            .push(inputs);
+    }
+
+    pub fn calls(&self) -> HashSet<Address> {
+        // TODO: Think about storing the call targets in a set in addition to the call inputs
+        // to see if it improves performance
+        self.call_inputs.keys().map(|(addr, _)| *addr).collect()
+    }
 }
 
 impl<DB: Database> Inspector<DB> for CallTracer {
@@ -53,7 +86,7 @@ impl<DB: Database> Inspector<DB> for CallTracer {
         _context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        self.calls.insert(inputs.target_address);
+        self.record_call(inputs.clone());
         None
     }
 
@@ -118,6 +151,6 @@ mod test {
         evm.transact().expect("Transaction to work");
 
         let expected = HashSet::from_iter(vec![callee; 33]);
-        assert_eq!(evm.context.external.calls, expected);
+        assert_eq!(evm.context.external.calls(), expected);
     }
 }

@@ -7,7 +7,13 @@ use crate::{
         multi_fork_db::MultiForkDb,
     },
     executor::CALLER,
-    inspectors::phevm::PhEvmInspector,
+    inspectors::{
+        phevm::{
+            PhEvmContext,
+            PhEvmInspector,
+        },
+        tracer::CallTracer,
+    },
     primitives::{
         keccak256,
         AssertionContract,
@@ -93,7 +99,10 @@ impl AssertionContractExtractor {
 
         let mut multi_fork_db = self.empty_multi_fork.clone();
 
-        let binding = &[];
+        let binding = &PhEvmContext {
+            tx_logs: &[],
+            call_traces: &CallTracer::default(),
+        };
 
         // Deploy the contract first
         let assertion_address = self.executor.deploy_assertion_contract(

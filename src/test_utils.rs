@@ -1,21 +1,14 @@
 #![cfg(any(test, feature = "test"))]
 
-use crate::{
-    db::fork_db::{
-        ForkDb,
-        ForkStorageMap,
-    },
-    primitives::{
-        AccountInfo,
-        Address,
-        AssertionContract,
-        Bytecode,
-        TxEnv,
-        TxKind,
-        U256,
-    },
+use crate::primitives::{
+    AccountInfo,
+    Address,
+    AssertionContract,
+    Bytecode,
+    TxEnv,
+    TxKind,
+    U256,
 };
-use std::collections::HashMap;
 
 use revm::primitives::{
     fixed_bytes,
@@ -23,6 +16,18 @@ use revm::primitives::{
     keccak256,
     Bytes,
     FixedBytes,
+    ResultAndState,
+};
+
+use crate::{
+    db::SharedDB,
+    primitives::{
+        address,
+        BlockEnv,
+        SpecId,
+    },
+    store::MockStore,
+    AssertionExecutor,
 };
 
 /// Deployed bytecode of contract-mocks/src/SimpleCounterAssertion.sol:Counter
@@ -121,4 +126,57 @@ pub fn deployed_bytecode(input: &str) -> Bytes {
     hex::decode(bytecode)
         .expect("Failed to decode bytecode")
         .into()
+}
+
+pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
+    let caller = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
+    let target = address!("118dd24a3b0d02f90d8896e242d3838b4d37c181");
+
+    let db = SharedDB::<0>::new_test();
+
+    let mut assertion_store = MockStore::default();
+
+    let mut fork_db = db.fork();
+
+    // Write test assertion to assertion store
+    // bytecode of contract-mocks/src/GetLogsTest.sol:GetLogsTest
+    let assertion_code = bytecode(&format!("{}.sol:{}", artifact, artifact));
+
+    assertion_store
+        .insert(target, vec![Bytecode::LegacyRaw(assertion_code)])
+        .unwrap();
+
+    let mut executor = AssertionExecutor {
+        db,
+        assertion_store_reader: assertion_store.reader(),
+        spec_id: SpecId::LATEST,
+        chain_id: 1,
+    };
+
+    // Deploy mock using bytecode of contract-mocks/src/GetLogsTest.sol:Target
+    let target_deployment_tx = TxEnv {
+        caller,
+        data: bytecode("Target.sol:Target"),
+        transact_to: TxKind::Create,
+        ..Default::default()
+    };
+
+    // Execute target deployment tx
+    executor
+        .execute_forked_tx(BlockEnv::default(), target_deployment_tx, &mut fork_db)
+        .unwrap();
+
+    // Deploy TriggeringTx contract using bytecode of
+    // contract-mocks/src/GetLogsTest.sol:TriggeringTx
+    let trigger_tx = TxEnv {
+        caller,
+        data: bytecode(&format!("{}.sol:{}", artifact, "TriggeringTx")),
+        transact_to: TxKind::Create,
+        ..Default::default()
+    };
+    //Execute triggering tx.
+    executor
+        .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)
+        .await
+        .unwrap()
 }

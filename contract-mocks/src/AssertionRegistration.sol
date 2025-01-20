@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.28;
+
 contract RegistrationMock {
     // Events to index
     event AssertionAdded(address contractAddress, bytes32 assertionId, uint256 activeAtBlock);

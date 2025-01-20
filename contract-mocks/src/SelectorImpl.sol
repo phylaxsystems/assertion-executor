@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.28;
 
 interface Assertion {
     function fnSelectors() external returns (bytes4[] memory);
@@ -37,13 +37,11 @@ contract SelectorImpl is Assertion {
 }
 
 contract BadSelectorImpl {
-
-    function fnSelectors() external pure returns (uint256 bad, bytes4[] memory selectors) { 
+    function fnSelectors() external pure returns (uint256 bad, bytes4[] memory selectors) {
         selectors = new bytes4[](3);
         selectors[0] = this.assertionStorage.selector;
         selectors[1] = this.assertionEther.selector;
         selectors[2] = this.assertionBoth.selector;
-
     }
 
     function assertionStorage() external returns (bool) {

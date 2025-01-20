@@ -11,7 +11,10 @@ use crate::{
     },
     error::ExecutorError,
     inspectors::{
-        phevm::PhEvmInspector,
+        phevm::{
+            PhEvmContext,
+            PhEvmInspector,
+        },
         tracer::CallTracer,
     },
     primitives::{
@@ -34,10 +37,7 @@ use rayon::prelude::{
     IntoParallelIterator,
     ParallelIterator,
 };
-use revm::primitives::{
-    Log,
-    SpecId,
-};
+use revm::primitives::SpecId;
 
 use tracing::{
     instrument,
@@ -89,14 +89,10 @@ where
         }
 
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
+        let context = PhEvmContext::new(result_and_state.result.logs(), &tx_traces);
 
         let results = self
-            .execute_assertions(
-                block_env,
-                tx_traces,
-                multi_fork_db,
-                result_and_state.result.logs(),
-            )
+            .execute_assertions(block_env, multi_fork_db, &context)
             .await?;
 
         match results.iter().all(|r| r.is_success()) {
@@ -112,16 +108,15 @@ where
     async fn execute_assertions<'a>(
         &'a self,
         block_env: BlockEnv,
-        traces: CallTracer,
         multi_fork_db: MultiForkDb<ForkDb<DB>>,
-        tx_logs: &[Log],
+        context: &PhEvmContext<'a>,
     ) -> ExecutorResult<Vec<AssertionResult>, DB> {
         // Examine contracts that were called to see if they have assertions
         // associated, and dispatch accordingly
         let mut assertion_store_reader = self.assertion_store_reader.clone();
 
         let assertions = assertion_store_reader
-            .read(block_env.number, traces)
+            .read(block_env.number, context.call_traces.clone())
             .await?;
 
         let mut valid_results = vec![];
@@ -133,7 +128,7 @@ where
                     &assertion_contract,
                     block_env.clone(),
                     multi_fork_db.clone(),
-                    tx_logs,
+                    context,
                 )
             })
             .collect::<Vec<ExecutorResult<Vec<AssertionResult>, DB>>>();
@@ -153,7 +148,7 @@ where
         assertion_contract: &AssertionContract,
         block_env: BlockEnv,
         mut multi_fork_db: MultiForkDb<ForkDb<DB>>,
-        tx_logs: &[Log],
+        context: &PhEvmContext,
     ) -> ExecutorResult<Vec<AssertionResult>, DB> {
         let AssertionContract {
             fn_selectors,
@@ -168,7 +163,7 @@ where
             block_env.clone(),
             code.clone(),
             &mut multi_fork_db,
-            tx_logs,
+            context,
         )?;
 
         //Execute the functions in parallel against cloned forks of the intermediate state, with
@@ -178,7 +173,7 @@ where
             .map(|fn_selector: &FixedBytes<4>| {
                 let mut multi_fork_db = multi_fork_db.clone();
 
-                let inspector = PhEvmInspector::new(self.spec_id, &mut multi_fork_db, tx_logs);
+                let inspector = PhEvmInspector::new(self.spec_id, &mut multi_fork_db, context);
                 let mut evm = new_evm(
                     TxEnv {
                         transact_to: TxKind::Call(assertion_address),
@@ -253,7 +248,7 @@ where
         block_env: BlockEnv,
         constructor_code: Bytecode,
         multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
-        tx_logs: &[Log],
+        context: &PhEvmContext,
     ) -> ExecutorResult<Address, DB> {
         let tx_env = TxEnv {
             transact_to: TxKind::Create,
@@ -263,7 +258,7 @@ where
             ..Default::default()
         };
 
-        let inspector = PhEvmInspector::new(self.spec_id, multi_fork_db, tx_logs);
+        let inspector = PhEvmInspector::new(self.spec_id, multi_fork_db, context);
 
         let result = new_evm(
             tx_env,
@@ -318,7 +313,10 @@ mod test {
                 BlockEnv::default(),
                 Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER)),
                 &mut multi_fork_db0,
-                &[],
+                &PhEvmContext {
+                    tx_logs: &[],
+                    call_traces: &CallTracer::default(),
+                },
             )
             .unwrap();
 
@@ -343,7 +341,10 @@ mod test {
                 BlockEnv::default(),
                 Bytecode::LegacyRaw(shortened_code),
                 &mut multi_fork_db1,
-                &[],
+                &PhEvmContext {
+                    tx_logs: &[],
+                    call_traces: &CallTracer::default(),
+                },
             )
             .unwrap();
 
@@ -389,7 +390,7 @@ mod test {
 
         //Traces should contain the call to the counter contract
         assert_eq!(
-            traces.calls.into_iter().collect::<Vec<Address>>(),
+            traces.calls().into_iter().collect::<Vec<Address>>(),
             vec![COUNTER_ADDRESS]
         );
 
