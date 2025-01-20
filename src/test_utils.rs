@@ -24,10 +24,9 @@ use crate::{
     primitives::{
         address,
         BlockEnv,
-        SpecId,
     },
     store::MockStore,
-    AssertionExecutor,
+    AssertionExecutorBuilder,
 };
 
 /// Deployed bytecode of contract-mocks/src/SimpleCounterAssertion.sol:Counter
@@ -146,12 +145,7 @@ pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
         .insert(target, vec![Bytecode::LegacyRaw(assertion_code)])
         .unwrap();
 
-    let mut executor = AssertionExecutor {
-        db,
-        assertion_store_reader: assertion_store.reader(),
-        spec_id: SpecId::LATEST,
-        chain_id: 1,
-    };
+    let mut executor = AssertionExecutorBuilder::new(db, assertion_store.reader()).build();
 
     // Deploy mock using bytecode of contract-mocks/src/GetLogsTest.sol:Target
     let target_deployment_tx = TxEnv {

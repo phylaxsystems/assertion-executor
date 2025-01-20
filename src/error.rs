@@ -12,4 +12,6 @@ pub enum ExecutorError<DbError: Debug> {
     TxError(#[from] EVMError<DbError>),
     #[error("Failed to read assertions")]
     AssertionReadError(#[from] AssertionStoreReaderError),
+    #[error("Assertion contract deploy error")]
+    AssertionContractDeployError,
 }

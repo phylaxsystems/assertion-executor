@@ -14,6 +14,7 @@ use crate::{
         AssertionStoreReadParams,
         AssertionStoreReader,
     },
+    DEFAULT_ASSERTION_GAS_LIMIT,
 };
 
 use tracing::{
@@ -67,7 +68,11 @@ impl MockStore {
     pub fn new(spec_id: SpecId, chain_id: u64) -> Self {
         Self {
             store: HashMap::new(),
-            assertion_contract_extractor: AssertionContractExtractor::new(spec_id, chain_id),
+            assertion_contract_extractor: AssertionContractExtractor::new(
+                spec_id,
+                chain_id,
+                DEFAULT_ASSERTION_GAS_LIMIT,
+            ),
         }
     }
 

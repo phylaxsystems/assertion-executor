@@ -21,10 +21,12 @@ use crate::{
         address,
         Address,
         AssertionContract,
+        AssertionExecutionResult,
         AssertionId,
         AssertionResult,
         BlockEnv,
         Bytecode,
+        EvmExecutionResult,
         FixedBytes,
         ResultAndState,
         TxEnv,
@@ -58,6 +60,7 @@ pub struct AssertionExecutor<DB> {
     pub assertion_store_reader: AssertionStoreReader,
     pub spec_id: SpecId,
     pub chain_id: u64,
+    pub assertion_gas_limit: u64,
 }
 
 type ExecutorResult<T, DB> = Result<T, ExecutorError<<DB as DatabaseRef>::Error>>;
@@ -159,12 +162,32 @@ where
         trace!(?code_hash, "Deploying assertion contract");
 
         //Deploy the assertion contract
-        let assertion_address = self.deploy_assertion_contract(
+        let execution_result = self.deploy_assertion_contract(
             block_env.clone(),
             code.clone(),
             &mut multi_fork_db,
             context,
         )?;
+
+        if !execution_result.is_success() {
+            let result = fn_selectors
+                .iter()
+                .map(|fn_selector| {
+                    AssertionResult {
+                        id: AssertionId {
+                            fn_selector: *fn_selector,
+                            code_hash: *code_hash,
+                        },
+                        result: AssertionExecutionResult::AssertionContractDeployFailure(
+                            execution_result.clone(),
+                        ),
+                    }
+                })
+                .collect::<Vec<AssertionResult>>();
+            return Ok(result);
+        }
+
+        let remaining_gas = self.assertion_gas_limit - execution_result.gas_used();
 
         //Execute the functions in parallel against cloned forks of the intermediate state, with
         //the deployed assertion contract as the target.
@@ -176,10 +199,10 @@ where
                 let inspector = PhEvmInspector::new(self.spec_id, &mut multi_fork_db, context);
                 let mut evm = new_evm(
                     TxEnv {
-                        transact_to: TxKind::Call(assertion_address),
+                        transact_to: TxKind::Call(ASSERTION_CONTRACT),
                         caller: CALLER,
                         data: (*fn_selector).into(),
-                        gas_limit: block_env.gas_limit.try_into().unwrap_or(u64::MAX),
+                        gas_limit: remaining_gas,
                         ..Default::default()
                     },
                     block_env.clone(),
@@ -198,7 +221,10 @@ where
                     code_hash: *code_hash,
                 };
 
-                Ok(AssertionResult { id, result })
+                Ok(AssertionResult {
+                    id,
+                    result: AssertionExecutionResult::AssertionExecutionResult(result),
+                })
             })
             .collect::<Vec<ExecutorResult<AssertionResult, DB>>>();
 
@@ -242,19 +268,19 @@ where
     }
 
     /// Deploys an assertion contract to the forked db.
-    /// Returns the address of the deployed contract.
+    /// Returns the execution result
     pub fn deploy_assertion_contract(
         &self,
         block_env: BlockEnv,
         constructor_code: Bytecode,
         multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
         context: &PhEvmContext,
-    ) -> ExecutorResult<Address, DB> {
+    ) -> ExecutorResult<EvmExecutionResult, DB> {
         let tx_env = TxEnv {
             transact_to: TxKind::Create,
             caller: CALLER,
             data: constructor_code.original_bytes(),
-            gas_limit: block_env.gas_limit.try_into().unwrap_or(u64::MAX),
+            gas_limit: self.assertion_gas_limit,
             ..Default::default()
         };
 
@@ -272,7 +298,7 @@ where
 
         multi_fork_db.commit(result.state.clone());
 
-        Ok(ASSERTION_CONTRACT)
+        Ok(result.result)
     }
 }
 
@@ -308,7 +334,7 @@ mod test {
 
         let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
-        let deployed_address0 = executor
+        let result = executor
             .deploy_assertion_contract(
                 BlockEnv::default(),
                 Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER)),
@@ -320,10 +346,11 @@ mod test {
             )
             .unwrap();
 
-        assert_eq!(deployed_address0, ASSERTION_CONTRACT);
+        assert!(result.gas_used() != 0);
+        assert!(result.is_success());
 
         let deployed_code0 = multi_fork_db0
-            .basic_ref(deployed_address0)
+            .basic_ref(ASSERTION_CONTRACT)
             .unwrap()
             .unwrap()
             .code
@@ -336,7 +363,7 @@ mod test {
 
         let mut multi_fork_db1 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
-        let deployed_address1 = executor
+        let result = executor
             .deploy_assertion_contract(
                 BlockEnv::default(),
                 Bytecode::LegacyRaw(shortened_code),
@@ -348,19 +375,17 @@ mod test {
             )
             .unwrap();
 
-        assert_eq!(deployed_address1, ASSERTION_CONTRACT);
-
         let deployed_code1 = multi_fork_db1
-            .basic_ref(deployed_address1)
+            .basic_ref(ASSERTION_CONTRACT)
             .unwrap()
             .unwrap()
             .code
             .unwrap();
+
         assert!(!deployed_code1.is_empty());
 
-        //Assert that the same address is returned for the differing code
-        assert_eq!(deployed_address0, deployed_address1);
-        assert_ne!(deployed_code0, deployed_code1);
+        assert!(result.gas_used() != 0);
+        assert!(result.is_success());
     }
 
     #[tokio::test]

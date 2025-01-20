@@ -27,3 +27,5 @@ extern crate revm_18 as revm;
 
 #[cfg(not(feature = "phoundry"))]
 extern crate revm_17 as revm;
+
+pub const DEFAULT_ASSERTION_GAS_LIMIT: u64 = 3_000_000;

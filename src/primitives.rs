@@ -20,7 +20,7 @@ pub use revm::{
         EvmState,
         EvmStorage,
         EvmStorageSlot,
-        ExecutionResult,
+        ExecutionResult as EvmExecutionResult,
         FixedBytes,
         Output,
         SpecId,
@@ -53,12 +53,22 @@ pub struct AssertionId {
 #[derive(Debug)]
 pub struct AssertionResult {
     pub id: AssertionId,
-    pub result: ExecutionResult,
+    pub result: AssertionExecutionResult,
+}
+
+#[derive(Debug)]
+pub enum AssertionExecutionResult {
+    AssertionContractDeployFailure(EvmExecutionResult),
+    AssertionExecutionResult(EvmExecutionResult),
 }
 
 impl AssertionResult {
     pub fn is_success(&self) -> bool {
-        self.result.is_success()
+        if let AssertionExecutionResult::AssertionExecutionResult(result) = &self.result {
+            result.is_success()
+        } else {
+            false
+        }
     }
 }
 

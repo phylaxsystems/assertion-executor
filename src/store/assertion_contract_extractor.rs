@@ -6,7 +6,10 @@ use crate::{
         fork_db::ForkDb,
         multi_fork_db::MultiForkDb,
     },
-    executor::CALLER,
+    executor::{
+        ASSERTION_CONTRACT,
+        CALLER,
+    },
     inspectors::{
         phevm::{
             PhEvmContext,
@@ -19,7 +22,7 @@ use crate::{
         AssertionContract,
         BlockEnv,
         Bytecode,
-        ExecutionResult,
+        EvmExecutionResult,
         SpecId,
         TxEnv,
         TxKind,
@@ -27,6 +30,7 @@ use crate::{
     store::AssertionStoreReader,
     AssertionExecutor,
     ExecutorError,
+    DEFAULT_ASSERTION_GAS_LIMIT,
 };
 
 use revm::db::EmptyDB;
@@ -52,6 +56,8 @@ pub enum FnSelectorExtractorError {
     ExecutorError(#[from] ExecutorError<Infallible>),
     #[error("Failed to call fnSelectors function")]
     FnSelectorCallFailed,
+    #[error("Failed to deploy assertion contract")]
+    AssertionContractDeployError,
 }
 
 /// Extracts [`AssertionContract`] from a given assertion contract's deployment bytecode.
@@ -59,17 +65,18 @@ pub enum FnSelectorExtractorError {
 pub struct AssertionContractExtractor {
     executor: AssertionExecutor<EmptyDB>,
     empty_multi_fork: MultiForkDb<ForkDb<EmptyDB>>,
+    gas_limit: u64,
 }
 
 impl Default for AssertionContractExtractor {
     fn default() -> Self {
-        Self::new(SpecId::LATEST, 1)
+        Self::new(SpecId::LATEST, 1, DEFAULT_ASSERTION_GAS_LIMIT)
     }
 }
 
 impl AssertionContractExtractor {
     /// Creates a new instance of the extractor with the specified spec id.
-    pub fn new(spec_id: SpecId, chain_id: u64) -> Self {
+    pub fn new(spec_id: SpecId, chain_id: u64, gas_limit: u64) -> Self {
         let empty_db = EmptyDB::default();
         let fork = ForkDb::new(empty_db);
         let empty_multi_fork = MultiForkDb::new(fork.clone(), fork);
@@ -85,8 +92,10 @@ impl AssertionContractExtractor {
                 spec_id,
                 chain_id,
                 assertion_store_reader: unused_reader,
+                assertion_gas_limit: gas_limit,
             },
             empty_multi_fork,
+            gas_limit,
         }
     }
 
@@ -105,21 +114,26 @@ impl AssertionContractExtractor {
         };
 
         // Deploy the contract first
-        let assertion_address = self.executor.deploy_assertion_contract(
+        let result = self.executor.deploy_assertion_contract(
             block_env.clone(),
             assertion_code.clone(),
             &mut multi_fork_db,
             binding,
         )?;
 
+        if !result.is_success() {
+            return Err(FnSelectorExtractorError::AssertionContractDeployError);
+        }
+
         let inspector = PhEvmInspector::new(self.executor.spec_id, &mut multi_fork_db, binding);
 
         // Set up and execute the call
         let mut evm = new_evm(
             TxEnv {
-                transact_to: TxKind::Call(assertion_address),
+                transact_to: TxKind::Call(ASSERTION_CONTRACT),
                 caller: CALLER,
                 data: fnSelectorsCall::SELECTOR.into(),
+                gas_limit: self.gas_limit - result.gas_used(),
                 ..Default::default()
             },
             block_env.clone(),
@@ -133,7 +147,7 @@ impl AssertionContractExtractor {
 
         // Extract and decode selectors from the result
         let fn_selectors = match result.result {
-            ExecutionResult::Success { output, .. } => {
+            EvmExecutionResult::Success { output, .. } => {
                 fnSelectorsCall::abi_decode_returns(output.data(), true)?._0
             }
             _ => return Err(FnSelectorExtractorError::FnSelectorCallFailed),
@@ -151,7 +165,7 @@ impl AssertionContractExtractor {
 fn test_get_assertion_selectors() {
     use crate::test_utils::*;
 
-    let assertion_contract_extractor = AssertionContractExtractor::new(SpecId::LATEST, 1);
+    let assertion_contract_extractor = AssertionContractExtractor::default();
 
     // Test with valid assertion contract
     let assertion_contract = assertion_contract_extractor

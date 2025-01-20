@@ -189,16 +189,30 @@ const BLOCK_HASHES: &str = "block_hashes";
 const PENDING_MODIFICATIONS: &str = "pending_modifications";
 const ACTIVE_ASSERTIONS: &str = "active_assertions";
 
+/// Configuration for the `RpcStore`
+pub struct RpcStoreConfig<P> {
+    pub provider: P,
+    pub state_oracle: Address,
+    pub config: sled::Config,
+    pub da_url: String,
+    pub spec_id: SpecId,
+    pub chain_id: u64,
+    pub assertion_gas_limit: u64,
+}
+
 impl<P> RpcStore<P> {
     /// Creates a new `RpcStore` with the given provider, state oracle address, and sled config
-    pub fn new(
-        provider: P,
-        state_oracle: Address,
-        config: sled::Config,
-        da_url: impl AsRef<str>,
-        spec_id: SpecId,
-        chain_id: u64,
-    ) -> Result<Self, RpcStoreError> {
+    pub fn new(config: RpcStoreConfig<P>) -> Result<Self, RpcStoreError> {
+        let RpcStoreConfig {
+            provider,
+            state_oracle,
+            config,
+            da_url,
+            spec_id,
+            chain_id,
+            assertion_gas_limit,
+        } = config;
+
         let (tx, rx) = mpsc::channel(1_000);
 
         let reader = AssertionStoreReader::new(tx, std::time::Duration::from_secs(15));
@@ -208,7 +222,11 @@ impl<P> RpcStore<P> {
         Ok(RpcStore {
             provider,
             state_oracle,
-            assertion_contract_extractor: AssertionContractExtractor::new(spec_id, chain_id),
+            assertion_contract_extractor: AssertionContractExtractor::new(
+                spec_id,
+                chain_id,
+                assertion_gas_limit,
+            ),
             db: Mutex::new(config.open()?),
             rx: Some(rx),
             pending_read_reqs: HashMap::new(),
@@ -806,14 +824,15 @@ mod test {
         let (handle, port) = mock_da_server().await;
 
         (
-            RpcStore::new(
+            RpcStore::new(RpcStoreConfig {
                 provider,
                 state_oracle,
                 config,
-                format!("http://127.0.0.1:{port}"),
-                SpecId::LATEST,
-                1,
-            )
+                da_url: format!("http://127.0.0.1:{port}"),
+                spec_id: SpecId::LATEST,
+                chain_id: 1,
+                assertion_gas_limit: 1_000_000,
+            })
             .unwrap(),
             handle,
             anvil,
