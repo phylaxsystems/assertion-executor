@@ -14,7 +14,6 @@ jobs:
           uses: docker/metadata-action@v5
           with:
             images: |
-                phylaxsystems/op-talos
                 ghcr.io/phylaxsystems/op-talos
             tags: |
                 type=sha
