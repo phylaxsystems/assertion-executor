@@ -17,7 +17,6 @@ jobs:
                 phylaxsystems/op-talos
                 ghcr.io/phylaxsystems/op-talos
             tags: |
-                latest=auto
                 type=sha
 
         - name: Checkout repository
