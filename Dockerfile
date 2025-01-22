@@ -1,4 +1,4 @@
-FROM ubuntu:20.04
+FROM ubuntu:noble
 
 RUN apt update && \
     apt upgrade --yes
