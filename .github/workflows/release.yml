@@ -13,7 +13,7 @@ jobs:
           uses: docker/metadata-action@v5
           with:
             images: |
-                ghcr.io/phylaxsystems/op-talos
+                ghcr.io/phylaxsystems/assertion-executor
             tags: |
                 latest=false
                 type=semver,pattern={{version}}
