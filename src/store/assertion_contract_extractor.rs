@@ -23,14 +23,13 @@ use crate::{
         BlockEnv,
         Bytecode,
         EvmExecutionResult,
-        SpecId,
         TxEnv,
         TxKind,
     },
     store::AssertionStoreReader,
     AssertionExecutor,
+    ExecutorConfig,
     ExecutorError,
-    DEFAULT_ASSERTION_GAS_LIMIT,
 };
 
 use revm::db::EmptyDB;
@@ -65,37 +64,30 @@ pub enum FnSelectorExtractorError {
 pub struct AssertionContractExtractor {
     executor: AssertionExecutor<EmptyDB>,
     empty_multi_fork: MultiForkDb<ForkDb<EmptyDB>>,
-    gas_limit: u64,
 }
 
 impl Default for AssertionContractExtractor {
     fn default() -> Self {
-        Self::new(SpecId::LATEST, 1, DEFAULT_ASSERTION_GAS_LIMIT)
+        Self::new(Default::default())
     }
 }
 
 impl AssertionContractExtractor {
     /// Creates a new instance of the extractor with the specified spec id.
-    pub fn new(spec_id: SpecId, chain_id: u64, gas_limit: u64) -> Self {
+    pub fn new(config: ExecutorConfig) -> Self {
         let empty_db = EmptyDB::default();
         let fork = ForkDb::new(empty_db);
         let empty_multi_fork = MultiForkDb::new(fork.clone(), fork);
 
-        let unused_reader = AssertionStoreReader::new(
-            tokio::sync::mpsc::channel(1).0,
-            std::time::Duration::default(),
-        );
+        let unused_reader = AssertionStoreReader::new(tokio::sync::mpsc::channel(1).0);
 
         Self {
             executor: AssertionExecutor {
                 db: empty_db,
-                spec_id,
-                chain_id,
+                config,
                 assertion_store_reader: unused_reader,
-                assertion_gas_limit: gas_limit,
             },
             empty_multi_fork,
-            gas_limit,
         }
     }
 
@@ -125,7 +117,8 @@ impl AssertionContractExtractor {
             return Err(FnSelectorExtractorError::AssertionContractDeployError);
         }
 
-        let inspector = PhEvmInspector::new(self.executor.spec_id, &mut multi_fork_db, binding);
+        let inspector =
+            PhEvmInspector::new(self.executor.config.spec_id, &mut multi_fork_db, binding);
 
         // Set up and execute the call
         let mut evm = new_evm(
@@ -133,12 +126,12 @@ impl AssertionContractExtractor {
                 transact_to: TxKind::Call(ASSERTION_CONTRACT),
                 caller: CALLER,
                 data: fnSelectorsCall::SELECTOR.into(),
-                gas_limit: self.gas_limit - result.gas_used(),
+                gas_limit: self.executor.config.assertion_gas_limit - result.gas_used(),
                 ..Default::default()
             },
             block_env.clone(),
-            self.executor.chain_id,
-            self.executor.spec_id,
+            self.executor.config.chain_id,
+            self.executor.config.spec_id,
             &mut multi_fork_db,
             inspector,
         );

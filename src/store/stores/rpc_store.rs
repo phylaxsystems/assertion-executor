@@ -6,7 +6,6 @@ use crate::{
         Bytecode,
         Bytes,
         FixedBytes,
-        SpecId,
         B256,
     },
     store::{
@@ -14,6 +13,11 @@ use crate::{
         AssertionStoreReadParams,
         AssertionStoreReader,
     },
+    utils::reorg_utils::{
+        check_if_reorged,
+        CheckIfReorgedError,
+    },
+    ExecutorConfig,
     ExecutorError,
 };
 use serde::{
@@ -183,6 +187,8 @@ pub enum RpcStoreError {
     ReadChannelClosed,
     #[error("Failed to send read response")]
     ReadResponseFailedToSend,
+    #[error("Check if reorged error")]
+    CheckIfReorgedError(#[from] CheckIfReorgedError),
 }
 
 const BLOCK_HASHES: &str = "block_hashes";
@@ -195,9 +201,7 @@ pub struct RpcStoreConfig<P> {
     pub state_oracle: Address,
     pub config: sled::Config,
     pub da_url: String,
-    pub spec_id: SpecId,
-    pub chain_id: u64,
-    pub assertion_gas_limit: u64,
+    pub executor_config: ExecutorConfig,
 }
 
 impl<P> RpcStore<P> {
@@ -208,25 +212,19 @@ impl<P> RpcStore<P> {
             state_oracle,
             config,
             da_url,
-            spec_id,
-            chain_id,
-            assertion_gas_limit,
+            executor_config,
         } = config;
 
         let (tx, rx) = mpsc::channel(1_000);
 
-        let reader = AssertionStoreReader::new(tx, std::time::Duration::from_secs(15));
+        let reader = AssertionStoreReader::new(tx);
 
         let da_client = HttpClientBuilder::default().build(da_url)?;
 
         Ok(RpcStore {
             provider,
             state_oracle,
-            assertion_contract_extractor: AssertionContractExtractor::new(
-                spec_id,
-                chain_id,
-                assertion_gas_limit,
-            ),
+            assertion_contract_extractor: AssertionContractExtractor::new(executor_config),
             db: Mutex::new(config.open()?),
             rx: Some(rx),
             pending_read_reqs: HashMap::new(),
@@ -423,7 +421,7 @@ impl RpcStore<RootProvider<PubSubFrontend>> {
             };
 
             //Check if new block is part of the same chain
-            let is_reorg = self.check_if_reorged(&block, last_indexed_block).await?;
+            let is_reorg = check_if_reorged(&self.provider, &block, last_indexed_block).await?;
             // If not, find the common ancestor, and remove pending modifications and block
             if is_reorg {
                 let common_ancestor = self.find_common_ancestor(parent_block_hash).await?;
@@ -466,40 +464,6 @@ impl RpcStore<RootProvider<PubSubFrontend>> {
             }
         }
         Ok(())
-    }
-
-    /// Checks if the new block is part of the same chain as the last indexed block.
-    #[instrument(skip(self))]
-    async fn check_if_reorged(
-        &self,
-        new_block: &Header,
-        last_indexed_block: BlockNumHash,
-    ) -> Result<bool, RpcStoreError> {
-        // If the new block number is the same as the last indexed block number, then
-        // block is part of the same chain
-        if new_block.number == last_indexed_block.number {
-            return Ok(last_indexed_block.hash != new_block.hash);
-        }
-
-        // Traverse parent blocks from the new block until the parent blocks number is equal to
-        // the last indexed block number.
-        let mut cursor_hash = new_block.parent_hash;
-        loop {
-            let cursor = self
-                .provider
-                .get_block_by_hash(cursor_hash, BlockTransactionsKind::Hashes)
-                .await?
-                .ok_or(RpcStoreError::ParentBlockNotFound)?;
-
-            cursor_hash = cursor.header.parent_hash;
-
-            // Continue if the parent block
-            if cursor.header.number != last_indexed_block.number {
-                continue;
-            }
-
-            return Ok(cursor.header.hash != last_indexed_block.hash);
-        }
     }
 
     /// Finds the common ancestor
@@ -755,7 +719,9 @@ mod test {
             U256,
         },
         test_utils::{
+            anvil_provider,
             deployed_bytecode,
+            mine_block,
             selector_assertion,
         },
     };
@@ -772,19 +738,12 @@ mod test {
         EthereumWallet,
         TransactionBuilder,
     };
-    use alloy_node_bindings::{
-        Anvil,
-        AnvilInstance,
-    };
-    use alloy_provider::{
-        ext::AnvilApi,
-        ProviderBuilder,
-    };
+    use alloy_node_bindings::AnvilInstance;
+    use alloy_provider::ext::AnvilApi;
     use alloy_rpc_types::TransactionRequest;
     use alloy_rpc_types_anvil::MineOptions;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolCall;
-    use alloy_transport_ws::WsConnect;
 
     use std::net::SocketAddr;
 
@@ -812,13 +771,8 @@ mod test {
         ServerHandle,
         AnvilInstance,
     ) {
-        let anvil = Anvil::new().spawn();
-        let provider = ProviderBuilder::new()
-            .on_ws(WsConnect::new(anvil.ws_endpoint()))
-            .await
-            .unwrap();
+        let (provider, anvil) = anvil_provider().await;
 
-        provider.anvil_set_auto_mine(false).await.unwrap();
         let state_oracle = Address::new([0; 20]);
         let config = Config::tmp().unwrap();
         let (handle, port) = mock_da_server().await;
@@ -829,9 +783,7 @@ mod test {
                 state_oracle,
                 config,
                 da_url: format!("http://127.0.0.1:{port}"),
-                spec_id: SpecId::LATEST,
-                chain_id: 1,
-                assertion_gas_limit: 1_000_000,
+                executor_config: ExecutorConfig::default(),
             })
             .unwrap(),
             handle,
@@ -841,7 +793,7 @@ mod test {
 
     async fn mock_da_server() -> (ServerHandle, u16) {
         let server = ServerBuilder::default()
-            .build(format!("127.0.0.1:0").parse::<SocketAddr>().unwrap())
+            .build("127.0.0.1:0".to_string().parse::<SocketAddr>().unwrap())
             .await
             .unwrap();
 
@@ -909,7 +861,7 @@ mod test {
     }
 
     async fn mine_block_write_hash(rpc_store: &RpcStore<RootProvider<PubSubFrontend>>) -> Header {
-        let header = mine_block(rpc_store).await;
+        let header = mine_block(&rpc_store.provider).await;
 
         rpc_store
             .db
@@ -924,18 +876,6 @@ mod test {
             .unwrap();
 
         header
-    }
-
-    async fn mine_block(rpc_store: &RpcStore<RootProvider<PubSubFrontend>>) -> Header {
-        let _ = rpc_store.provider.evm_mine(None).await;
-        let block = rpc_store
-            .provider
-            .get_block_by_number(Default::default(), Default::default())
-            .await
-            .unwrap()
-            .unwrap();
-
-        block.header
     }
 
     #[tokio::test]
@@ -1088,7 +1028,7 @@ mod test {
         let assertion_id = selector_assertion.code_hash;
 
         let assertion = selector_assertion.code.original_bytes();
-        submit_assertion(&rpc_store, assertion_id, assertion.clone().into())
+        submit_assertion(&rpc_store, assertion_id, assertion.clone())
             .await
             .unwrap();
 
@@ -1098,7 +1038,7 @@ mod test {
             .await
             .unwrap();
 
-        for (nonce, input) in vec![
+        for (nonce, input) in [
             (
                 0,
                 addAssertionCall::new((protocol_addr, assertion_id)).abi_encode(),
@@ -1178,100 +1118,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_check_if_reorged_no_reorg() {
-        let (rpc_store, _da, _anvil) = setup().await;
-
-        // Mine initial block
-        let block0 = rpc_store
-            .provider
-            .get_block_by_number(0.into(), Default::default())
-            .await
-            .unwrap()
-            .unwrap();
-
-        // Store initial block in db
-        rpc_store
-            .db
-            .lock()
-            .unwrap()
-            .open_tree(BLOCK_HASHES)
-            .unwrap()
-            .insert(
-                bincode::serialize(&0u64).unwrap(),
-                bincode::serialize(&block0.header.hash).unwrap(),
-            )
-            .unwrap();
-
-        // Mine next block
-        let block1 = mine_block_write_hash(&rpc_store).await;
-
-        // Check if reorged - should be false since blocks are in sequence
-        let is_reorged = rpc_store
-            .check_if_reorged(
-                &block1,
-                BlockNumHash {
-                    number: 0,
-                    hash: block0.header.hash,
-                },
-            )
-            .await
-            .unwrap();
-
-        assert!(!is_reorged);
-    }
-
-    #[tokio::test]
-    async fn test_check_if_reorged_with_reorg() {
-        let (rpc_store, _da, _anvil) = setup().await;
-
-        let block0 = rpc_store
-            .provider
-            .get_block_by_number(0.into(), Default::default())
-            .await
-            .unwrap()
-            .unwrap();
-
-        // Store it in db
-        rpc_store
-            .db
-            .lock()
-            .unwrap()
-            .open_tree(BLOCK_HASHES)
-            .unwrap()
-            .insert(
-                bincode::serialize(&0u64).unwrap(),
-                bincode::serialize(&block0.header.hash).unwrap(),
-            )
-            .unwrap();
-
-        let block1 = mine_block_write_hash(&rpc_store).await;
-
-        // Simulate reorg by modifying anvil state
-        let reorg_options = alloy_rpc_types_anvil::ReorgOptions {
-            depth: 1,
-            tx_block_pairs: vec![],
-        };
-        rpc_store.provider.anvil_reorg(reorg_options).await.unwrap();
-
-        // Mine new block on different fork
-        let new_block1 = mine_block_write_hash(&rpc_store).await;
-
-        // Check if reorged - should be true since we created a new fork
-        let is_reorged = rpc_store
-            .check_if_reorged(
-                &new_block1,
-                BlockNumHash {
-                    number: 1,
-                    hash: block1.hash,
-                },
-            )
-            .await
-            .unwrap();
-
-        assert!(is_reorged);
-    }
-
-    #[tokio::test]
     async fn test_find_common_ancestor_shallow_reorg() {
         let (rpc_store, _da, _anvil) = setup().await;
 
@@ -1280,33 +1126,28 @@ mod test {
         let _ = mine_block_write_hash(&rpc_store).await;
         let _ = mine_block_write_hash(&rpc_store).await;
 
-        // Create reorg by resetting to block 1
+        let latest_block_num = rpc_store.provider.get_block_number().await.unwrap();
+        let reorg_depth = 2;
 
+        // Create reorg by resetting to block 1
         let reorg_options = alloy_rpc_types_anvil::ReorgOptions {
-            depth: 1,
+            depth: reorg_depth,
             tx_block_pairs: vec![],
         };
 
         rpc_store.provider.anvil_reorg(reorg_options).await.unwrap();
 
         // Mine new block on different fork
-        let _ = rpc_store.provider.evm_mine(None).await;
-
-        let new_block = rpc_store
-            .provider
-            .get_block_by_number(2.into(), Default::default())
-            .await
-            .unwrap()
-            .unwrap();
+        let new_block = mine_block_write_hash(&rpc_store).await;
 
         // Find common ancestor
         let common_ancestor = rpc_store
-            .find_common_ancestor(new_block.header.inner.parent_hash)
+            .find_common_ancestor(new_block.inner.parent_hash)
             .await
             .unwrap();
 
         // Common ancestor should be block 1
-        assert_eq!(common_ancestor, 1);
+        assert_eq!(common_ancestor, latest_block_num - reorg_depth);
     }
 
     #[tokio::test]
@@ -1314,7 +1155,7 @@ mod test {
         let (rpc_store, _da, _anvil) = setup().await;
 
         // Mine block but don't store it
-        let _ = mine_block(&rpc_store).await;
+        let _ = mine_block(&rpc_store.provider).await;
 
         // Create reorg
         let reorg_options = alloy_rpc_types_anvil::ReorgOptions {
@@ -1323,7 +1164,7 @@ mod test {
         };
         rpc_store.provider.anvil_reorg(reorg_options).await.unwrap();
 
-        let new_block1 = mine_block(&rpc_store).await;
+        let new_block1 = mine_block(&rpc_store.provider).await;
 
         // Should fail to find common ancestor since no blocks are stored
         let result = rpc_store
@@ -1332,6 +1173,7 @@ mod test {
 
         assert!(matches!(result, Err(RpcStoreError::NoCommonAncestor)));
     }
+
     #[tokio::test]
     async fn test_stream_blocks_normal_case() {
         let (rpc_store, _da, _anvil) = setup().await;
@@ -1585,7 +1427,7 @@ mod test {
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(block_number + 1),
             traces: CallTracer {
-                call_inputs: call_inputs,
+                call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,
@@ -1676,7 +1518,7 @@ mod test {
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(read_req_block_number),
             traces: CallTracer {
-                call_inputs: call_inputs,
+                call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,
@@ -1756,7 +1598,7 @@ mod test {
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(block_number + 1),
             traces: CallTracer {
-                call_inputs: call_inputs,
+                call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,
@@ -1840,7 +1682,7 @@ mod test {
         let read_params = AssertionStoreReadParams {
             block_num: U256::from(block_number + 1),
             traces: CallTracer {
-                call_inputs: call_inputs,
+                call_inputs,
                 ..Default::default()
             },
             resp_tx: tx,

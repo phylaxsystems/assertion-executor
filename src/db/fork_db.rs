@@ -192,9 +192,9 @@ mod fork_db_tests {
     };
     use std::collections::HashMap;
 
-    #[test]
-    fn test_basic() {
-        let mut shared_db = SharedDB::<0>::new_test();
+    #[tokio::test]
+    async fn test_basic() {
+        let mut shared_db = SharedDB::<0>::new_test().await;
 
         let mut block_changes = BlockChanges::default();
         let mut evm_state = EvmState::default();
@@ -214,7 +214,7 @@ mod fork_db_tests {
 
         block_changes.state_changes = evm_state.clone();
 
-        let _ = shared_db.commit_block(block_changes).unwrap();
+        shared_db.commit_block(block_changes).await.unwrap();
 
         let mut fork_db = shared_db.fork();
 
@@ -242,9 +242,9 @@ mod fork_db_tests {
         );
     }
 
-    #[test]
-    fn test_storage() {
-        let mut shared_db = SharedDB::<0>::new_test();
+    #[tokio::test]
+    async fn test_storage() {
+        let mut shared_db = SharedDB::<0>::new_test().await;
 
         let mut block_changes = BlockChanges::default();
         let mut evm_state = EvmState::default();
@@ -270,7 +270,7 @@ mod fork_db_tests {
 
         block_changes.state_changes = evm_state.clone();
 
-        let _ = shared_db.commit_block(block_changes).unwrap();
+        shared_db.commit_block(block_changes).await.unwrap();
 
         let mut fork_db = shared_db.fork();
 
@@ -306,9 +306,9 @@ mod fork_db_tests {
         );
     }
 
-    #[test]
-    fn test_code_by_hash() {
-        let mut shared_db = SharedDB::<0>::new_test();
+    #[tokio::test]
+    async fn test_code_by_hash() {
+        let mut shared_db = SharedDB::<0>::new_test().await;
         let mut evm_state = EvmState::default();
         let mut fork_db = shared_db.fork();
 
@@ -322,14 +322,14 @@ mod fork_db_tests {
         );
 
         let code_bytes = random_bytes::<32>();
-        let code_hash = keccak256(&code_bytes);
+        let code_hash = keccak256(code_bytes);
         let bytecode = Bytecode::new_raw(code_bytes.into());
 
         evm_state.insert(
             Address::ZERO,
             Account {
                 info: AccountInfo {
-                    code_hash: code_hash.clone(),
+                    code_hash,
                     code: Some(bytecode.clone()),
                     ..Default::default()
                 },
@@ -337,32 +337,29 @@ mod fork_db_tests {
                 status: AccountStatus::Touched,
             },
         );
-        let _ = shared_db.commit_block(BlockChanges {
-            state_changes: evm_state,
-            ..Default::default()
-        });
+        shared_db
+            .commit_block(BlockChanges {
+                state_changes: evm_state,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
-        assert_eq!(
-            shared_db.code_by_hash_ref(code_hash.clone()).unwrap(),
-            bytecode
-        );
+        assert_eq!(shared_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
 
-        assert_eq!(
-            fork_db.code_by_hash_ref(code_hash.clone()).unwrap(),
-            bytecode
-        );
+        assert_eq!(fork_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
 
         let mut evm_state = EvmState::default();
 
         let code_bytes = random_bytes::<64>();
-        let code_hash = keccak256(&code_bytes);
+        let code_hash = keccak256(code_bytes);
         let bytecode = Bytecode::new_raw(code_bytes.into());
 
         evm_state.insert(
             Address::ZERO,
             Account {
                 info: AccountInfo {
-                    code_hash: code_hash.clone(),
+                    code_hash,
                     code: Some(bytecode.clone()),
                     ..Default::default()
                 },
@@ -374,19 +371,16 @@ mod fork_db_tests {
         fork_db.commit(evm_state);
 
         assert_eq!(
-            shared_db.code_by_hash_ref(code_hash.clone()),
+            shared_db.code_by_hash_ref(code_hash),
             Err(crate::db::NotFoundError)
         );
 
-        assert_eq!(
-            fork_db.code_by_hash_ref(code_hash.clone()).unwrap(),
-            bytecode
-        );
+        assert_eq!(fork_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
     }
 
-    #[test]
-    fn test_block_hash() {
-        let mut shared_db = SharedDB::<0>::new_test();
+    #[tokio::test]
+    async fn test_block_hash() {
+        let mut shared_db = SharedDB::<0>::new_test().await;
 
         assert_eq!(shared_db.block_hash_ref(0), Err(crate::db::NotFoundError));
 
@@ -396,13 +390,13 @@ mod fork_db_tests {
             ..Default::default()
         };
 
-        let _ = shared_db.commit_block(block_changes).unwrap();
+        shared_db.commit_block(block_changes).await.unwrap();
         assert_eq!(shared_db.block_hash_ref(0), Ok(KECCAK_EMPTY));
     }
 
-    #[test]
-    fn test_commit_self_destruct() {
-        let mut shared_db = SharedDB::<0>::new_test();
+    #[tokio::test]
+    async fn test_commit_self_destruct() {
+        let mut shared_db = SharedDB::<0>::new_test().await;
 
         let mut evm_state = EvmState::default();
 
@@ -424,10 +418,14 @@ mod fork_db_tests {
                 status: AccountStatus::Touched,
             },
         );
-        let _ = shared_db.commit_block(BlockChanges {
-            state_changes: evm_state,
-            ..Default::default()
-        });
+        shared_db
+            .commit_block(BlockChanges {
+                state_changes: evm_state,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
         let mut fork_db = shared_db.fork();
         assert_eq!(
             shared_db.storage_ref(Address::ZERO, uint!(0_U256)).unwrap(),

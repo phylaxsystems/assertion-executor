@@ -14,22 +14,26 @@ zerocopy = { version = "0.8.3", features = ["derive"] }
 tempfile = "3.13.0"
 
 # ETH deps
-alloy = "0.8.1"
-alloy-provider = { version = "0.8.1", features = ["ws", "anvil-node"] }
-alloy-sol-types = "0.8.1"
-alloy-consensus = "0.8.1"
-alloy-rpc-types = "0.8.1"
-alloy-rpc-types-anvil = "0.8.1"
-alloy-pubsub = "0.8.1"
-alloy-rpc-client = "0.8.1"
-alloy-node-bindings = "0.8.1"
-alloy-network = "0.8.1"
-alloy-signer = "0.8.1"
-alloy-signer-local = "0.8.1"
-alloy-transport = "0.8.1"
-alloy-transport-ws = "0.8.1"
+alloy = "0.8.3"
+alloy-provider = { version = "0.8.3", features = ["ws", "anvil-node"] }
+alloy-sol-types = "0.8.3"
+alloy-consensus = { version = "0.8.3", features = ["k256"] }
+alloy-rpc-types = "0.8.3"
+alloy-rpc-types-anvil = "0.8.3"
+alloy-pubsub = "0.8.3"
+alloy-rpc-client = "0.8.3"
+alloy-node-bindings = "0.8.3"
+alloy-network = "0.8.3"
+alloy-signer = "0.8.3"
+alloy-signer-local = "0.8.3"
+alloy-transport = "0.8.3"
+alloy-transport-ws = "0.8.3"
 revm_18 = { version = "18.0.0", package = "revm", optional = true }
 revm_17 = { version = "17.0.0", package = "revm", optional = true }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
+
+# For Signed Authorization versioning conflict 
+alloy-eip7702 = "0.4.2"
 
 # ETL deps
 mending = { git = "ssh://git@github.com/phylaxsystems/mending.git", rev = "3a771745f"}

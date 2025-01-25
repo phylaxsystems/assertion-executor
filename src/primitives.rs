@@ -79,6 +79,33 @@ pub struct BlockChanges {
     pub state_changes: EvmState,
 }
 
+impl BlockChanges {
+    /// Create a new BlockChanges instance, with empty state changes.
+    pub fn new(block_num: u64, block_hash: B256) -> Self {
+        Self {
+            block_num,
+            block_hash,
+            state_changes: Default::default(),
+        }
+    }
+    /// Merge `Vec<HashMap<Address, Account>>` into block changes.
+    pub fn merge_state(&mut self, evm_state: EvmState) {
+        // Process states in order so later states override earlier ones for overlapping values
+        for (key, value) in evm_state {
+            if let Some(existing_account) = self.state_changes.get_mut(&key) {
+                // Update account info and status from latest
+                existing_account.info = value.info;
+                // Update account info and status from latest
+                existing_account.status = value.status;
+                // Merge storage - keep old slots but override with new values when they exist
+                existing_account.storage.extend(value.storage);
+            } else {
+                self.state_changes.insert(key, value);
+            }
+        }
+    }
+}
+
 ///code_by_hash mapping is currently append only.
 ///Code hashes can only be removed if all accounts with that code hash are self destructed, or
 ///reorged out of creation.
@@ -291,5 +318,230 @@ mod tests {
 
         // The pruned values should be empty
         assert!(pruned.value_history.is_empty());
+    }
+}
+#[cfg(test)]
+mod test_merge_state {
+    use super::*;
+
+    use std::str::FromStr;
+
+    use std::collections::HashMap;
+
+    // Helper functions remain the same
+    fn create_test_account(balance: u64, nonce: u64, code: Vec<u8>) -> Account {
+        Account {
+            info: AccountInfo {
+                balance: U256::from(balance),
+                nonce,
+                code_hash: FixedBytes::<32>::default(),
+                code: Some(Bytecode::LegacyRaw(code.into())),
+            },
+            status: AccountStatus::default(),
+            storage: HashMap::from_iter([]),
+        }
+    }
+
+    fn create_storage_slot(value: u64) -> EvmStorageSlot {
+        EvmStorageSlot::new(U256::from(value))
+    }
+
+    fn addr(s: &str) -> Address {
+        Address::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn test_merge_storage_changes() {
+        let mut state0 = HashMap::from_iter([]);
+        let mut state1 = HashMap::from_iter([]);
+        let mut state2 = HashMap::from_iter([]);
+
+        let addr = addr("0x1000000000000000000000000000000000000000");
+
+        // Initial state
+        let mut account0 = create_test_account(100, 1, vec![0x60]);
+        account0
+            .storage
+            .insert(U256::from(1), create_storage_slot(10));
+        account0
+            .storage
+            .insert(U256::from(2), create_storage_slot(20));
+        state0.insert(addr, account0);
+
+        // State update 1
+        let mut account1 = create_test_account(200, 2, vec![0x60]);
+        account1
+            .storage
+            .insert(U256::from(2), create_storage_slot(25)); // Modify existing slot
+        account1
+            .storage
+            .insert(U256::from(3), create_storage_slot(30)); // Add new slot
+        state1.insert(addr, account1);
+
+        // State update 2 (latest)
+        let mut account2 = create_test_account(300, 3, vec![0x60]);
+        account2
+            .storage
+            .insert(U256::from(3), create_storage_slot(35)); // Modify slot from state1
+        account2
+            .storage
+            .insert(U256::from(4), create_storage_slot(40)); // Add new slot
+        state2.insert(addr, account2);
+
+        let block_changes = BlockChanges {
+            state_changes: state0,
+            ..Default::default()
+        };
+
+        // States pushed in order [state0, state1, state2]
+        // After merging, we expect:
+        // - Account info from state2 (balance 300, nonce 3)
+        // - Combined storage with latest values taking precedence:
+        //   - slot 1 = 10 (from state0, unchanged)
+        //   - slot 2 = 25 (from state1, overrode state0)
+        //   - slot 3 = 35 (from state2, overrode state1)
+        //   - slot 4 = 40 (from state2)
+        let mut merged = block_changes.clone();
+        merged.merge_state(state1);
+        merged.merge_state(state2);
+
+        let merged_account = merged.state_changes.get(&addr).unwrap();
+
+        // Verify account info is from latest state
+        assert_eq!(
+            merged_account.info.balance,
+            U256::from(300),
+            "Should have latest balance"
+        );
+        assert_eq!(merged_account.info.nonce, 3, "Should have latest nonce");
+
+        // Verify storage has combined values with latest taking precedence
+        assert_eq!(
+            merged_account
+                .storage
+                .get(&U256::from(1))
+                .expect("Storage slot 1 should exist")
+                .present_value(),
+            U256::from(10),
+            "Should keep original value from state0"
+        );
+
+        assert_eq!(
+            merged_account
+                .storage
+                .get(&U256::from(2))
+                .expect("Storage slot 2 should exist")
+                .present_value(),
+            U256::from(25),
+            "Should have state1's value for slot 2"
+        );
+
+        assert_eq!(
+            merged_account
+                .storage
+                .get(&U256::from(3))
+                .expect("Storage slot 3 should exist")
+                .present_value(),
+            U256::from(35),
+            "Should have state2's value for slot 3"
+        );
+
+        assert_eq!(
+            merged_account
+                .storage
+                .get(&U256::from(4))
+                .expect("Storage slot 4 should exist")
+                .present_value(),
+            U256::from(40),
+            "Should have state2's value for slot 4"
+        );
+    }
+
+    #[test]
+    fn test_merge_status_changes() {
+        let mut state0 = HashMap::from_iter([]);
+        let mut state1 = HashMap::from_iter([]);
+
+        let addr = addr("0x1000000000000000000000000000000000000000");
+
+        // Initial state
+        let mut account0 = create_test_account(100, 1, vec![]);
+        account0.status = AccountStatus::default();
+        state0.insert(addr, account0);
+
+        // Updated state (latest)
+        let mut account1 = create_test_account(200, 2, vec![]);
+        account1.status = AccountStatus::default();
+        state1.insert(addr, account1);
+
+        let block_changes = BlockChanges {
+            state_changes: state0,
+            ..Default::default()
+        };
+
+        let mut merged = block_changes.clone();
+        merged.merge_state(state1);
+
+        let merged_account = merged.state_changes.get(&addr).unwrap();
+
+        // Verify account info is from latest state
+        assert_eq!(
+            merged_account.info.balance,
+            U256::from(200),
+            "Should have latest balance"
+        );
+        assert_eq!(merged_account.info.nonce, 2, "Should have latest nonce");
+    }
+
+    #[test]
+    fn test_merge_new_accounts() {
+        let mut state0 = HashMap::from_iter([]);
+        let mut state1 = HashMap::from_iter([]);
+
+        let addr1 = addr("0x1000000000000000000000000000000000000000");
+        let addr2 = addr("0x2000000000000000000000000000000000000000");
+
+        // First state has account1
+        let account1_initial = create_test_account(100, 1, vec![]);
+        state0.insert(addr1, account1_initial);
+
+        // Second state updates account1 and adds account2
+        let account1_updated = create_test_account(200, 2, vec![]);
+        let account2 = create_test_account(300, 1, vec![]);
+
+        state1.insert(addr1, account1_updated);
+        state1.insert(addr2, account2);
+
+        let block_changes = BlockChanges {
+            state_changes: state0,
+            ..Default::default()
+        };
+
+        let mut merged = block_changes.clone();
+        merged.merge_state(state1);
+
+        // Verify account1 has latest state
+        let merged_account1 = merged.state_changes.get(&addr1).unwrap();
+        assert_eq!(
+            merged_account1.info.balance,
+            U256::from(200),
+            "Account1 should have latest balance"
+        );
+        assert_eq!(
+            merged_account1.info.nonce, 2,
+            "Account1 should have latest nonce"
+        );
+
+        // Verify account2 exists with its state
+        let merged_account2 = merged.state_changes.get(&addr2).unwrap();
+        assert_eq!(
+            merged_account2.info.balance,
+            U256::from(300),
+            "Account2 should be present with its balance"
+        );
+        assert_eq!(
+            merged_account2.info.nonce, 1,
+            "Account2 should be present with its nonce"
+        );
     }
 }

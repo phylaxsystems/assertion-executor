@@ -5,21 +5,15 @@ use crate::{
         U256,
     },
 };
-use std::time::Duration;
-use tokio::{
-    sync::{
-        mpsc,
-        oneshot,
-    },
-    time::timeout,
+use tokio::sync::{
+    mpsc,
+    oneshot,
 };
 
 /// A reader for matching [`CallTracer`] against assertions in the [`AssertionStore`](crate::store::AssertionStore) at a specific block.
 #[derive(Debug, Clone)]
 pub struct AssertionStoreReader {
     pub(super) req_tx: mpsc::Sender<AssertionStoreReadParams>,
-    /// Timeout duration for read operations,
-    timeout: Duration,
 }
 
 /// Parameters for reading assertions from the assertion store.
@@ -42,14 +36,12 @@ pub enum AssertionStoreReaderError {
     SendError(#[from] mpsc::error::SendError<AssertionStoreReadParams>),
     #[error("Failed to receive response from assertion store")]
     RecvError(#[from] oneshot::error::RecvError),
-    #[error("Timeout waiting for response after {0:?}")]
-    Timeout(Duration),
 }
 
 impl AssertionStoreReader {
-    /// Creates a new reader with the specified timeout
-    pub fn new(req_tx: mpsc::Sender<AssertionStoreReadParams>, timeout: Duration) -> Self {
-        Self { req_tx, timeout }
+    /// Creates a new reader
+    pub fn new(req_tx: mpsc::Sender<AssertionStoreReadParams>) -> Self {
+        Self { req_tx }
     }
 
     /// Matches the given traces from the [`CallTracer`] with the assertions in the assertion store,
@@ -72,47 +64,21 @@ impl AssertionStoreReader {
             })
             .await?;
 
-        // Wait for response with timeout
-        match timeout(self.timeout, resp_rx).await {
-            Ok(result) => Ok(result?),
-            Err(_elapsed) => Err(AssertionStoreReaderError::Timeout(self.timeout)),
-        }
+        // Wait for response
+        resp_rx.await.map_err(|e| e.into())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::sleep;
-
-    #[tokio::test]
-    async fn test_reader_timeout() {
-        // Create channels with small buffer
-        let (tx, mut rx) = mpsc::channel(1);
-
-        // Create reader with very short timeout
-        let mut reader = AssertionStoreReader::new(tx, Duration::from_millis(100));
-
-        // Spawn a task that deliberately delays processing the request
-        tokio::spawn(async move {
-            let params = rx.recv().await.unwrap();
-            sleep(Duration::from_secs(1)).await; // Delay longer than timeout
-            let _ = params.resp_tx.send(vec![]); // This send will happen after timeout
-        });
-
-        // Attempt to read with timeout
-        let result = reader.read(U256::ZERO, CallTracer::default()).await;
-
-        assert!(matches!(result, Err(AssertionStoreReaderError::Timeout(_))));
-    }
 
     #[tokio::test]
     async fn test_reader_success() {
         // Create channels
         let (tx, mut rx) = mpsc::channel(1);
 
-        // Create reader with reasonable timeout
-        let mut reader = AssertionStoreReader::new(tx, Duration::from_secs(1));
+        let mut reader = AssertionStoreReader::new(tx);
 
         // Spawn a task that processes the request immediately
         tokio::spawn(async move {

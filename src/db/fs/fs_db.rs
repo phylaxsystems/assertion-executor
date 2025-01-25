@@ -105,13 +105,6 @@ impl FsDb {
         })
     }
 
-    /// Creates a new ephemeral database.
-    pub fn new_ephemeral() -> Result<Self, FsDbError> {
-        Ok(Self {
-            db: Config::tmp()?.open()?,
-        })
-    }
-
     /// Create a new file-system database from a sled config.
     pub fn new_with_config(config: Config) -> Result<Self, FsDbError> {
         Ok(Self { db: config.open()? })
@@ -457,8 +450,8 @@ mod tests {
     #[cfg(test)]
     mod test_handle_reorg {
         use super::*;
-        #[test]
-        fn test_block_numbers_to_remove() {
+        #[tokio::test]
+        async fn test_block_numbers_to_remove() {
             let db = FsDb::new_test();
 
             for block_num in 1..=3 {
@@ -503,8 +496,8 @@ mod tests {
             assert_eq!(block_hash_tree.len(), 1);
         }
         // Test account value histories
-        #[test]
-        fn test_account_value_histories() {
+        #[tokio::test]
+        async fn test_account_value_histories() {
             let db = FsDb::new_test();
 
             let address = Address::from([1; 20]);
@@ -555,8 +548,8 @@ mod tests {
             );
         }
         //Test storage value histories
-        #[test]
-        fn test_storage_val_history() {
+        #[tokio::test]
+        async fn test_storage_val_history() {
             let db = FsDb::new_test();
 
             // Create test data
@@ -608,8 +601,8 @@ mod tests {
     mod test_commit_block {
         use super::*;
 
-        #[test]
-        fn test_block_changes() {
+        #[tokio::test]
+        async fn test_block_changes() {
             let db = FsDb::new_test();
 
             //Insert block changes @ 1
@@ -658,8 +651,8 @@ mod tests {
             assert_eq!(block_changes_tree.len(), 1);
         }
 
-        #[test]
-        fn test_insert_code_hashes() {
+        #[tokio::test]
+        async fn test_insert_code_hashes() {
             let db = FsDb::new_test();
 
             let code_hashes_to_insert = vec![
@@ -691,8 +684,8 @@ mod tests {
             }
         }
 
-        #[test]
-        fn test_storage_val_history() {
+        #[tokio::test]
+        async fn test_storage_val_history() {
             let db = FsDb::new_test();
 
             // Create test data
@@ -729,8 +722,8 @@ mod tests {
         }
 
         //Test storage value histories when update is empty or only contains a zero value
-        #[test]
-        fn test_storage_val_history_removal() {
+        #[tokio::test]
+        async fn test_storage_val_history_removal() {
             let db = FsDb::new_test();
 
             let mut value_history = ValueHistory::default();
@@ -774,8 +767,8 @@ mod tests {
             }
         }
 
-        #[test]
-        fn test_account_val_history() {
+        #[tokio::test]
+        async fn test_account_val_history() {
             let db = FsDb::new_test();
 
             // Create test data

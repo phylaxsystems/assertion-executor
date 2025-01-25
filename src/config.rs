@@ -2,7 +2,7 @@ use clap_derive::Parser;
 
 #[derive(Parser, Debug, Clone, Default)]
 #[command(author, version, about, long_about = None)]
-pub struct ExecutorConfig {
+pub struct SharedDbConfig {
     /// Path of the database, defaults to `./executor`.
     #[arg(long, default_value = "./executor")]
     pub db_path: String,
@@ -61,7 +61,8 @@ macro_rules! init_mem_db {
 macro_rules! create_shared_db {
     (
         $mem_db:expr,
-        $config:expr
+        $config:expr,
+        $provider:expr
     ) => {{
         let sled_config = sled::Config::new()
             .path($config.db_path.clone())
@@ -69,7 +70,12 @@ macro_rules! create_shared_db {
             .zstd_compression_level($config.zstd_compression_level)
             .entry_cache_percent($config.entry_cache_percent);
 
-        let db = match assertion_executor::db::SharedDB::new_with_config($mem_db, sled_config) {
+        let db = match assertion_executor::db::SharedDB::new_with_config(
+            $mem_db,
+            sled_config,
+            $provider,
+            Default::default(),
+        ) {
             Ok(db) => db,
             Err(e) => {
                 panic!("Failed to open sled database: {}", e);
@@ -78,7 +84,7 @@ macro_rules! create_shared_db {
 
         if $config.reth_path.is_some() {
             println!("Exporting memory db to sled db...");
-            db.commit_mem_db_to_fs()?;
+            db.commit_mem_db_to_fs().await?;
             println!("Done~!");
             println!("Exiting...");
             return Ok(());

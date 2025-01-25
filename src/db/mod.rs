@@ -14,7 +14,7 @@ pub use shared_db::SharedDB;
 mod error;
 pub use error::NotFoundError;
 
-pub use revm::{
+pub use revm::db::{
     Database,
     DatabaseCommit,
     DatabaseRef,

@@ -3,7 +3,6 @@ use crate::{
         Address,
         AssertionContract,
         Bytecode,
-        SpecId,
         B256,
     },
     store::{
@@ -14,7 +13,7 @@ use crate::{
         AssertionStoreReadParams,
         AssertionStoreReader,
     },
-    DEFAULT_ASSERTION_GAS_LIMIT,
+    ExecutorConfig,
 };
 
 use tracing::{
@@ -43,12 +42,19 @@ use tokio::{
 ///         AssertionStoreReader,
 ///         MockStore,
 ///     },
+///     ExecutorConfig,
 /// };
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     let chain_id = 1;
-///     let mut store = MockStore::new(SpecId::LATEST, chain_id);
+///     // Create executor config
+///     let executor_config = ExecutorConfig {
+///         chain_id: 1,
+///         spec_id: SpecId::LATEST,
+///         assertion_gas_limit: 1_000_000,
+///     };
+///
+///     let mut store = MockStore::new(executor_config);
 ///     // Populate store
 ///     store.insert(Address::default(), vec![Bytecode::default()]);
 ///
@@ -65,14 +71,10 @@ pub struct MockStore {
 }
 
 impl MockStore {
-    pub fn new(spec_id: SpecId, chain_id: u64) -> Self {
+    pub fn new(executor_config: ExecutorConfig) -> Self {
         Self {
             store: HashMap::new(),
-            assertion_contract_extractor: AssertionContractExtractor::new(
-                spec_id,
-                chain_id,
-                DEFAULT_ASSERTION_GAS_LIMIT,
-            ),
+            assertion_contract_extractor: AssertionContractExtractor::new(executor_config),
         }
     }
 
@@ -121,10 +123,7 @@ impl MockStore {
             }
         });
 
-        (
-            AssertionStoreReader::new(tx.clone(), std::time::Duration::from_secs(15)),
-            handle,
-        )
+        (AssertionStoreReader::new(tx.clone()), handle)
     }
 }
 

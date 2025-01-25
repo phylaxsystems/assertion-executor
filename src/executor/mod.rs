@@ -1,4 +1,4 @@
-pub mod builder;
+pub mod config;
 
 use crate::{
     build_evm::new_evm,
@@ -33,13 +33,13 @@ use crate::{
         TxKind,
     },
     store::AssertionStoreReader,
+    ExecutorConfig,
 };
 
 use rayon::prelude::{
     IntoParallelIterator,
     ParallelIterator,
 };
-use revm::primitives::SpecId;
 
 use tracing::{
     instrument,
@@ -58,9 +58,22 @@ pub const ASSERTION_CONTRACT: Address = address!("63f9abbe8aa6ba1261ef3b0cbfb25a
 pub struct AssertionExecutor<DB> {
     pub db: DB,
     pub assertion_store_reader: AssertionStoreReader,
-    pub spec_id: SpecId,
-    pub chain_id: u64,
-    pub assertion_gas_limit: u64,
+    pub config: ExecutorConfig,
+}
+
+impl<DB> AssertionExecutor<DB> {
+    /// Creates a new assertion executor.
+    pub fn new(
+        db: DB,
+        assertion_store_reader: AssertionStoreReader,
+        config: ExecutorConfig,
+    ) -> Self {
+        Self {
+            db,
+            assertion_store_reader,
+            config,
+        }
+    }
 }
 
 type ExecutorResult<T, DB> = Result<T, ExecutorError<<DB as DatabaseRef>::Error>>;
@@ -187,7 +200,7 @@ where
             return Ok(result);
         }
 
-        let remaining_gas = self.assertion_gas_limit - execution_result.gas_used();
+        let remaining_gas = self.config.assertion_gas_limit - execution_result.gas_used();
 
         //Execute the functions in parallel against cloned forks of the intermediate state, with
         //the deployed assertion contract as the target.
@@ -196,7 +209,8 @@ where
             .map(|fn_selector: &FixedBytes<4>| {
                 let mut multi_fork_db = multi_fork_db.clone();
 
-                let inspector = PhEvmInspector::new(self.spec_id, &mut multi_fork_db, context);
+                let inspector =
+                    PhEvmInspector::new(self.config.spec_id, &mut multi_fork_db, context);
                 let mut evm = new_evm(
                     TxEnv {
                         transact_to: TxKind::Call(ASSERTION_CONTRACT),
@@ -206,8 +220,8 @@ where
                         ..Default::default()
                     },
                     block_env.clone(),
-                    self.chain_id,
-                    self.spec_id,
+                    self.config.chain_id,
+                    self.config.spec_id,
                     &mut multi_fork_db,
                     inspector,
                 );
@@ -252,8 +266,8 @@ where
         let mut evm = new_evm(
             tx_env,
             block_env,
-            self.chain_id,
-            self.spec_id,
+            self.config.chain_id,
+            self.config.spec_id,
             &mut db,
             CallTracer::default(),
         );
@@ -280,17 +294,17 @@ where
             transact_to: TxKind::Create,
             caller: CALLER,
             data: constructor_code.original_bytes(),
-            gas_limit: self.assertion_gas_limit,
+            gas_limit: self.config.assertion_gas_limit,
             ..Default::default()
         };
 
-        let inspector = PhEvmInspector::new(self.spec_id, multi_fork_db, context);
+        let inspector = PhEvmInspector::new(self.config.spec_id, multi_fork_db, context);
 
         let result = new_evm(
             tx_env,
             block_env,
-            self.chain_id,
-            self.spec_id,
+            self.config.chain_id,
+            self.config.spec_id,
             multi_fork_db,
             inspector,
         )
@@ -320,17 +334,16 @@ mod test {
         },
         store::MockStore,
         test_utils::*,
-        AssertionExecutorBuilder,
     };
 
     use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_deploy_assertion_contract() {
-        let shared_db = SharedDB::<0>::new_test();
+        let shared_db = SharedDB::<0>::new_test().await;
 
         let executor =
-            AssertionExecutorBuilder::new(shared_db.clone(), MockStore::default().reader()).build();
+            ExecutorConfig::default().build(shared_db.clone(), MockStore::default().reader());
 
         let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
@@ -390,7 +403,7 @@ mod test {
 
     #[tokio::test]
     async fn test_execute_forked_tx() {
-        let mut shared_db = SharedDB::<0>::new_test();
+        let mut shared_db = SharedDB::<0>::new_test().await;
 
         let block_changes = BlockChanges {
             state_changes: HashMap::from_iter(vec![(
@@ -402,10 +415,11 @@ mod test {
             )]),
             ..Default::default()
         };
-        let _ = shared_db.commit_block(block_changes);
+
+        shared_db.commit_block(block_changes).await.unwrap();
 
         let executor =
-            AssertionExecutorBuilder::new(shared_db.clone(), MockStore::default().reader()).build();
+            ExecutorConfig::default().build(shared_db.clone(), MockStore::default().reader());
 
         let mut fork_db = shared_db.fork();
 
@@ -437,20 +451,23 @@ mod test {
 
     #[tokio::test]
     async fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
-        let mut shared_db = SharedDB::<0>::new_test();
-        let _ = shared_db.commit_block(BlockChanges {
-            state_changes: HashMap::from_iter(
-                vec![(
-                    COUNTER_ADDRESS,
-                    Account {
-                        info: counter_acct_info(),
-                        ..Default::default()
-                    },
-                )]
-                .into_iter(),
-            ),
-            ..Default::default()
-        });
+        let mut shared_db = SharedDB::<0>::new_test().await;
+        shared_db
+            .commit_block(BlockChanges {
+                state_changes: HashMap::from_iter(
+                    vec![(
+                        COUNTER_ADDRESS,
+                        Account {
+                            info: counter_acct_info(),
+                            ..Default::default()
+                        },
+                    )]
+                    .into_iter(),
+                ),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         let mut assertion_store = MockStore::default();
 
@@ -461,8 +478,7 @@ mod test {
             )
             .unwrap();
 
-        let mut executor =
-            AssertionExecutorBuilder::new(shared_db, assertion_store.reader()).build();
+        let mut executor = ExecutorConfig::default().build(shared_db, assertion_store.reader());
 
         let block_env = BlockEnv {
             number: uint!(1_U256),

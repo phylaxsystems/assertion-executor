@@ -254,7 +254,7 @@ mod test_multi_fork {
         let address: Address = random_bytes::<20>().into();
 
         evm_state.insert(
-            address.clone(),
+            address,
             Account {
                 info: AccountInfo {
                     balance: uint!(1000_U256),
@@ -331,7 +331,7 @@ mod test_multi_fork {
 
         let address: Address = random_bytes::<20>().into();
         active_journaled_state.state.insert(
-            address.clone(),
+            address,
             Account {
                 info: AccountInfo {
                     balance: uint!(1000_U256),

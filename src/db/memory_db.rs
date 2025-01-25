@@ -777,8 +777,8 @@ mod test {
 
             let memory_db = new_from_exported_sled::<1024, 0>(&sled_db)?;
 
-            assert!(memory_db.storage.contains_key::<Address>(&address.into()));
-            let stored_storage = memory_db.storage.get::<Address>(&address.into()).unwrap();
+            assert!(memory_db.storage.contains_key::<Address>(&address));
+            let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
             assert_eq!(stored_storage.len(), storage_entries.len());
 
             for (key, value) in storage_entries {

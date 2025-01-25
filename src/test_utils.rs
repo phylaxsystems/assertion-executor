@@ -1,33 +1,49 @@
 #![cfg(any(test, feature = "test"))]
 
-use crate::primitives::{
-    AccountInfo,
-    Address,
-    AssertionContract,
-    Bytecode,
-    TxEnv,
-    TxKind,
-    U256,
-};
-
-use revm::primitives::{
-    fixed_bytes,
-    hex,
-    keccak256,
-    Bytes,
-    FixedBytes,
-    ResultAndState,
-};
-
 use crate::{
     db::SharedDB,
     primitives::{
         address,
+        fixed_bytes,
+        hex,
+        keccak256,
+        AccountInfo,
+        Address,
+        AssertionContract,
         BlockEnv,
+        Bytecode,
+        Bytes,
+        FixedBytes,
+        ResultAndState,
+        TxEnv,
+        TxKind,
+        U256,
     },
     store::MockStore,
-    AssertionExecutorBuilder,
+    ExecutorConfig,
 };
+
+use alloy_rpc_types::{
+    BlockId,
+    BlockTransactionsKind,
+    Header,
+};
+
+use alloy_node_bindings::{
+    Anvil,
+    AnvilInstance,
+};
+
+use alloy_pubsub::PubSubFrontend;
+
+use alloy_provider::{
+    ext::AnvilApi,
+    Provider,
+    ProviderBuilder,
+    RootProvider,
+};
+
+use alloy_transport_ws::WsConnect;
 
 /// Deployed bytecode of contract-mocks/src/SimpleCounterAssertion.sol:Counter
 pub const COUNTER: &str = "SimpleCounterAssertion.sol:Counter";
@@ -131,7 +147,7 @@ pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
     let caller = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
     let target = address!("118dd24a3b0d02f90d8896e242d3838b4d37c181");
 
-    let db = SharedDB::<0>::new_test();
+    let db = SharedDB::<0>::new_test().await;
 
     let mut assertion_store = MockStore::default();
 
@@ -145,7 +161,7 @@ pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
         .insert(target, vec![Bytecode::LegacyRaw(assertion_code)])
         .unwrap();
 
-    let mut executor = AssertionExecutorBuilder::new(db, assertion_store.reader()).build();
+    let mut executor = ExecutorConfig::default().build(db, assertion_store.reader());
 
     // Deploy mock using bytecode of contract-mocks/src/GetLogsTest.sol:Target
     let target_deployment_tx = TxEnv {
@@ -173,4 +189,27 @@ pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
         .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)
         .await
         .unwrap()
+}
+/// Mines a block from an anvil provider, returning the block header
+pub async fn mine_block(provider: &RootProvider<PubSubFrontend>) -> Header {
+    let _ = provider.evm_mine(None).await;
+    let block = provider
+        .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
+        .await
+        .unwrap()
+        .unwrap();
+
+    block.header
+}
+
+/// Get anvil provider
+pub async fn anvil_provider() -> (RootProvider<PubSubFrontend>, AnvilInstance) {
+    let anvil = Anvil::new().spawn();
+    let provider = ProviderBuilder::new()
+        .on_ws(WsConnect::new(anvil.ws_endpoint()))
+        .await
+        .unwrap();
+
+    provider.anvil_set_auto_mine(false).await.unwrap();
+    (provider, anvil)
 }

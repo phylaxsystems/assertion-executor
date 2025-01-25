@@ -1,31 +1,28 @@
 use crate::{
-    db::PhDB,
     store::AssertionStoreReader,
     AssertionExecutor,
-    DEFAULT_ASSERTION_GAS_LIMIT,
 };
 use revm::primitives::SpecId;
 
-pub struct AssertionExecutorBuilder<DB> {
-    pub db: DB,
-    pub assertion_store_reader: AssertionStoreReader,
+/// Contains the configuration for the assertion executor.
+#[derive(Debug, Clone)]
+pub struct ExecutorConfig {
     pub spec_id: SpecId,
     pub chain_id: u64,
     pub assertion_gas_limit: u64,
 }
 
-//TODO: Extend with any necessary configuration
-impl<DB: PhDB> AssertionExecutorBuilder<DB> {
-    pub fn new(db: DB, assertion_store_reader: AssertionStoreReader) -> Self {
-        AssertionExecutorBuilder {
-            db,
-            assertion_store_reader,
+impl Default for ExecutorConfig {
+    fn default() -> Self {
+        ExecutorConfig {
             spec_id: SpecId::LATEST,
             chain_id: 1,
-            assertion_gas_limit: DEFAULT_ASSERTION_GAS_LIMIT,
+            assertion_gas_limit: 3_000_000,
         }
     }
+}
 
+impl ExecutorConfig {
     /// Set the assertion gas limit for the assertion executor
     pub fn with_assertion_gas_limit(mut self, gas_limit: u64) -> Self {
         self.assertion_gas_limit = gas_limit;
@@ -45,13 +42,15 @@ impl<DB: PhDB> AssertionExecutorBuilder<DB> {
     }
 
     /// Build the assertion executor
-    pub fn build(self) -> AssertionExecutor<DB> {
+    pub fn build<DB>(
+        self,
+        db: DB,
+        assertion_store_reader: AssertionStoreReader,
+    ) -> AssertionExecutor<DB> {
         AssertionExecutor {
-            db: self.db,
-            assertion_store_reader: self.assertion_store_reader,
-            spec_id: self.spec_id,
-            chain_id: self.chain_id,
-            assertion_gas_limit: self.assertion_gas_limit,
+            db,
+            assertion_store_reader,
+            config: self.clone(),
         }
     }
 }

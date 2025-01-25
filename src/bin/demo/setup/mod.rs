@@ -14,7 +14,6 @@ use assertion_executor::{
     db::SharedDB,
     primitives::BlockChanges,
     AssertionExecutor,
-    AssertionExecutorBuilder,
 };
 
 use std::path::PathBuf;
@@ -27,14 +26,14 @@ pub async fn setup() -> AssertionExecutor<SharedDB<5>> {
     let db = SharedDB::<5>::new(&PathBuf::from("data")).unwrap();
 
     let assertion_store_reader = setup_assertion_store();
-    let mut executor = AssertionExecutorBuilder::new(db, assertion_store_reader).build();
+    let mut executor = ExecutorConfig::default().build(db, assertion_store_reader);
 
     // Create a block changes object with contract deployments and state deps
     let mut block_changes = BlockChanges::default();
 
     deploy_contracts(&mut executor, &mut block_changes);
     setup_state_deps(&mut executor, &mut block_changes);
-    let _ = executor.db.commit_block(block_changes).unwrap();
+    executor.db.commit_block(block_changes).await.unwrap();
 
     executor
 }
