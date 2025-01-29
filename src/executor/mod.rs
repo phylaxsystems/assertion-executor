@@ -1,5 +1,7 @@
 pub mod config;
 
+use std::sync::atomic::AtomicU64;
+
 use crate::{
     build_evm::new_evm,
     db::{
@@ -21,6 +23,7 @@ use crate::{
         address,
         Address,
         AssertionContract,
+        AssertionContractExecution,
         AssertionExecutionResult,
         AssertionId,
         AssertionResult,
@@ -31,6 +34,7 @@ use crate::{
         ResultAndState,
         TxEnv,
         TxKind,
+        ValidateResult,
     },
     store::AssertionStoreReader,
     ExecutorConfig,
@@ -92,7 +96,7 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> ExecutorResult<Option<ResultAndState>, DB> {
+    ) -> ExecutorResult<ValidateResult, DB> {
         let pre_tx_db = fork_db.clone();
 
         let mut post_tx_db = fork_db.clone();
@@ -101,7 +105,11 @@ where
             self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
 
         if !result_and_state.result.is_success() {
-            return Ok(Some(result_and_state));
+            return Ok(ValidateResult {
+                result_and_state: Some(result_and_state),
+                total_assertion_gas: 0,
+                total_assertions_ran: 0,
+            });
         }
 
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
@@ -110,13 +118,25 @@ where
         let results = self
             .execute_assertions(block_env, multi_fork_db, &context)
             .await?;
+        let total_assertion_gas = results.total_assertion_gas;
+        let total_assertions_ran = results.total_assertions_ran;
 
-        match results.iter().all(|r| r.is_success()) {
+        match results.assertion_results.iter().all(|r| r.is_success()) {
             true => {
                 fork_db.commit(result_and_state.state.clone());
-                Ok(Some(result_and_state))
+                Ok(ValidateResult {
+                    result_and_state: Some(result_and_state),
+                    total_assertion_gas,
+                    total_assertions_ran,
+                })
             }
-            false => Ok(None),
+            false => {
+                Ok(ValidateResult {
+                    result_and_state: None,
+                    total_assertion_gas,
+                    total_assertions_ran,
+                })
+            }
         }
     }
 
@@ -126,7 +146,7 @@ where
         block_env: BlockEnv,
         multi_fork_db: MultiForkDb<ForkDb<DB>>,
         context: &PhEvmContext<'a>,
-    ) -> ExecutorResult<Vec<AssertionResult>, DB> {
+    ) -> ExecutorResult<AssertionContractExecution, DB> {
         // Examine contracts that were called to see if they have assertions
         // associated, and dispatch accordingly
         let mut assertion_store_reader = self.assertion_store_reader.clone();
@@ -134,8 +154,6 @@ where
         let assertions = assertion_store_reader
             .read(block_env.number, context.call_traces.clone())
             .await?;
-
-        let mut valid_results = vec![];
 
         let results = assertions
             .into_par_iter()
@@ -147,16 +165,22 @@ where
                     context,
                 )
             })
-            .collect::<Vec<ExecutorResult<Vec<AssertionResult>, DB>>>();
+            .collect::<Vec<ExecutorResult<AssertionContractExecution, DB>>>();
 
+        let mut execution_results = AssertionContractExecution::default();
         for result in results {
             match result {
-                Ok(results) => valid_results.extend(results),
+                Ok(results) => {
+                    execution_results
+                        .assertion_results
+                        .extend(results.assertion_results);
+                    execution_results.total_assertion_gas += results.total_assertion_gas;
+                }
                 Err(e) => return Err(e),
             }
         }
 
-        Ok(valid_results)
+        Ok(execution_results)
     }
 
     fn run_assertion_contract(
@@ -165,7 +189,7 @@ where
         block_env: BlockEnv,
         mut multi_fork_db: MultiForkDb<ForkDb<DB>>,
         context: &PhEvmContext,
-    ) -> ExecutorResult<Vec<AssertionResult>, DB> {
+    ) -> ExecutorResult<AssertionContractExecution, DB> {
         let AssertionContract {
             fn_selectors,
             code,
@@ -197,10 +221,21 @@ where
                     }
                 })
                 .collect::<Vec<AssertionResult>>();
-            return Ok(result);
+
+            let rax = AssertionContractExecution {
+                assertion_results: result,
+                total_assertion_gas: 0,
+                total_assertions_ran: 0,
+            };
+
+            return Ok(rax);
         }
 
-        let remaining_gas = self.config.assertion_gas_limit - execution_result.gas_used();
+        let deployment_gas = execution_result.gas_used();
+        let remaining_gas = self.config.assertion_gas_limit - deployment_gas;
+
+        let assertion_gas = AtomicU64::new(0);
+        let assertions_ran = AtomicU64::new(0);
 
         //Execute the functions in parallel against cloned forks of the intermediate state, with
         //the deployed assertion contract as the target.
@@ -235,6 +270,9 @@ where
                     code_hash: *code_hash,
                 };
 
+                assertion_gas.fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
+                assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
                 Ok(AssertionResult {
                     id,
                     result: AssertionExecutionResult::AssertionExecutionResult(result),
@@ -250,7 +288,13 @@ where
             }
         }
 
-        Ok(valid_results)
+        let rax = AssertionContractExecution {
+            assertion_results: valid_results,
+            total_assertion_gas: deployment_gas + assertion_gas.into_inner(),
+            total_assertions_ran: assertions_ran.into_inner(),
+        };
+
+        Ok(rax)
     }
 
     /// Commits a transaction against a fork of the current state.
@@ -505,7 +549,8 @@ mod test {
                 .await
                 .unwrap();
 
-            assert_eq!(result.is_some(), expected_result);
+            assert_eq!(result.result_and_state.is_some(), expected_result);
+            assert!(result.total_assertion_gas > 0);
 
             //Assert that the state of the counter contract before committing the changes
             assert_eq!(

@@ -51,6 +51,20 @@ pub struct AssertionId {
 }
 
 #[derive(Debug)]
+pub struct ValidateResult {
+    pub result_and_state: Option<ResultAndState>,
+    pub total_assertion_gas: u64,
+    pub total_assertions_ran: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct AssertionContractExecution {
+    pub assertion_results: Vec<AssertionResult>,
+    pub total_assertion_gas: u64,
+    pub total_assertions_ran: u64,
+}
+
+#[derive(Debug)]
 pub struct AssertionResult {
     pub id: AssertionId,
     pub result: AssertionExecutionResult,

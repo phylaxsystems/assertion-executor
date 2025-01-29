@@ -189,6 +189,7 @@ pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
         .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)
         .await
         .unwrap()
+        .result_and_state
 }
 /// Mines a block from an anvil provider, returning the block header
 pub async fn mine_block(provider: &RootProvider<PubSubFrontend>) -> Header {
