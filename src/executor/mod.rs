@@ -24,17 +24,16 @@ use crate::{
         Address,
         AssertionContract,
         AssertionContractExecution,
-        AssertionExecutionResult,
+        AssertionFunctionExecutionResult,
+        AssertionFunctionResult,
         AssertionId,
-        AssertionResult,
         BlockEnv,
         Bytecode,
-        EvmExecutionResult,
         FixedBytes,
         ResultAndState,
         TxEnv,
         TxKind,
-        ValidateResult,
+        TxValidationResult,
     },
     store::AssertionStoreReader,
     ExecutorConfig,
@@ -45,6 +44,7 @@ use rayon::prelude::{
     ParallelIterator,
 };
 
+use revm::primitives::ExecutionResult;
 use tracing::{
     instrument,
     trace,
@@ -96,25 +96,20 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> ExecutorResult<ValidateResult, DB> {
-        trace!(target: "executor::validation", "Starting transaction validation");
+    ) -> ExecutorResult<TxValidationResult, DB> {
         let pre_tx_db = fork_db.clone();
         let mut post_tx_db = fork_db.clone();
 
-        trace!(target: "executor::validation", caller = ?tx_env.caller, transact_to = ?tx_env.transact_to, "Executing forked transaction");
+        trace!(target: "assertion-executor::validation", caller = ?tx_env.caller, transact_to = ?tx_env.transact_to, "Executing forked transaction");
         let (tx_traces, result_and_state) =
             self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
 
         if !result_and_state.result.is_success() {
-            trace!(target: "executor::validation", "Transaction execution failed, skipping assertions");
-            return Ok(ValidateResult {
-                result_and_state: Some(result_and_state),
-                total_assertion_gas: 0,
-                total_assertions_ran: 0,
-            });
+            trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
+            return Ok(TxValidationResult::new(false, result_and_state, vec![]));
         }
 
-        trace!(target: "executor::validation", "Transaction succeeded, running assertions");
+        trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
         let context = PhEvmContext::new(result_and_state.result.logs(), &tx_traces);
 
@@ -123,32 +118,19 @@ where
             .await?;
 
         trace!(
-            target: "executor::validation",
-            assertions_ran = results.total_assertions_ran,
-            gas_used = results.total_assertion_gas,
+            target: "assertion-executor::validation",
+            assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(),
+            gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(),
             "Completed assertion execution"
         );
 
-        let total_assertion_gas = results.total_assertion_gas;
-        let total_assertions_ran = results.total_assertions_ran;
-
-        match results.assertion_results.iter().all(|r| r.is_success()) {
-            true => {
-                fork_db.commit(result_and_state.state.clone());
-                Ok(ValidateResult {
-                    result_and_state: Some(result_and_state),
-                    total_assertion_gas,
-                    total_assertions_ran,
-                })
-            }
-            false => {
-                Ok(ValidateResult {
-                    result_and_state: None,
-                    total_assertion_gas,
-                    total_assertions_ran,
-                })
-            }
+        let valid = results
+            .iter()
+            .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
+        if valid {
+            fork_db.commit(result_and_state.state.clone());
         }
+        Ok(TxValidationResult::new(valid, result_and_state, results))
     }
 
     #[instrument(skip_all)]
@@ -157,7 +139,7 @@ where
         block_env: BlockEnv,
         multi_fork_db: MultiForkDb<ForkDb<DB>>,
         context: &PhEvmContext<'a>,
-    ) -> ExecutorResult<AssertionContractExecution, DB> {
+    ) -> ExecutorResult<Vec<AssertionContractExecution>, DB> {
         let mut assertion_store_reader = self.assertion_store_reader.clone();
 
         let assertions = assertion_store_reader
@@ -165,39 +147,26 @@ where
             .await?;
 
         trace!(
-            target: "executor::assertion",
+            target: "assertion-executor::execute_assertions",
             assertion_count = assertions.len(),
             assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.code_hash)).collect::<Vec<_>>(),
-            "Retrieved assertions"
+            "Retrieved Assertion contracts from Assertion store"
         );
 
-        let results = assertions
+        let results: ExecutorResult<Vec<AssertionContractExecution>, DB> = assertions
             .into_par_iter()
-            .map(move |assertion_contract| {
-                self.run_assertion_contract(
-                    &assertion_contract,
-                    block_env.clone(),
-                    multi_fork_db.clone(),
-                    context,
-                )
-            })
-            .collect::<Vec<ExecutorResult<AssertionContractExecution, DB>>>();
-
-        let mut execution_results = AssertionContractExecution::default();
-        for result in results {
-            match result {
-                Ok(results) => {
-                    execution_results
-                        .assertion_results
-                        .extend(results.assertion_results);
-                    execution_results.total_assertion_gas += results.total_assertion_gas;
-                    execution_results.total_assertions_ran += results.total_assertions_ran;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(execution_results)
+            .map(
+                move |assertion_contract| -> ExecutorResult<AssertionContractExecution, DB> {
+                    self.run_assertion_contract(
+                        &assertion_contract,
+                        block_env.clone(),
+                        multi_fork_db.clone(),
+                        context,
+                    )
+                },
+            )
+            .collect();
+        results
     }
 
     fn run_assertion_contract(
@@ -239,30 +208,30 @@ where
             let result = fn_selectors
                 .iter()
                 .map(|fn_selector| {
-                    AssertionResult {
+                    AssertionFunctionResult {
                         id: AssertionId {
                             fn_selector: *fn_selector,
                             code_hash: *code_hash,
                         },
-                        result: AssertionExecutionResult::AssertionContractDeployFailure(
+                        result: AssertionFunctionExecutionResult::AssertionContractDeployFailure(
                             execution_result.clone(),
                         ),
                     }
                 })
-                .collect::<Vec<AssertionResult>>();
+                .collect::<Vec<AssertionFunctionResult>>();
 
             let rax = AssertionContractExecution {
-                assertion_results: result,
+                assertion_fns_results: result,
                 total_assertion_gas: 0,
-                total_assertions_ran: 0,
+                total_assertion_funcs_ran: 0,
             };
 
             trace!(
                 target: "executor::assertion",
                 ?code_hash,
                 total_gas = rax.total_assertion_gas,
-                assertions_ran = rax.total_assertions_ran,
-                "Completed assertion contract execution"
+                assertions_ran = rax.total_assertion_funcs_ran,
+                "Assertion contract deployment failed"
             );
 
             return Ok(rax);
@@ -310,12 +279,12 @@ where
                 assertion_gas.fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
                 assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                Ok(AssertionResult {
+                Ok(AssertionFunctionResult {
                     id,
-                    result: AssertionExecutionResult::AssertionExecutionResult(result),
+                    result: AssertionFunctionExecutionResult::AssertionExecutionResult(result),
                 })
             })
-            .collect::<Vec<ExecutorResult<AssertionResult, DB>>>();
+            .collect::<Vec<ExecutorResult<AssertionFunctionResult, DB>>>();
 
         let mut valid_results = vec![];
         for result in results_vec {
@@ -326,17 +295,17 @@ where
         }
 
         let rax = AssertionContractExecution {
-            assertion_results: valid_results,
+            assertion_fns_results: valid_results,
             total_assertion_gas: deployment_gas + assertion_gas.into_inner(),
-            total_assertions_ran: assertions_ran.into_inner(),
+            total_assertion_funcs_ran: assertions_ran.into_inner(),
         };
 
         trace!(
             target: "executor::assertion",
             ?code_hash,
             total_gas = rax.total_assertion_gas,
-            assertions_ran = rax.total_assertions_ran,
-            "Completed assertion contract execution"
+            assertions_ran = rax.total_assertion_funcs_ran,
+            "Assertion contract execution completed"
         );
 
         Ok(rax)
@@ -393,7 +362,7 @@ where
         constructor_code: Bytecode,
         multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
         context: &PhEvmContext,
-    ) -> ExecutorResult<EvmExecutionResult, DB> {
+    ) -> ExecutorResult<ExecutionResult, DB> {
         let tx_env = TxEnv {
             transact_to: TxKind::Create,
             caller: CALLER,
@@ -616,8 +585,8 @@ mod test {
                 .await
                 .unwrap();
 
-            assert_eq!(result.result_and_state.is_some(), expected_result);
-            assert!(result.total_assertion_gas > 0);
+            assert_eq!(result.transaction_valid, expected_result);
+            assert!(result.total_assertions_gas() > 0);
 
             //Assert that the state of the counter contract before committing the changes
             assert_eq!(

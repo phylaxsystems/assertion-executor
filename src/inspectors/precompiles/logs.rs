@@ -46,8 +46,8 @@ mod test {
     #[tokio::test]
     async fn test_get_logs() {
         let result = run_precompile_test("TestGetLogs").await;
-        assert!(result.is_some());
-        let result_and_state = result.unwrap();
+        assert!(result.is_valid());
+        let result_and_state = result.result_and_state;
         assert!(result_and_state.result.is_success());
     }
 }

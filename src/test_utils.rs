@@ -17,6 +17,7 @@ use crate::{
         ResultAndState,
         TxEnv,
         TxKind,
+        TxValidationResult,
         U256,
     },
     store::MockStore,
@@ -143,7 +144,7 @@ pub fn deployed_bytecode(input: &str) -> Bytes {
         .into()
 }
 
-pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
+pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
     let caller = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
     let target = address!("118dd24a3b0d02f90d8896e242d3838b4d37c181");
 
@@ -189,7 +190,6 @@ pub async fn run_precompile_test(artifact: &str) -> Option<ResultAndState> {
         .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)
         .await
         .unwrap()
-        .result_and_state
 }
 /// Mines a block from an anvil provider, returning the block header
 pub async fn mine_block(provider: &RootProvider<PubSubFrontend>) -> Header {

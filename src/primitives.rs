@@ -44,44 +44,104 @@ pub struct AssertionContract {
     pub code_hash: B256,
 }
 
+/// Id of an assertion function
 #[derive(Debug)]
 pub struct AssertionId {
+    /// The selector of the assertion function
     pub fn_selector: FixedBytes<4>,
+    /// The code hash of the assertion contract in which the assertion function is defined
     pub code_hash: B256,
 }
 
+/// Result of a transaction validation against a set of assertions
 #[derive(Debug)]
-pub struct ValidateResult {
-    pub result_and_state: Option<ResultAndState>,
-    pub total_assertion_gas: u64,
-    pub total_assertions_ran: u64,
+pub struct TxValidationResult {
+    /// Whether the transaction is valid
+    pub transaction_valid: bool,
+    /// Result of the transaction execution
+    pub result_and_state: ResultAndState,
+    /// Results of the assertions executions
+    pub assertions_executions: Vec<AssertionContractExecution>,
 }
 
+impl TxValidationResult {
+    /// Create a new TxValidationResult instance
+    pub fn new(
+        transaction_valid: bool,
+        result_and_state: ResultAndState,
+        assertions_executions: Vec<AssertionContractExecution>,
+    ) -> Self {
+        Self {
+            transaction_valid,
+            result_and_state,
+            assertions_executions,
+        }
+    }
+    /// Whether the transaction is valid
+    pub fn is_valid(&self) -> bool {
+        self.transaction_valid
+    }
+
+    /// Total gas used to execute all the assertion functions of all the assertion contracts
+    pub fn total_assertions_gas(&self) -> u64 {
+        self.assertions_executions
+            .iter()
+            .map(|a| a.total_assertion_gas)
+            .sum()
+    }
+
+    /// The number of assertion functions that were executed
+    pub fn total_assertion_funcs_ran(&self) -> u64 {
+        self.assertions_executions
+            .iter()
+            .map(|a| a.total_assertion_funcs_ran)
+            .sum()
+    }
+}
+
+/// Result of a single assertion contract execution
 #[derive(Debug, Default)]
 pub struct AssertionContractExecution {
-    pub assertion_results: Vec<AssertionResult>,
+    /// Results of the assertion functions executions
+    pub assertion_fns_results: Vec<AssertionFunctionResult>,
+    /// Total gas used to execute all the assertion functions of the assertion contract
     pub total_assertion_gas: u64,
-    pub total_assertions_ran: u64,
+    /// The number of assertion functions that were executed
+    pub total_assertion_funcs_ran: u64,
 }
 
+/// Result of a single assertion function execution
 #[derive(Debug)]
-pub struct AssertionResult {
+pub struct AssertionFunctionResult {
+    /// The id of the assertion function
     pub id: AssertionId,
-    pub result: AssertionExecutionResult,
+    /// The result of the assertion function execution
+    pub result: AssertionFunctionExecutionResult,
 }
 
 #[derive(Debug)]
-pub enum AssertionExecutionResult {
+pub enum AssertionFunctionExecutionResult {
+    /// The constructor function of the assertion contract failed to execute
     AssertionContractDeployFailure(EvmExecutionResult),
+    /// The assertion function execution result
     AssertionExecutionResult(EvmExecutionResult),
 }
 
-impl AssertionResult {
+impl AssertionFunctionResult {
+    /// Whether the assertion function execution was succesful or reverted
     pub fn is_success(&self) -> bool {
-        if let AssertionExecutionResult::AssertionExecutionResult(result) = &self.result {
+        if let AssertionFunctionExecutionResult::AssertionExecutionResult(result) = &self.result {
             result.is_success()
         } else {
             false
+        }
+    }
+
+    /// Convert the assertion function execution result into an execution result
+    pub fn as_result(&self) -> &EvmExecutionResult {
+        match &self.result {
+            AssertionFunctionExecutionResult::AssertionContractDeployFailure(result) => result,
+            AssertionFunctionExecutionResult::AssertionExecutionResult(result) => result,
         }
     }
 }
