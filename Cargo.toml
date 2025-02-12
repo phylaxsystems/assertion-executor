@@ -32,7 +32,7 @@ revm_18 = { version = "18.0.0", package = "revm", optional = true }
 revm_17 = { version = "17.0.0", package = "revm", optional = true }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
 
-# For Signed Authorization versioning conflict 
+# For Signed Authorization versioning conflict
 alloy-eip7702 = "0.4.2"
 
 # ETL deps
@@ -61,6 +61,7 @@ incremental = false
 
 [features]
 default = ["revm_17"]
+optimism = ["revm_17/optimism", "revm_17/optimism-default-handler", "revm_18/optimism", "revm_18/optimism-default-handler"]
 test = ["serde_json", "rand", "revm_17"]
 phoundry = ["revm_18"]
 

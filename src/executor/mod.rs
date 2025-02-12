@@ -50,6 +50,9 @@ use tracing::{
     trace,
 };
 
+#[cfg(feature = "optimism")]
+use crate::executor::config::create_optimism_fields;
+
 /// Used to deploys the assertion contract to the forked db, and to call assertion functions.
 pub const CALLER: Address = address!("00000000000000000000000000000000000001A4");
 
@@ -258,6 +261,8 @@ where
                         caller: CALLER,
                         data: (*fn_selector).into(),
                         gas_limit: remaining_gas,
+                        #[cfg(feature = "optimism")]
+                        optimism: create_optimism_fields(),
                         ..Default::default()
                     },
                     block_env.clone(),
@@ -368,6 +373,8 @@ where
             caller: CALLER,
             data: constructor_code.original_bytes(),
             gas_limit: self.config.assertion_gas_limit,
+            #[cfg(feature = "optimism")]
+            optimism: create_optimism_fields(),
             ..Default::default()
         };
 

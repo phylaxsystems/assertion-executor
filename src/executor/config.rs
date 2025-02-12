@@ -4,6 +4,29 @@ use crate::{
 };
 use revm::primitives::SpecId;
 
+#[cfg(feature = "optimism")]
+use crate::primitives::Bytes;
+#[cfg(feature = "optimism")]
+use revm::primitives::OptimismFields;
+
+/// This function creates fields necessary to statisfy tx execution against
+/// the optimism spec of the EVM.
+///
+/// When executing against the regular EVM the `OptimismFields` of the `TxEnv`
+/// do not need to be satisfied. When using the Op spec we need to fill certain
+/// fields to allow optimism to account the gas for posting the calldata.
+#[cfg(feature = "optimism")]
+pub fn create_optimism_fields() -> OptimismFields {
+    // the `enveloped_tx` field can be default because we arent posting
+    // data from the executor anywhere and is therefor not relevant.
+    //
+    // TODO: add a feature flag to do proper accounting.
+    OptimismFields {
+        enveloped_tx: Some(Bytes::default()),
+        ..Default::default()
+    }
+}
+
 /// Contains the configuration for the assertion executor.
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {

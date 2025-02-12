@@ -40,6 +40,9 @@ use alloy_sol_types::{
     SolCall,
 };
 
+#[cfg(feature = "optimism")]
+use crate::executor::config::create_optimism_fields;
+
 // Typing for the assertion fn selectors
 sol! {
 
@@ -127,6 +130,8 @@ impl AssertionContractExtractor {
                 caller: CALLER,
                 data: fnSelectorsCall::SELECTOR.into(),
                 gas_limit: self.executor.config.assertion_gas_limit - result.gas_used(),
+                #[cfg(feature = "optimism")]
+                optimism: create_optimism_fields(),
                 ..Default::default()
             },
             block_env.clone(),

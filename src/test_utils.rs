@@ -14,7 +14,6 @@ use crate::{
         Bytecode,
         Bytes,
         FixedBytes,
-        ResultAndState,
         TxEnv,
         TxKind,
         TxValidationResult,
@@ -44,6 +43,9 @@ use alloy_provider::{
     RootProvider,
 };
 
+#[cfg(feature = "optimism")]
+use crate::executor::config::create_optimism_fields;
+
 use alloy_transport_ws::WsConnect;
 
 /// Deployed bytecode of contract-mocks/src/SimpleCounterAssertion.sol:Counter
@@ -54,6 +56,8 @@ pub fn counter_call() -> TxEnv {
     TxEnv {
         transact_to: TxKind::Call(COUNTER_ADDRESS),
         data: fixed_bytes!("d09de08a").into(),
+        #[cfg(feature = "optimism")]
+        optimism: create_optimism_fields(),
         ..TxEnv::default()
     }
 }
@@ -169,6 +173,8 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
         caller,
         data: bytecode("Target.sol:Target"),
         transact_to: TxKind::Create,
+        #[cfg(feature = "optimism")]
+        optimism: create_optimism_fields(),
         ..Default::default()
     };
 
@@ -183,8 +189,11 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
         caller,
         data: bytecode(&format!("{}.sol:{}", artifact, "TriggeringTx")),
         transact_to: TxKind::Create,
+        #[cfg(feature = "optimism")]
+        optimism: create_optimism_fields(),
         ..Default::default()
     };
+
     //Execute triggering tx.
     executor
         .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)

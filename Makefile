@@ -6,6 +6,10 @@ build:
 test:
 	forge build --root contract-mocks && cargo test --verbose
 
+# Build the contract mocks and run the rust tests using the optimism feature flag
+test-optimism:
+	forge build --root contract-mocks && cargo test --verbose --features optimism
+
 # Validate formatting
 format:
 	cargo fmt --check

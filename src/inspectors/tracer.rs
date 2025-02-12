@@ -105,6 +105,8 @@ impl<DB: Database> Inspector<DB> for CallTracer {
 #[cfg(test)]
 mod test {
     use super::*;
+    #[cfg(feature = "optimism")]
+    use crate::executor::config::create_optimism_fields;
     use crate::primitives::{
         address,
         Bytecode,
@@ -142,6 +144,9 @@ mod test {
                 tx.transact_to = crate::primitives::TxKind::Call(callee);
                 tx.data = revm::primitives::Bytes::new();
                 tx.value = crate::primitives::U256::ZERO;
+                #[cfg(feature = "optimism")] {
+                    tx.optimism = create_optimism_fields();
+                }
             })
             .with_external_context(CallTracer::default())
             .with_spec_id(SpecId::BERLIN)
