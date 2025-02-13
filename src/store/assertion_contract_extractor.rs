@@ -139,6 +139,7 @@ impl AssertionContractExtractor {
             self.executor.config.spec_id,
             &mut multi_fork_db,
             inspector,
+            true,
         );
 
         let result = evm.transact().map_err(ExecutorError::TxError)?;

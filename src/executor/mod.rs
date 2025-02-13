@@ -270,6 +270,7 @@ where
                     self.config.spec_id,
                     &mut multi_fork_db,
                     inspector,
+                    true,
                 );
 
                 let result = evm
@@ -341,6 +342,7 @@ where
             self.config.spec_id,
             &mut db,
             CallTracer::default(),
+            false,
         );
 
         let result = evm.transact()?;
@@ -387,6 +389,7 @@ where
             self.config.spec_id,
             multi_fork_db,
             inspector,
+            true,
         )
         .transact()?;
 
