@@ -19,7 +19,10 @@ use crate::{
         TxValidationResult,
         U256,
     },
-    store::MockStore,
+    store::{
+        AssertionState,
+        AssertionStore,
+    },
     ExecutorConfig,
 };
 
@@ -154,19 +157,18 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
 
     let db = SharedDB::<0>::new_test().await;
 
-    let mut assertion_store = MockStore::default();
-
     let mut fork_db = db.fork();
 
     // Write test assertion to assertion store
     // bytecode of contract-mocks/src/GetLogsTest.sol:GetLogsTest
     let assertion_code = bytecode(&format!("{}.sol:{}", artifact, artifact));
 
+    let assertion_store = AssertionStore::new_ephemeral().unwrap();
     assertion_store
-        .insert(target, vec![Bytecode::LegacyRaw(assertion_code)])
+        .insert(target, AssertionState::new_test(assertion_code))
         .unwrap();
 
-    let mut executor = ExecutorConfig::default().build(db, assertion_store.reader());
+    let mut executor = ExecutorConfig::default().build(db, assertion_store);
 
     // Deploy mock using bytecode of contract-mocks/src/GetLogsTest.sol:Target
     let target_deployment_tx = TxEnv {
@@ -197,7 +199,6 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
     //Execute triggering tx.
     executor
         .validate_transaction(BlockEnv::default(), trigger_tx, &mut fork_db)
-        .await
         .unwrap()
 }
 /// Mines a block from an anvil provider, returning the block header

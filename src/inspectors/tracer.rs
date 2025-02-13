@@ -54,6 +54,12 @@ impl CallTracer {
         // to see if it improves performance
         self.call_inputs.keys().map(|(addr, _)| *addr).collect()
     }
+
+    #[cfg(any(test, feature = "test"))]
+    pub fn insert_trace(&mut self, address: Address) {
+        self.call_inputs
+            .insert((address, FixedBytes::default()), vec![]);
+    }
 }
 
 impl<DB: Database> Inspector<DB> for CallTracer {

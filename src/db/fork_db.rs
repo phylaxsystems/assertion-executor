@@ -214,7 +214,7 @@ mod fork_db_tests {
 
         block_changes.state_changes = evm_state.clone();
 
-        shared_db.commit_block(block_changes).await.unwrap();
+        shared_db.commit_block(block_changes).unwrap();
 
         let mut fork_db = shared_db.fork();
 
@@ -270,7 +270,7 @@ mod fork_db_tests {
 
         block_changes.state_changes = evm_state.clone();
 
-        shared_db.commit_block(block_changes).await.unwrap();
+        shared_db.commit_block(block_changes).unwrap();
 
         let mut fork_db = shared_db.fork();
 
@@ -342,7 +342,6 @@ mod fork_db_tests {
                 state_changes: evm_state,
                 ..Default::default()
             })
-            .await
             .unwrap();
 
         assert_eq!(shared_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
@@ -390,7 +389,7 @@ mod fork_db_tests {
             ..Default::default()
         };
 
-        shared_db.commit_block(block_changes).await.unwrap();
+        shared_db.commit_block(block_changes).unwrap();
         assert_eq!(shared_db.block_hash_ref(0), Ok(KECCAK_EMPTY));
     }
 
@@ -423,7 +422,6 @@ mod fork_db_tests {
                 state_changes: evm_state,
                 ..Default::default()
             })
-            .await
             .unwrap();
 
         let mut fork_db = shared_db.fork();

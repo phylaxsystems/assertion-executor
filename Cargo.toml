@@ -12,6 +12,7 @@ tokio = { version = "1.39.2", features = ["macros", "rt-multi-thread", "sync"] }
 tracing = "0.1.40"
 zerocopy = { version = "0.8.3", features = ["derive"] }
 tempfile = "3.13.0"
+parking_lot = "0.12.1"
 
 # ETH deps
 alloy = "0.8.3"
@@ -24,12 +25,13 @@ alloy-pubsub = "0.8.3"
 alloy-rpc-client = "0.8.3"
 alloy-node-bindings = "0.8.3"
 alloy-network = "0.8.3"
+alloy-network-primitives = "0.8.3"
 alloy-signer = "0.8.3"
 alloy-signer-local = "0.8.3"
 alloy-transport = "0.8.3"
 alloy-transport-ws = "0.8.3"
-revm_18 = { version = "18.0.0", package = "revm", optional = true }
-revm_17 = { version = "17.0.0", package = "revm", optional = true }
+revm_18 = { version = "18.0.0", package = "revm", optional = true, features = ["serde"] }
+revm_17 = { version = "17.0.0", package = "revm", optional = true , features = ["serde"] }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
 
 # For Signed Authorization versioning conflict

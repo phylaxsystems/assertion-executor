@@ -32,12 +32,17 @@ pub use revm::{
     JournaledState,
 };
 
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
 use std::collections::{
     BTreeMap,
     HashSet,
 };
 
-#[derive(Default, Debug, Clone, PartialEq, Hash, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Hash, Eq, Serialize, Deserialize)]
 pub struct AssertionContract {
     pub fn_selectors: Vec<FixedBytes<4>>,
     pub code: Bytecode,
@@ -144,6 +149,15 @@ impl AssertionFunctionResult {
             AssertionFunctionExecutionResult::AssertionExecutionResult(result) => result,
         }
     }
+}
+
+/// Represents an update block or fork choice update
+/// Has all information required to update to a new fork choice
+#[derive(Debug)]
+pub struct UpdateBlock {
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub parent_hash: B256,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -1,4 +1,6 @@
+use alloy_consensus::BlockHeader;
 use alloy_provider::{
+    Network,
     Provider,
     RootProvider,
 };
@@ -6,10 +8,16 @@ use alloy_pubsub::PubSubFrontend;
 use alloy_rpc_types::{
     BlockNumHash,
     BlockTransactionsKind,
-    Header,
 };
+
+use alloy_network::BlockResponse;
+
+use alloy_network_primitives::HeaderResponse;
+
 use alloy_transport::TransportError;
 use tracing::instrument;
+
+use crate::primitives::UpdateBlock;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CheckIfReorgedError {
@@ -21,34 +29,39 @@ pub enum CheckIfReorgedError {
 
 /// Checks if the new block is part of the same chain as the last indexed block.
 #[instrument(skip(provider))]
-pub async fn check_if_reorged(
-    provider: &RootProvider<PubSubFrontend>,
-    new_block: &Header,
+pub async fn check_if_reorged<N: Network>(
+    provider: &RootProvider<PubSubFrontend, N>,
+    update_block: &UpdateBlock,
     last_indexed_block: BlockNumHash,
-) -> Result<bool, CheckIfReorgedError> {
+) -> Result<bool, CheckIfReorgedError>
+where
+    N::HeaderResponse: HeaderResponse,
+{
     // If the new block number is the same as the last indexed block number, then
     // block is part of the same chain if the hashes are the same.
-    if new_block.number == last_indexed_block.number {
-        return Ok(last_indexed_block.hash != new_block.hash);
+    if update_block.block_number == last_indexed_block.number {
+        return Ok(update_block.block_hash != last_indexed_block.hash);
     }
 
     // Traverse parent blocks from the new block until the parent blocks number is equal to
     // the last indexed block number.
-    let mut cursor_hash = new_block.parent_hash;
+    let mut cursor_hash = update_block.parent_hash;
     loop {
         let cursor = provider
             .get_block_by_hash(cursor_hash, BlockTransactionsKind::Hashes)
             .await?
             .ok_or(CheckIfReorgedError::ParentBlockNotFound)?;
 
-        cursor_hash = cursor.header.parent_hash;
+        let cursor_header = cursor.header();
+
+        cursor_hash = cursor_header.parent_hash();
 
         // Continue if the parent block
-        if cursor.header.number != last_indexed_block.number {
+        if cursor_header.number() != last_indexed_block.number {
             continue;
         }
 
-        return Ok(cursor.header.hash != last_indexed_block.hash);
+        return Ok(cursor_header.hash() != last_indexed_block.hash);
     }
 }
 
@@ -79,7 +92,11 @@ mod tests {
         // Check if reorged - should be false since blocks are in sequence
         let is_reorged = check_if_reorged(
             &provider,
-            &block1,
+            &UpdateBlock {
+                block_number: block1.number,
+                block_hash: block1.hash,
+                parent_hash: block1.parent_hash,
+            },
             BlockNumHash {
                 number: 0,
                 hash: block0.header.hash,
@@ -110,7 +127,11 @@ mod tests {
         // Check if reorged - should be true since we created a new fork
         let is_reorged = check_if_reorged(
             &provider,
-            &new_block,
+            &UpdateBlock {
+                block_number: new_block.number,
+                block_hash: new_block.hash,
+                parent_hash: new_block.parent_hash,
+            },
             BlockNumHash {
                 number: 1,
                 hash: block.hash,

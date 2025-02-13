@@ -84,7 +84,7 @@ macro_rules! create_shared_db {
 
         if $config.reth_path.is_some() {
             println!("Exporting memory db to sled db...");
-            db.commit_mem_db_to_fs().await?;
+            db.commit_mem_db_to_fs()?;
             println!("Done~!");
             println!("Exiting...");
             return Ok(());

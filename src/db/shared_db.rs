@@ -1,5 +1,3 @@
-#![allow(clippy::await_holding_lock)]
-
 use crate::{
     db::{
         fork_db::ForkDb,
@@ -18,10 +16,14 @@ use crate::{
         BlockEnv,
         Bytecode,
         TxEnv,
+        UpdateBlock,
         B256,
         U256,
     },
-    store::AssertionStoreReader,
+    store::{
+        AssertionStore,
+        AssertionStoreError,
+    },
     utils::{
         fill_tx_env,
         reorg_utils::{
@@ -40,11 +42,10 @@ use std::{
     path::Path,
     sync::{
         Arc,
+        Mutex,
         RwLock,
     },
 };
-
-use tokio::sync::Mutex;
 
 use sled::Config;
 
@@ -81,6 +82,8 @@ pub enum SharedDbError {
     SignatureRecoveryFailed(#[from] alloy::primitives::SignatureError),
     #[error("Assertion execution failed")]
     AssertionExecutionFailed(#[from] ExecutorError<NotFoundError>),
+    #[error("Store initialization failed")]
+    StoreInitializationFailed(AssertionStoreError),
 }
 
 /// A shared database that maintains a memory database and a file-system database.
@@ -89,7 +92,7 @@ pub enum SharedDbError {
 /// database is used for persistent storage.
 /// BLOCKS_TO_RETAIN is the number of historical blocks to retain in memory.
 #[derive(Debug, Clone)]
-pub struct SharedDB<const BLOCKS_TO_RETAIN: usize> {
+pub struct SharedDB<const BLOCKS_TO_RETAIN: usize = 64> {
     mem_db: Arc<RwLock<MemoryDb<BLOCKS_TO_RETAIN>>>,
     fs_db: Arc<Mutex<FsDb>>,
     provider: RootProvider<PubSubFrontend>,
@@ -156,18 +159,20 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
 
     /// Load the entire `FsDb` into the `MemoryDb`.
     pub async fn initialize(&mut self) -> Result<(), SharedDbError> {
-        let mut mem_lock = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
+        {
+            let mut mem_lock = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
 
-        let fs_lock = self.fs_db.lock().await;
+            let fs_lock = self.fs_db.lock().unwrap_or_else(|e| e.into_inner());
 
-        mem_lock.storage = fs_lock.load_storage()?;
-        mem_lock.basic = fs_lock.load_basic()?;
-        (
-            mem_lock.block_hashes,
-            mem_lock.canonical_block_num,
-            mem_lock.canonical_block_hash,
-        ) = fs_lock.load_block_hashes()?;
-        mem_lock.code_by_hash = fs_lock.load_code_by_hash()?;
+            mem_lock.storage = fs_lock.load_storage()?;
+            mem_lock.basic = fs_lock.load_basic()?;
+            (
+                mem_lock.block_hashes,
+                mem_lock.canonical_block_num,
+                mem_lock.canonical_block_hash,
+            ) = fs_lock.load_block_hashes()?;
+            mem_lock.code_by_hash = fs_lock.load_code_by_hash()?;
+        }
 
         // get latest block hash
         let latest_block_hash = self
@@ -185,10 +190,17 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
 
     /// Canonicalizes the database, with an expected parent block hash.
     pub async fn canonicalize(&self, block_hash: B256) -> Result<(), SharedDbError> {
-        let mut db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
+        let last_indexed_block = {
+            let db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
+
+            BlockNumHash {
+                number: db.canonical_block_num,
+                hash: db.canonical_block_hash,
+            }
+        };
 
         // Return early if the requested block hash is already the canonical block hash.
-        if db.canonical_block_hash == block_hash {
+        if last_indexed_block.hash == block_hash {
             return Ok(());
         }
 
@@ -199,17 +211,23 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
             .ok_or(SharedDbError::NewCanonicalBlockNotFound)?;
 
         // Check if reorg occurred
-        let canonical_block_num_hash = BlockNumHash {
-            number: db.canonical_block_num,
-            hash: db.canonical_block_hash,
-        };
-        let is_reorged =
-            check_if_reorged(&self.provider, &new_block.header, canonical_block_num_hash).await?;
+        let is_reorged = check_if_reorged(
+            &self.provider,
+            &UpdateBlock {
+                block_number: new_block.header.number,
+                block_hash: new_block.header.hash,
+                parent_hash: new_block.header.parent_hash,
+            },
+            last_indexed_block,
+        )
+        .await?;
 
-        // If reorged, handle reorg.
+        // If reorged, handle reorg by calling handle reorg on mem db, and passing update parameters to fs_db
+        // if some are returned.
         if is_reorged {
+            let mut db = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
             if let Some(fs_db_params) = db.handle_reorg(block_hash) {
-                let fs_db_lock = self.fs_db.lock().await;
+                let fs_db_lock = self.fs_db.lock().unwrap_or_else(|e| e.into_inner());
                 fs_db_lock.handle_reorg(fs_db_params).map_err(|e| {
                     error!("Error handling reorg in FsDb: {:?}", e);
                     e
@@ -220,18 +238,16 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
                 return Ok(());
             }
         }
-
-        let assertion_store_reader = AssertionStoreReader::new(tokio::sync::mpsc::channel(1).0);
-
         let executor = AssertionExecutor {
             db: self.clone(),
             config: self.executor_config.clone(),
-            assertion_store_reader,
+            store: AssertionStore::new_ephemeral()
+                .map_err(SharedDbError::StoreInitializationFailed)?,
         };
 
         let mut cursor_hash = new_block.header.parent_hash;
         // Sync to the latest block
-        for _ in new_block.header.number..db.canonical_block_num {
+        for _ in new_block.header.number..last_indexed_block.number {
             let block = self
                 .provider
                 .get_block(cursor_hash.into(), BlockTransactionsKind::Full)
@@ -274,8 +290,12 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
                 block_changes.merge_state(state_changes);
             }
 
-            let block_changes = db.commit_block(block_changes);
-            let fs_db_lock = self.fs_db.lock().await;
+            let block_changes = self
+                .mem_db
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .commit_block(block_changes);
+            let fs_db_lock = self.fs_db.lock().unwrap_or_else(|e| e.into_inner());
 
             fs_db_lock.commit_block(block_changes).map_err(|e| {
                 error!("Error committing block to FsDb: {:?}", e);
@@ -286,11 +306,11 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
         Ok(())
     }
 
-    pub async fn commit_block(&mut self, block_changes: BlockChanges) -> Result<(), SharedDbError> {
+    pub fn commit_block(&mut self, block_changes: BlockChanges) -> Result<(), SharedDbError> {
         let mut mem_db_lock = self.mem_db.write().unwrap_or_else(|e| e.into_inner());
         let fs_db_params = mem_db_lock.commit_block(block_changes);
 
-        let fs_db_lock = self.fs_db.lock().await;
+        let fs_db_lock = self.fs_db.lock().unwrap_or_else(|e| e.into_inner());
         fs_db_lock.commit_block(fs_db_params).map_err(|e| {
             error!("Error committing block to FsDb: {:?}", e);
             e
@@ -300,9 +320,9 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
     }
 
     /// Commits the entire memory database to the file-system database.
-    pub async fn commit_mem_db_to_fs(&self) -> Result<(), SharedDbError> {
+    pub fn commit_mem_db_to_fs(&self) -> Result<(), SharedDbError> {
         // Get fsdb lock
-        let fs_db_lock = self.fs_db.lock().await;
+        let fs_db_lock = self.fs_db.lock().unwrap_or_else(|e| e.into_inner());
 
         // Get mem_db lock
         let mem_db_lock = self.mem_db.write().unwrap_or_else(|e| e.into_inner());

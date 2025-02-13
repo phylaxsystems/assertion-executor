@@ -1,8 +1,8 @@
 use crate::{
-    store::AssertionStoreReader,
+    primitives::SpecId,
+    store::AssertionStore,
     AssertionExecutor,
 };
-use revm::primitives::SpecId;
 
 #[cfg(feature = "optimism")]
 use crate::primitives::Bytes;
@@ -65,15 +65,11 @@ impl ExecutorConfig {
     }
 
     /// Build the assertion executor
-    pub fn build<DB>(
-        self,
-        db: DB,
-        assertion_store_reader: AssertionStoreReader,
-    ) -> AssertionExecutor<DB> {
+    pub fn build<DB>(self, db: DB, store: AssertionStore) -> AssertionExecutor<DB> {
         AssertionExecutor {
             db,
-            assertion_store_reader,
-            config: self.clone(),
+            store,
+            config: self,
         }
     }
 }

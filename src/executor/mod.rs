@@ -35,7 +35,7 @@ use crate::{
         TxKind,
         TxValidationResult,
     },
-    store::AssertionStoreReader,
+    store::AssertionStore,
     ExecutorConfig,
 };
 
@@ -64,22 +64,14 @@ pub const ASSERTION_CONTRACT: Address = address!("63f9abbe8aa6ba1261ef3b0cbfb25a
 #[derive(Debug, Clone)]
 pub struct AssertionExecutor<DB> {
     pub db: DB,
-    pub assertion_store_reader: AssertionStoreReader,
     pub config: ExecutorConfig,
+    pub store: AssertionStore,
 }
 
-impl<DB> AssertionExecutor<DB> {
+impl<DB: PhDB> AssertionExecutor<DB> {
     /// Creates a new assertion executor.
-    pub fn new(
-        db: DB,
-        assertion_store_reader: AssertionStoreReader,
-        config: ExecutorConfig,
-    ) -> Self {
-        Self {
-            db,
-            assertion_store_reader,
-            config,
-        }
+    pub fn new(db: DB, config: ExecutorConfig, store: AssertionStore) -> Self {
+        Self { db, config, store }
     }
 }
 
@@ -94,7 +86,7 @@ where
     /// Returns the results of the assertions, as well as the state changes that should be
     /// committed if the assertions pass.
     #[instrument(skip_all)]
-    pub async fn validate_transaction<'a>(
+    pub fn validate_transaction<'a>(
         &'a mut self,
         block_env: BlockEnv,
         tx_env: TxEnv,
@@ -114,11 +106,10 @@ where
 
         trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
+
         let context = PhEvmContext::new(result_and_state.result.logs(), &tx_traces);
 
-        let results = self
-            .execute_assertions(block_env, multi_fork_db, &context)
-            .await?;
+        let results = self.execute_assertions(block_env, multi_fork_db, &context)?;
 
         trace!(
             target: "assertion-executor::validation",
@@ -137,17 +128,15 @@ where
     }
 
     #[instrument(skip_all)]
-    async fn execute_assertions<'a>(
+    fn execute_assertions<'a>(
         &'a self,
         block_env: BlockEnv,
         multi_fork_db: MultiForkDb<ForkDb<DB>>,
         context: &PhEvmContext<'a>,
     ) -> ExecutorResult<Vec<AssertionContractExecution>, DB> {
-        let mut assertion_store_reader = self.assertion_store_reader.clone();
-
-        let assertions = assertion_store_reader
-            .read(block_env.number, context.call_traces.clone())
-            .await?;
+        // Examine contracts that were called to see if they have assertions
+        // associated, and dispatch accordingly
+        let assertions = self.store.read(context.call_traces, block_env.number)?;
 
         trace!(
             target: "assertion-executor::execute_assertions",
@@ -270,7 +259,6 @@ where
                     self.config.spec_id,
                     &mut multi_fork_db,
                     inspector,
-                    true,
                 );
 
                 let result = evm
@@ -342,11 +330,11 @@ where
             self.config.spec_id,
             &mut db,
             CallTracer::default(),
-            false,
         );
 
         let result = evm.transact()?;
-        let call_tracer = evm.context.external.clone();
+        let call_tracer = std::mem::take(&mut evm.context.external);
+
         std::mem::drop(evm);
 
         fork_db.commit(result.state.clone());
@@ -389,7 +377,6 @@ where
             self.config.spec_id,
             multi_fork_db,
             inspector,
-            true,
         )
         .transact()?;
 
@@ -422,7 +409,10 @@ mod test {
             BlockEnv,
             U256,
         },
-        store::MockStore,
+        store::{
+            AssertionState,
+            AssertionStore,
+        },
         test_utils::*,
     };
 
@@ -431,9 +421,9 @@ mod test {
     #[tokio::test]
     async fn test_deploy_assertion_contract() {
         let shared_db = SharedDB::<0>::new_test().await;
+        let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
-        let executor =
-            ExecutorConfig::default().build(shared_db.clone(), MockStore::default().reader());
+        let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
 
         let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
@@ -506,10 +496,11 @@ mod test {
             ..Default::default()
         };
 
-        shared_db.commit_block(block_changes).await.unwrap();
+        shared_db.commit_block(block_changes).unwrap();
 
-        let executor =
-            ExecutorConfig::default().build(shared_db.clone(), MockStore::default().reader());
+        let assertion_store = AssertionStore::new_ephemeral().unwrap();
+
+        let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
 
         let mut fork_db = shared_db.fork();
 
@@ -556,19 +547,17 @@ mod test {
                 ),
                 ..Default::default()
             })
-            .await
             .unwrap();
 
-        let mut assertion_store = MockStore::default();
+        let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
-        assertion_store
-            .insert(
-                COUNTER_ADDRESS,
-                vec![Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER))],
-            )
-            .unwrap();
+        assertion_store.insert(
+            COUNTER_ADDRESS,
+            AssertionState::new_test(bytecode(SIMPLE_ASSERTION_COUNTER)),
+        )?;
 
-        let mut executor = ExecutorConfig::default().build(shared_db, assertion_store.reader());
+        let config = ExecutorConfig::default();
+        let mut executor = config.clone().build(shared_db, assertion_store);
 
         let block_env = BlockEnv {
             number: uint!(1_U256),
@@ -592,7 +581,6 @@ mod test {
 
             let result = executor
                 .validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)
-                .await
                 .unwrap();
 
             assert_eq!(result.transaction_valid, expected_result);
