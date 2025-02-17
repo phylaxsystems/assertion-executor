@@ -433,7 +433,7 @@ where
         Ok((call_tracer, result))
     }
 
-    /// inserts the assertion contract to the forked db.
+    /// Inserts pre-deployed assertion contract inside the multi-fork db.
     pub fn insert_assertion_contract(
         &self,
         assertion_contract: &AssertionContract,

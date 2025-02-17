@@ -130,13 +130,6 @@ pub fn extract_assertion_contract(
         return Err(FnSelectorExtractorError::TriggersCallFailed);
     }
 
-    let Account {
-        info,
-        storage,
-        status,
-        ..
-    } = init_account;
-
     let mut fn_selectors: Vec<FixedBytes<4>> =
         evm.context.external.triggers.keys().cloned().collect();
 
@@ -145,6 +138,13 @@ pub fn extract_assertion_contract(
     }
 
     fn_selectors.sort();
+
+    let Account {
+        info,
+        storage,
+        status,
+        ..
+    } = init_account;
 
     Ok(AssertionContract {
         deployed_code: info
