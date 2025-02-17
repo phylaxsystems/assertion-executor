@@ -1,6 +1,9 @@
 pub mod config;
 
-use std::sync::atomic::AtomicU64;
+use std::{
+    fmt::Display,
+    sync::atomic::AtomicU64,
+};
 
 use crate::{
     build_evm::new_evm,
@@ -29,12 +32,14 @@ use crate::{
         AssertionId,
         BlockEnv,
         Bytecode,
+        EVMError,
         FixedBytes,
         ResultAndState,
         TxEnv,
         TxKind,
         TxValidationResult,
     },
+    revm::Database,
     store::AssertionStore,
     ExecutorConfig,
 };
@@ -98,6 +103,61 @@ where
         trace!(target: "assertion-executor::validation", caller = ?tx_env.caller, transact_to = ?tx_env.transact_to, "Executing forked transaction");
         let (tx_traces, result_and_state) =
             self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
+
+        if !result_and_state.result.is_success() {
+            trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
+            return Ok(TxValidationResult::new(false, result_and_state, vec![]));
+        }
+
+        trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
+        let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
+
+        let context = PhEvmContext::new(result_and_state.result.logs(), &tx_traces);
+
+        let results = self.execute_assertions(block_env, multi_fork_db, &context)?;
+
+        trace!(
+            target: "assertion-executor::validation",
+            assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(),
+            gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(),
+            "Completed assertion execution"
+        );
+
+        let valid = results
+            .iter()
+            .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
+        if valid {
+            fork_db.commit(result_and_state.state.clone());
+        }
+        Ok(TxValidationResult::new(valid, result_and_state, results))
+    }
+
+    /// Executes a transaction against an external revm database, and runs the appropriate
+    /// assertions.
+    ///
+    /// We execute against an external database here to satisfy a requirement within op-talos, where
+    /// transactions couldnt be properly commited if they weren't touched by the database beforehand.
+    ///
+    /// Returns the results of the assertions, as well as the state changes that should be
+    /// committed if the assertions pass.
+    #[instrument(skip_all)]
+    pub fn validate_transaction_ext_db<'validation, ExtDb>(
+        &'validation mut self,
+        block_env: BlockEnv,
+        tx_env: TxEnv,
+        fork_db: &mut ForkDb<DB>,
+        external_db: &mut ExtDb,
+    ) -> ExecutorResult<TxValidationResult, DB>
+    where
+        ExtDb: Database,
+        ExtDb::Error: Display,
+    {
+        let pre_tx_db = fork_db.clone();
+        let mut post_tx_db = fork_db.clone();
+
+        trace!(target: "assertion-executor::validation", caller = ?tx_env.caller, transact_to = ?tx_env.transact_to, "Executing forked transaction");
+        let (tx_traces, result_and_state) =
+            self.execute_forked_tx_ext_db(block_env.clone(), tx_env, &mut post_tx_db, external_db)?;
 
         if !result_and_state.result.is_success() {
             trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
@@ -333,6 +393,81 @@ where
         );
 
         let result = evm.transact()?;
+        let call_tracer = std::mem::take(&mut evm.context.external);
+
+        std::mem::drop(evm);
+
+        fork_db.commit(result.state.clone());
+
+        trace!(
+            target: "executor::tx",
+            gas_used = ?result.result.gas_used(),
+            success = result.result.is_success(),
+            "Completed forked transaction execution"
+        );
+
+        Ok((call_tracer, result))
+    }
+
+    /// Commits a transaction against a fork of the current state.
+    /// Instead of using the fork_db, it uses an external database for refrancing state.
+    ///
+    /// We execute against an external database here to satisfy a requirement within op-talos, where
+    /// transactions couldnt be properly commited if they weren't touched by the database beforehand.
+    ///
+    /// Returns the state changes that should be committed if the transaction is valid.
+    pub fn execute_forked_tx_ext_db<ExtDb>(
+        &self,
+        block_env: BlockEnv,
+        tx_env: TxEnv,
+        fork_db: &mut ForkDb<DB>,
+        external_db: &mut ExtDb,
+    ) -> ExecutorResult<(CallTracer, ResultAndState), DB>
+    where
+        ExtDb: Database,
+        ExtDb::Error: Display,
+    {
+        trace!(
+            target: "executor::tx",
+            caller = ?tx_env.caller,
+            transact_to = ?tx_env.transact_to,
+            gas_limit = ?tx_env.gas_limit,
+            "Executing forked transaction with external db"
+        );
+
+        let mut evm = new_evm(
+            tx_env,
+            block_env,
+            self.config.chain_id,
+            self.config.spec_id,
+            external_db,
+            CallTracer::default(),
+        );
+
+        let result = match evm.transact() {
+            Ok(result) => result,
+            Err(err) => {
+                match err {
+                    EVMError::Database(err) => {
+                        // This is for databaseref compatibility
+                        return Err(ExecutorError::TxError(EVMError::Custom(err.to_string())));
+                    }
+                    EVMError::Transaction(err) => {
+                        return Err(ExecutorError::TxError(EVMError::Transaction(err)));
+                    }
+                    EVMError::Header(err) => {
+                        return Err(ExecutorError::TxError(EVMError::Header(err)));
+                    }
+                    EVMError::Precompile(err) => {
+                        return Err(ExecutorError::TxError(EVMError::Precompile(err)));
+                    }
+                    EVMError::Custom(err) => {
+                        return Err(ExecutorError::TxError(EVMError::Custom(err)));
+                    }
+                }
+            }
+        };
+
         let call_tracer = std::mem::take(&mut evm.context.external);
 
         std::mem::drop(evm);
