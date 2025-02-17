@@ -42,11 +42,20 @@ use std::collections::{
     HashSet,
 };
 
-#[derive(Default, Debug, Clone, PartialEq, Hash, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssertionContract {
+    /// The hash of the deployment data.
+    pub id: B256,
+    /// The selectors of the assertion functions.
     pub fn_selectors: Vec<FixedBytes<4>>,
-    pub code: Bytecode,
+    /// The deployed code of the assertion contract.
+    pub deployed_code: Bytecode,
+    /// The hash of the deployed code.
     pub code_hash: B256,
+    /// The Storage of the contract after being deployed against an empty state.
+    pub storage: EvmStorage,
+    /// The account state of the contract after being deployed against an empty state.
+    pub account_status: AccountStatus,
 }
 
 /// Id of an assertion function
@@ -54,8 +63,8 @@ pub struct AssertionContract {
 pub struct AssertionId {
     /// The selector of the assertion function
     pub fn_selector: FixedBytes<4>,
-    /// The code hash of the assertion contract in which the assertion function is defined
-    pub code_hash: B256,
+    /// The hash of the assertion contract deployment data.
+    pub assertion_contract_id: B256,
 }
 
 /// Result of a transaction validation against a set of assertions

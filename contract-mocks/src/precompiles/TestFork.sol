@@ -53,10 +53,9 @@ contract TestFork is Assertion, Test {
         require(sum == 6, "sum != 6");
     }
 
-    function fnSelectors() external pure override returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](2);
-        selectors[0] = this.testForkSwitch.selector;
-        selectors[1] = this.testPersistTargetContracts.selector;
+    function triggers() external view override {
+        registerCallTrigger(this.testForkSwitch.selector);
+        registerCallTrigger(this.testPersistTargetContracts.selector);
     }
 }
 

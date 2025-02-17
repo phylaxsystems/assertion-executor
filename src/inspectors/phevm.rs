@@ -114,10 +114,20 @@ impl<'a> PhEvmInspector<'a> {
             .unwrap_or_default()
         {
             PhEvm::forkPreStateCall::SELECTOR => {
-                fork_pre_state(&self.init_journaled_state, context, gas)
+                fork_pre_state(
+                    &self.init_journaled_state,
+                    context,
+                    gas,
+                    inputs.return_memory_offset.clone(),
+                )
             }
             PhEvm::forkPostStateCall::SELECTOR => {
-                fork_post_state(&self.init_journaled_state, context, gas)
+                fork_post_state(
+                    &self.init_journaled_state,
+                    context,
+                    gas,
+                    inputs.return_memory_offset.clone(),
+                )
             }
             PhEvm::loadCall::SELECTOR => load_external_slot(&context.inner, inputs, gas),
             PhEvm::getLogsCall::SELECTOR => get_logs(inputs, self.context, gas),

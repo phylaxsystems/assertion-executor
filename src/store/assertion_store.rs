@@ -1,5 +1,5 @@
 use crate::{
-    inspectors::tracer::CallTracer,
+    inspectors::CallTracer,
     primitives::{
         Address,
         AssertionContract,
@@ -70,9 +70,9 @@ impl AssertionState {
         Self::new_active(bytecode, &ExecutorConfig::default()).unwrap()
     }
 
-    /// Getter for the assertion_id
-    pub fn assertion_id(&self) -> B256 {
-        self.assertion_contract.code_hash
+    /// Getter for the assertion_contract_id
+    pub fn assertion_contract_id(&self) -> B256 {
+        self.assertion_contract.id
     }
 }
 
@@ -96,7 +96,7 @@ impl AssertionStore {
     }
 
     /// Inserts the given assertion into the store.
-    /// If an assertion with the same assertion_id already exists, it is replaced.
+    /// If an assertion with the same assertion_contract_id already exists, it is replaced.
     /// Returns the previous assertion if it existed.
     pub fn insert(
         &self,
@@ -112,7 +112,7 @@ impl AssertionStore {
 
         let position = assertions
             .iter()
-            .position(|a| a.assertion_id() == assertion.assertion_id());
+            .position(|a| a.assertion_contract_id() == assertion.assertion_contract_id());
 
         let previous = if let Some(pos) = position {
             Some(std::mem::replace(&mut assertions[pos], assertion))
@@ -224,7 +224,7 @@ impl AssertionStore {
                     } => {
                         let existing_state = assertions
                             .iter_mut()
-                            .find(|a| a.assertion_id() == assertion_contract.code_hash);
+                            .find(|a| a.assertion_contract_id() == assertion_contract.code_hash);
 
                         match existing_state {
                             Some(state) => {
@@ -240,13 +240,13 @@ impl AssertionStore {
                         }
                     }
                     PendingModification::Remove {
-                        assertion_id,
+                        assertion_contract_id,
                         inactive_at_block,
                         ..
                     } => {
                         let existing_state = assertions
                             .iter_mut()
-                            .find(|a| a.assertion_id() == assertion_id);
+                            .find(|a| a.assertion_contract_id() == assertion_contract_id);
 
                         match existing_state {
                             Some(state) => {
@@ -254,7 +254,10 @@ impl AssertionStore {
                             }
                             None => {
                                 // The assertion was not found, so we add it with the inactive_at_block set.
-                                error!("Assertion not found for removal: {:?}", assertion_id);
+                                error!(
+                                    "Assertion not found for removal: {:?}",
+                                    assertion_contract_id
+                                );
                             }
                         }
                     }
@@ -285,28 +288,18 @@ impl AssertionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        primitives::{
-            keccak256,
-            Address,
-            Bytecode,
-            FixedBytes,
-        },
-        test_utils::random_bytes,
-    };
+    use crate::primitives::Address;
 
     fn create_test_assertion(
         active_at_block: u64,
         inactive_at_block: Option<u64>,
     ) -> AssertionState {
-        let bytecode: Bytes = random_bytes::<32>().into();
         let state = AssertionState {
             active_at_block,
             inactive_at_block,
             assertion_contract: AssertionContract {
-                code_hash: keccak256(&bytecode),
-                code: Bytecode::LegacyRaw(bytecode),
-                fn_selectors: vec![FixedBytes::from([1, 2, 3, 4])],
+                id: B256::random(),
+                ..Default::default()
             },
         };
         state
@@ -321,9 +314,8 @@ mod tests {
             log_index,
             assertion_adopter: aa,
             assertion_contract: AssertionContract {
-                code_hash: B256::random(),
-                code: Bytecode::LegacyRaw(random_bytes::<32>().into()),
-                fn_selectors: vec![FixedBytes::from([1, 2, 3, 4])],
+                id: B256::random(),
+                ..Default::default()
             },
             active_at_block: active_at,
         }
@@ -336,7 +328,7 @@ mod tests {
 
         // Create a test assertion
         let assertion = create_test_assertion(100, None);
-        let assertion_id = assertion.assertion_id();
+        let assertion_contract_id = assertion.assertion_contract_id();
 
         // Insert the assertion
         store.insert(aa, assertion.clone())?;
@@ -348,7 +340,7 @@ mod tests {
         // Read at block 150 (should be active)
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].code_hash, assertion_id);
+        assert_eq!(assertions[0].id, assertion_contract_id);
 
         // Read at block 50 (should be inactive)
         let assertions = store.read(&tracer, U256::from(50))?;
@@ -376,7 +368,7 @@ mod tests {
         // Read at block 150 (should see first assertion only)
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].code_hash, mod1.assertion_id());
+        assert_eq!(assertions[0].id, mod1.assertion_contract_id());
 
         // Read at block 250 (should see both assertions)
         let assertions = store.read(&tracer, U256::from(250))?;
@@ -398,7 +390,7 @@ mod tests {
         let remove_mod = PendingModification::Remove {
             log_index: 1,
             assertion_adopter: aa,
-            assertion_id: add_mod.assertion_id(),
+            assertion_contract_id: add_mod.assertion_contract_id(),
             inactive_at_block: 200,
         };
         store.apply_pending_modifications(vec![remove_mod])?;
@@ -446,7 +438,7 @@ mod tests {
         // Should only see one assertion
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].code_hash, mod1.assertion_id());
+        assert_eq!(assertions[0].id, mod1.assertion_contract_id());
 
         Ok(())
     }

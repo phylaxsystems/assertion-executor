@@ -20,6 +20,7 @@ use crate::{
         U256,
     },
     store::{
+        extract_assertion_contract,
         AssertionState,
         AssertionStore,
     },
@@ -79,31 +80,17 @@ pub fn counter_acct_info() -> AccountInfo {
 pub const SIMPLE_ASSERTION_COUNTER: &str = "SimpleCounterAssertion.sol:SimpleCounterAssertion";
 
 pub fn counter_assertion() -> AssertionContract {
-    let code = bytecode(SIMPLE_ASSERTION_COUNTER);
-    let code_hash = keccak256(&code);
-    AssertionContract {
-        code: Bytecode::LegacyRaw(code),
-        code_hash,
-        fn_selectors: vec![fixed_bytes!("c667b77f")],
-    }
+    get_assertion_contract(SIMPLE_ASSERTION_COUNTER)
 }
 
 pub const FN_SELECTOR: &str = "SelectorImpl.sol:SelectorImpl";
-pub const BAD_FN_SELECTOR: &str = "SelectorImpl.sol:BadSelectorImpl";
+
+fn get_assertion_contract(artifact: &str) -> AssertionContract {
+    extract_assertion_contract(bytecode(artifact), &ExecutorConfig::default()).unwrap()
+}
 
 pub fn selector_assertion() -> AssertionContract {
-    let code = bytecode(FN_SELECTOR);
-    let code_hash = keccak256(&code);
-
-    AssertionContract {
-        code: Bytecode::LegacyRaw(code),
-        code_hash,
-        fn_selectors: vec![
-            fixed_bytes!("d210b7cf"),
-            fixed_bytes!("e7f48038"),
-            fixed_bytes!("1ff1bc3a"),
-        ],
-    }
+    get_assertion_contract(FN_SELECTOR)
 }
 
 /// Returns a random FixedBytes of length N

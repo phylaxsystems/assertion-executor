@@ -517,7 +517,7 @@ impl<N: Network> Indexer<N> {
                     .map_err(|_| IndexerError::BlockNumberExceedsU64)?;
 
                 Some(PendingModification::Remove {
-                    assertion_id: event.assertionId,
+                    assertion_contract_id: event.assertionId,
                     assertion_adopter: event.contractAddress,
                     inactive_at_block,
                     log_index,
@@ -546,20 +546,20 @@ impl<N: Network> Indexer<N> {
 mod test_indexer {
     use super::*;
     use crate::{
-        inspectors::tracer::CallTracer,
+        inspectors::CallTracer,
         primitives::{
             Address,
             AssertionContract,
-            Bytecode,
             Bytes,
-            FixedBytes,
             U256,
         },
         test_utils::{
             anvil_provider,
+            bytecode,
             deployed_bytecode,
             mine_block,
             selector_assertion,
+            FN_SELECTOR,
         },
     };
 
@@ -639,10 +639,9 @@ mod test_indexer {
         let protocol_addr = Address::random();
 
         let selector_assertion = selector_assertion();
+        let assertion_id = selector_assertion.id;
 
-        let assertion_id = selector_assertion.code_hash;
-
-        let assertion = selector_assertion.code.original_bytes();
+        let assertion = bytecode(FN_SELECTOR);
         indexer
             .da_client
             .submit_assertion(assertion_id, assertion.clone())
@@ -796,17 +795,13 @@ mod test_indexer {
                 PendingModification::Add {
                     active_at_block: 65,
                     log_index: 0,
-                    assertion_contract: AssertionContract {
-                        code_hash: selector_assertion.code_hash,
-                        code: selector_assertion.code,
-                        fn_selectors: selector_assertion.fn_selectors,
-                    },
+                    assertion_contract: selector_assertion.clone(),
                     assertion_adopter,
                 },
                 PendingModification::Remove {
                     inactive_at_block: 65,
                     log_index: 1,
-                    assertion_id: selector_assertion.code_hash,
+                    assertion_contract_id: selector_assertion.id,
                     assertion_adopter,
                 },
             ]
@@ -962,11 +957,7 @@ mod test_indexer {
         // Add pending modification
         let modification = PendingModification::Add {
             assertion_adopter: aa,
-            assertion_contract: AssertionContract {
-                code: Bytecode::LegacyRaw(Bytes::default().into()),
-                code_hash: B256::default(),
-                fn_selectors: vec![FixedBytes::default()],
-            },
+            assertion_contract: AssertionContract::default(),
             active_at_block: 3,
             log_index: 0,
         };

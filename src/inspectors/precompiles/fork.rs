@@ -25,10 +25,13 @@ use revm::{
 
 use alloy_sol_types::SolError;
 
+use std::ops::Range;
+
 pub fn fork_pre_state(
     init_journaled_state: &JournaledState,
     context: &mut EvmContext<&mut MultiForkDb<impl DatabaseRef>>,
     gas: Gas,
+    memory_offset: Range<usize>,
 ) -> CallOutcome {
     let InnerEvmContext {
         ref mut db,
@@ -37,13 +40,14 @@ pub fn fork_pre_state(
     } = context.inner;
 
     let result = db.switch_fork(ForkId::PreTx, journaled_state, init_journaled_state);
-    fork_result_to_call_outcome(result, gas)
+    fork_result_to_call_outcome(result, gas, memory_offset)
 }
 
 pub fn fork_post_state(
     init_journaled_state: &JournaledState,
     context: &mut EvmContext<&mut MultiForkDb<impl DatabaseRef>>,
     gas: Gas,
+    memory_offset: Range<usize>,
 ) -> CallOutcome {
     let InnerEvmContext {
         ref mut db,
@@ -53,12 +57,16 @@ pub fn fork_post_state(
 
     let result = db.switch_fork(ForkId::PostTx, journaled_state, init_journaled_state);
 
-    fork_result_to_call_outcome(result, gas)
+    fork_result_to_call_outcome(result, gas, memory_offset)
 }
 
 /// Convert a fork result to a call outcome.
 /// Uses the default require [`Error`] signature for encoding revert messages.
-fn fork_result_to_call_outcome(result: Result<(), ForkError>, gas: Gas) -> CallOutcome {
+fn fork_result_to_call_outcome(
+    result: Result<(), ForkError>,
+    gas: Gas,
+    memory_offset: Range<usize>,
+) -> CallOutcome {
     match result {
         Ok(()) => {
             CallOutcome {
@@ -67,7 +75,7 @@ fn fork_result_to_call_outcome(result: Result<(), ForkError>, gas: Gas) -> CallO
                     output: Bytes::default(),
                     gas,
                 },
-                memory_offset: 0..0,
+                memory_offset,
             }
         }
         Err(e) => {
@@ -77,7 +85,7 @@ fn fork_result_to_call_outcome(result: Result<(), ForkError>, gas: Gas) -> CallO
                     output: Error::abi_encode(&Error { _0: e.to_string() }).into(),
                     gas,
                 },
-                memory_offset: 0..0,
+                memory_offset,
             }
         }
     }

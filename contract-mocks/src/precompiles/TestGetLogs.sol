@@ -30,9 +30,8 @@ contract TestGetLogs is Assertion, Test {
         require(bytes32(log.data) == bytes32(uint256(1)), "log.data != 1");
     }
 
-    function fnSelectors() external pure override returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
-        selectors[0] = this.testGetLogs.selector;
+    function triggers() external view override {
+      registerCallTrigger(this.testGetLogs.selector);
     }
 }
 

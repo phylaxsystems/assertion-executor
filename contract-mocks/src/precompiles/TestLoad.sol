@@ -21,9 +21,8 @@ contract TestLoad is Assertion, Test {
         require(uint256(loaded) == 0);
     }
 
-    function fnSelectors() external pure override returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
-        selectors[0] = this.testLoad.selector;
+    function triggers() external view override {
+      registerCallTrigger(this.testLoad.selector);
     }
 }
 

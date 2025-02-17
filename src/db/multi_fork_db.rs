@@ -10,7 +10,7 @@ use crate::{
         ASSERTION_CONTRACT,
         CALLER,
     },
-    inspectors::phevm::PRECOMPILE_ADDRESS,
+    inspectors::PRECOMPILE_ADDRESS,
     primitives::{
         AccountInfo,
         Address,

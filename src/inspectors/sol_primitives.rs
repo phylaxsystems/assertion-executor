@@ -55,3 +55,10 @@ sol! {
     }
     error Error(string);
 }
+
+sol! {
+    interface Triggers {
+        // This assertion function will be executed whenever the assertion adopter is called.
+        function registerCallTrigger(bytes4 fnSelector) external {}
+    }
+}

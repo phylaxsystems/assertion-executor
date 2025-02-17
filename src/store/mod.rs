@@ -1,6 +1,7 @@
 mod assertion_contract_extractor;
 pub use assertion_contract_extractor::{
     extract_assertion_contract,
+    triggersCall,
     FnSelectorExtractorError,
 };
 
@@ -48,7 +49,7 @@ pub enum PendingModification {
     },
     Remove {
         assertion_adopter: Address,
-        assertion_id: B256,
+        assertion_contract_id: B256,
         inactive_at_block: u64,
         log_index: u64,
     },
@@ -65,12 +66,15 @@ impl PendingModification {
             } => *assertion_adopter,
         }
     }
-    pub fn assertion_id(&self) -> B256 {
+    pub fn assertion_contract_id(&self) -> B256 {
         match self {
             PendingModification::Add {
                 assertion_contract, ..
-            } => assertion_contract.code_hash,
-            PendingModification::Remove { assertion_id, .. } => *assertion_id,
+            } => assertion_contract.id,
+            PendingModification::Remove {
+                assertion_contract_id,
+                ..
+            } => *assertion_contract_id,
         }
     }
 }

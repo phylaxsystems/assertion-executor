@@ -16,14 +16,14 @@ use crate::{
     },
     error::ExecutorError,
     inspectors::{
-        phevm::{
-            PhEvmContext,
-            PhEvmInspector,
-        },
-        tracer::CallTracer,
+        CallTracer,
+        PhEvmContext,
+        PhEvmInspector,
     },
     primitives::{
         address,
+        Account,
+        AccountInfo,
         Address,
         AssertionContract,
         AssertionContractExecution,
@@ -31,13 +31,14 @@ use crate::{
         AssertionFunctionResult,
         AssertionId,
         BlockEnv,
-        Bytecode,
         EVMError,
+        EvmState,
         FixedBytes,
         ResultAndState,
         TxEnv,
         TxKind,
         TxValidationResult,
+        U256,
     },
     revm::Database,
     store::AssertionStore,
@@ -49,7 +50,6 @@ use rayon::prelude::{
     ParallelIterator,
 };
 
-use revm::primitives::ExecutionResult;
 use tracing::{
     instrument,
     trace,
@@ -201,7 +201,7 @@ where
         trace!(
             target: "assertion-executor::execute_assertions",
             assertion_count = assertions.len(),
-            assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.code_hash)).collect::<Vec<_>>(),
+            assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.id)).collect::<Vec<_>>(),
             "Retrieved Assertion contracts from Assertion store"
         );
 
@@ -229,68 +229,19 @@ where
         context: &PhEvmContext,
     ) -> ExecutorResult<AssertionContractExecution, DB> {
         let AssertionContract {
-            fn_selectors,
-            code,
-            code_hash,
+            fn_selectors, id, ..
         } = assertion_contract;
 
         trace!(
             target: "executor::assertion",
-            ?code_hash,
+            assertion_contract_id = ?id,
             selector_count = fn_selectors.len(),
             selectors = ?fn_selectors.iter().map(|s| format!("{:x?}", s)).collect::<Vec<_>>(),
             "Running assertion contract"
         );
 
-        //Deploy the assertion contract
-        let execution_result = self.deploy_assertion_contract(
-            block_env.clone(),
-            code.clone(),
-            &mut multi_fork_db,
-            context,
-        )?;
-
-        if !execution_result.is_success() {
-            trace!(
-                target: "executor::assertion",
-                ?code_hash,
-                gas_used = execution_result.gas_used(),
-                "Assertion contract deployment failed"
-            );
-            let result = fn_selectors
-                .iter()
-                .map(|fn_selector| {
-                    AssertionFunctionResult {
-                        id: AssertionId {
-                            fn_selector: *fn_selector,
-                            code_hash: *code_hash,
-                        },
-                        result: AssertionFunctionExecutionResult::AssertionContractDeployFailure(
-                            execution_result.clone(),
-                        ),
-                    }
-                })
-                .collect::<Vec<AssertionFunctionResult>>();
-
-            let rax = AssertionContractExecution {
-                assertion_fns_results: result,
-                total_assertion_gas: 0,
-                total_assertion_funcs_ran: 0,
-            };
-
-            trace!(
-                target: "executor::assertion",
-                ?code_hash,
-                total_gas = rax.total_assertion_gas,
-                assertions_ran = rax.total_assertion_funcs_ran,
-                "Assertion contract deployment failed"
-            );
-
-            return Ok(rax);
-        }
-
-        let deployment_gas = execution_result.gas_used();
-        let remaining_gas = self.config.assertion_gas_limit - deployment_gas;
+        //Insert the assertion contract with state from deployment on an empty database.
+        self.insert_assertion_contract(assertion_contract, &mut multi_fork_db);
 
         let assertion_gas = AtomicU64::new(0);
         let assertions_ran = AtomicU64::new(0);
@@ -309,7 +260,7 @@ where
                         transact_to: TxKind::Call(ASSERTION_CONTRACT),
                         caller: CALLER,
                         data: (*fn_selector).into(),
-                        gas_limit: remaining_gas,
+                        gas_limit: self.config.assertion_gas_limit,
                         #[cfg(feature = "optimism")]
                         optimism: create_optimism_fields(),
                         ..Default::default()
@@ -325,16 +276,14 @@ where
                     .transact()
                     .map(|result_and_state| result_and_state.result)?;
 
-                let id = AssertionId {
-                    fn_selector: *fn_selector,
-                    code_hash: *code_hash,
-                };
-
                 assertion_gas.fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
                 assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 Ok(AssertionFunctionResult {
-                    id,
+                    id: AssertionId {
+                        fn_selector: *fn_selector,
+                        assertion_contract_id: *id,
+                    },
                     result: AssertionFunctionExecutionResult::AssertionExecutionResult(result),
                 })
             })
@@ -350,13 +299,13 @@ where
 
         let rax = AssertionContractExecution {
             assertion_fns_results: valid_results,
-            total_assertion_gas: deployment_gas + assertion_gas.into_inner(),
+            total_assertion_gas: assertion_gas.into_inner(),
             total_assertion_funcs_ran: assertions_ran.into_inner(),
         };
 
         trace!(
             target: "executor::assertion",
-            ?code_hash,
+            assertion_contract_id = ?id,
             total_gas = rax.total_assertion_gas,
             assertions_ran = rax.total_assertion_funcs_ran,
             "Assertion contract execution completed"
@@ -484,47 +433,42 @@ where
         Ok((call_tracer, result))
     }
 
-    /// Deploys an assertion contract to the forked db.
-    /// Returns the execution result
-    pub fn deploy_assertion_contract(
+    /// inserts the assertion contract to the forked db.
+    pub fn insert_assertion_contract(
         &self,
-        block_env: BlockEnv,
-        constructor_code: Bytecode,
+        assertion_contract: &AssertionContract,
         multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
-        context: &PhEvmContext,
-    ) -> ExecutorResult<ExecutionResult, DB> {
-        let tx_env = TxEnv {
-            transact_to: TxKind::Create,
-            caller: CALLER,
-            data: constructor_code.original_bytes(),
-            gas_limit: self.config.assertion_gas_limit,
-            #[cfg(feature = "optimism")]
-            optimism: create_optimism_fields(),
-            ..Default::default()
+    ) {
+        let AssertionContract {
+            deployed_code,
+            code_hash,
+            storage,
+            account_status,
+            ..
+        } = assertion_contract;
+
+        let account_info = AccountInfo {
+            nonce: 1,
+            balance: U256::MAX,
+            code: Some(deployed_code.clone()),
+            code_hash: *code_hash,
         };
 
-        let inspector = PhEvmInspector::new(self.config.spec_id, multi_fork_db, context);
+        let account = Account {
+            info: account_info,
+            storage: storage.clone(),
+            status: *account_status,
+        };
 
-        let result = new_evm(
-            tx_env,
-            block_env,
-            self.config.chain_id,
-            self.config.spec_id,
-            multi_fork_db,
-            inspector,
-        )
-        .transact()?;
+        let mut state = EvmState::default();
+        state.insert(ASSERTION_CONTRACT, account);
 
-        multi_fork_db.commit(result.state.clone());
+        multi_fork_db.commit(state);
 
         trace!(
             target: "executor::assertion",
-            gas_used = ?result.result.gas_used(),
-            success = result.result.is_success(),
-            "Completed assertion contract deployment"
+            "Inserted assertion contract into multi fork db"
         );
-
-        Ok(result.result)
     }
 }
 
@@ -560,60 +504,20 @@ mod test {
 
         let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
 
-        let mut multi_fork_db0 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
+        let mut multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
-        let result = executor
-            .deploy_assertion_contract(
-                BlockEnv::default(),
-                Bytecode::LegacyRaw(bytecode(SIMPLE_ASSERTION_COUNTER)),
-                &mut multi_fork_db0,
-                &PhEvmContext {
-                    tx_logs: &[],
-                    call_traces: &CallTracer::default(),
-                },
-            )
-            .unwrap();
+        let counter_assertion = counter_assertion();
 
-        assert!(result.gas_used() != 0);
-        assert!(result.is_success());
+        executor.insert_assertion_contract(&counter_assertion, &mut multi_fork_db);
 
-        let deployed_code0 = multi_fork_db0
-            .basic_ref(ASSERTION_CONTRACT)
-            .unwrap()
-            .unwrap()
-            .code
-            .unwrap();
-        assert!(!deployed_code0.is_empty());
-
-        let mut shortened_code = bytecode(SIMPLE_ASSERTION_COUNTER);
-        let len = shortened_code.len();
-        shortened_code.truncate(len - 1);
-
-        let mut multi_fork_db1 = MultiForkDb::new(shared_db.fork(), shared_db.fork());
-
-        let result = executor
-            .deploy_assertion_contract(
-                BlockEnv::default(),
-                Bytecode::LegacyRaw(shortened_code),
-                &mut multi_fork_db1,
-                &PhEvmContext {
-                    tx_logs: &[],
-                    call_traces: &CallTracer::default(),
-                },
-            )
-            .unwrap();
-
-        let deployed_code1 = multi_fork_db1
+        let deployed_code = multi_fork_db
             .basic_ref(ASSERTION_CONTRACT)
             .unwrap()
             .unwrap()
             .code
             .unwrap();
 
-        assert!(!deployed_code1.is_empty());
-
-        assert!(result.gas_used() != 0);
-        assert!(result.is_success());
+        assert_eq!(deployed_code, counter_assertion.deployed_code);
     }
 
     #[tokio::test]

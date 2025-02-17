@@ -50,9 +50,8 @@ contract TestGetCallInputs is Assertion, Test {
         return paramData;
     }
 
-    function fnSelectors() external pure override returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
-        selectors[0] = this.testGetCallInputs.selector;
+    function triggers() external view override {
+        registerCallTrigger(this.testGetCallInputs.selector);
     }
 }
 

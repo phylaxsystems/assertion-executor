@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
+import {Assertion} from "credible-std/Assertion.sol";
+
 contract Counter {
     uint256 public number;
 
@@ -9,7 +11,7 @@ contract Counter {
     }
 }
 
-contract SimpleCounterAssertion {
+contract SimpleCounterAssertion is Assertion {
     event RunningAssertion(uint256 count);
 
     function assertCount() public {
@@ -20,8 +22,7 @@ contract SimpleCounterAssertion {
         }
     }
 
-    function fnSelectors() external pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](1);
-        selectors[0] = this.assertCount.selector;
+    function triggers() external view override {
+        registerCallTrigger(this.assertCount.selector);
     }
 }
