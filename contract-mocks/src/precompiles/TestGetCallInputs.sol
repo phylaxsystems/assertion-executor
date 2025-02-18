@@ -17,8 +17,7 @@ contract TestGetCallInputs is Assertion, Test {
         PhEvm.CallInputs memory callInput = callInputs[0];
 
         require(callInput.target_address == address(TARGET_ADDRESS), "callInput.target_address != target");
-        require(callInput.input.length == 4, "callInput.input.length != 4");
-        require(bytes4(callInput.input) == Target.readStorage.selector, "callInput.input != readStorage()");
+        require(callInput.input.length == 0, "callInput.input.length != 0");
         require(callInput.value == 0, "callInput.value != 0");
 
         callInputs = ph.getCallInputs(address(TARGET_ADDRESS), Target.writeStorage.selector);
@@ -26,28 +25,17 @@ contract TestGetCallInputs is Assertion, Test {
 
         callInput = callInputs[0];
         require(callInput.target_address == address(TARGET_ADDRESS), "callInput.target_address != target");
-        require(callInput.input.length == 36, "callInput.input.length != 36");
-        require(bytes4(callInput.input) == Target.writeStorage.selector, "callInput.input != writeStorage(uint256)");
-        uint256 param = abi.decode(stripSelector(callInput.input), (uint256));
+        require(callInput.input.length == 32, "callInput.input.length != 32");
+        uint256 param = abi.decode(callInput.input, (uint256));
         require(param == 1, "First writeStorage param should be 1");
         require(callInput.value == 0, "callInput.value != 0");
 
         callInput = callInputs[1];
         require(callInput.target_address == address(TARGET_ADDRESS), "callInput.target_address != target");
-        require(callInput.input.length == 36, "callInput.input.length != 36");
-        require(bytes4(callInput.input) == Target.writeStorage.selector, "callInput.input != writeStorage(uint256)");
-        param = abi.decode(stripSelector(callInput.input), (uint256));
+        require(callInput.input.length == 32, "callInput.input.length != 32");
+        param = abi.decode(callInput.input, (uint256));
         require(param == 2, "Second writeStorage param should be 2");
         require(callInput.value == 0, "callInput.value != 0");
-    }
-
-    function stripSelector(bytes memory input) internal pure returns (bytes memory) {
-        // Create a new bytes memory and copy everything after the selector
-        bytes memory paramData = new bytes(32);
-        for (uint256 i = 4; i < input.length; i++) {
-            paramData[i - 4] = input[i];
-        }
-        return paramData;
     }
 
     function triggers() external view override {
