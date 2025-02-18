@@ -30,7 +30,7 @@ pub fn load_external_slot(
 ) -> CallOutcome {
     let call = match loadCall::abi_decode(&call_inputs.input, true) {
         Ok(call) => call,
-        Err(_) => return empty_outcome(gas),
+        Err(_) => return empty_outcome(gas, call_inputs.return_memory_offset.clone()),
     };
     let address: Address = call.target;
 
@@ -38,7 +38,7 @@ pub fn load_external_slot(
 
     let slot_value = match context.db.active_db.storage_ref(address, slot.into()) {
         Ok(rax) => rax,
-        Err(_) => return empty_outcome(gas),
+        Err(_) => return empty_outcome(gas, call_inputs.return_memory_offset.clone()),
     };
 
     let value = SolValue::abi_encode(&slot_value);

@@ -4,13 +4,16 @@ use crate::{
         DatabaseRef,
     },
     inspectors::{
-        precompiles::calls::get_call_inputs,
-        precompiles::fork::{
-            fork_post_state,
-            fork_pre_state,
+        precompiles::{
+            calls::get_call_inputs,
+            fork::{
+                fork_post_state,
+                fork_pre_state,
+            },
+            load::load_external_slot,
+            logs::get_logs,
+            state_changes::get_state_changes,
         },
-        precompiles::load::load_external_slot,
-        precompiles::logs::get_logs,
         sol_primitives::PhEvm,
         tracer::CallTracer,
     },
@@ -132,6 +135,7 @@ impl<'a> PhEvmInspector<'a> {
             PhEvm::loadCall::SELECTOR => load_external_slot(&context.inner, inputs, gas),
             PhEvm::getLogsCall::SELECTOR => get_logs(inputs, self.context, gas),
             PhEvm::getCallInputsCall::SELECTOR => get_call_inputs(inputs, self.context, gas),
+            PhEvm::getStateChangesCall::SELECTOR => get_state_changes(inputs, self.context, gas),
             _ => {
                 CallOutcome {
                     result: InterpreterResult {

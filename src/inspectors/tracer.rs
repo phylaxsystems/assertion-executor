@@ -17,6 +17,8 @@ use revm::{
     Inspector,
 };
 
+use crate::primitives::JournaledState;
+
 use std::collections::{
     HashMap,
     HashSet,
@@ -25,6 +27,7 @@ use std::collections::{
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CallTracer {
     pub call_inputs: HashMap<(Address, FixedBytes<4>), Vec<CallInputs>>,
+    pub journaled_state: Option<JournaledState>,
 }
 
 impl CallTracer {

@@ -6,7 +6,11 @@ use std::{
 };
 
 use crate::{
-    build_evm::new_evm,
+    build_evm::{
+        new_evm,
+        new_phevm,
+        new_tx_fork_evm,
+    },
     db::{
         fork_db::ForkDb,
         multi_fork_db::MultiForkDb,
@@ -255,7 +259,7 @@ where
 
                 let inspector =
                     PhEvmInspector::new(self.config.spec_id, &mut multi_fork_db, context);
-                let mut evm = new_evm(
+                let mut evm = new_phevm(
                     TxEnv {
                         transact_to: TxKind::Call(ASSERTION_CONTRACT),
                         caller: CALLER,
@@ -332,7 +336,7 @@ where
 
         let mut db = revm::db::WrapDatabaseRef(&fork_db);
 
-        let mut evm = new_evm(
+        let mut evm = new_tx_fork_evm(
             tx_env,
             block_env,
             self.config.chain_id,

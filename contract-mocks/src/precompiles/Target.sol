@@ -17,9 +17,14 @@ contract Target {
         return value;
     }
 
-    function writeStorage(uint256 value_) external {
+    function writeStorage(uint256 value_) public {
         value = value_;
         emit Log(value);
         emit Log2(value);
+    }
+
+    function writeStorageAndRevert(uint256 value_) external {
+        writeStorage(value_);
+        revert("revert from Target");
     }
 }

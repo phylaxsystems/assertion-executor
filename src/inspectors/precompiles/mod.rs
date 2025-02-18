@@ -19,15 +19,18 @@ pub mod calls;
 pub mod fork;
 pub mod load;
 pub mod logs;
+pub mod state_changes;
+
+use std::ops::Range;
 
 // Helper fn to return an empty calloutcome early.
-pub fn empty_outcome(gas: Gas) -> CallOutcome {
+pub fn empty_outcome(gas: Gas, memory_offset: Range<usize>) -> CallOutcome {
     CallOutcome {
         result: InterpreterResult {
             result: InstructionResult::Return,
             output: B256::default().into(),
             gas,
         },
-        memory_offset: 0..0,
+        memory_offset,
     }
 }
