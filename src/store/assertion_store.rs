@@ -188,7 +188,22 @@ impl AssertionStore {
         let active_assertion_contracts = assertion_states
             .into_iter()
             .filter(|a| {
-                a.active_at_block <= block && a.inactive_at_block.unwrap_or(u64::MAX) > block
+                let inactive_block = match a.inactive_at_block {
+                    Some(inactive_block) => {
+                        // If the inactive block is less than the active block, the end bound is
+                        // ignored.
+                        if inactive_block < a.active_at_block {
+                            u64::MAX
+                        } else {
+                            inactive_block
+                        }
+                    }
+                    None => u64::MAX,
+                };
+
+                let in_bound_start = a.active_at_block <= block;
+                let in_bound_end = block < inactive_block;
+                in_bound_start && in_bound_end
             })
             .map(|a| a.assertion_contract)
             .collect();
@@ -224,7 +239,7 @@ impl AssertionStore {
                     } => {
                         let existing_state = assertions
                             .iter_mut()
-                            .find(|a| a.assertion_contract_id() == assertion_contract.code_hash);
+                            .find(|a| a.assertion_contract_id() == assertion_contract.id);
 
                         match existing_state {
                             Some(state) => {
@@ -255,8 +270,9 @@ impl AssertionStore {
                             None => {
                                 // The assertion was not found, so we add it with the inactive_at_block set.
                                 error!(
-                                    "Assertion not found for removal: {:?}",
-                                    assertion_contract_id
+                                    target = "assertion-executor::ssertion_store",
+                                    ?assertion_contract_id,
+                                    "Apply pending modifications error: Assertion not found for removal",
                                 );
                             }
                         }
@@ -277,7 +293,7 @@ impl AssertionStore {
                 break;
             } else {
                 tracing::debug!(
-                    target: "executor::assertion_store",
+                    target: "assertion-executor::assertion_store",
                     ?result, "Assertion store CAS failed, retrying");
             }
         }
@@ -310,14 +326,37 @@ mod tests {
         aa: Address,
         log_index: u64,
     ) -> PendingModification {
+        create_test_modification_with_id(active_at, aa, log_index, B256::random())
+    }
+
+    fn create_test_modification_with_id(
+        active_at: u64,
+        aa: Address,
+        log_index: u64,
+        id: B256,
+    ) -> PendingModification {
         PendingModification::Add {
             log_index,
             assertion_adopter: aa,
             assertion_contract: AssertionContract {
-                id: B256::random(),
+                id,
                 ..Default::default()
             },
             active_at_block: active_at,
+        }
+    }
+
+    fn create_test_modification_remove(
+        inactive_at: u64,
+        aa: Address,
+        log_index: u64,
+        id: B256,
+    ) -> PendingModification {
+        PendingModification::Remove {
+            log_index,
+            assertion_adopter: aa,
+            assertion_contract_id: id,
+            inactive_at_block: inactive_at,
         }
     }
 
@@ -439,6 +478,41 @@ mod tests {
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
         assert_eq!(assertions[0].id, mod1.assertion_contract_id());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_update_same_assertion() -> Result<(), AssertionStoreError> {
+        let store = AssertionStore::new_ephemeral()?;
+        let aa = Address::random();
+
+        let a_state = create_test_assertion(100, None);
+        let id = a_state.assertion_contract_id();
+        let _ = store.insert(aa, a_state);
+
+        let mod1 = create_test_modification_remove(200, aa, 0, id);
+        let mod2 = create_test_modification_with_id(300, aa, 1, id);
+
+        // Apply modifications
+        store.apply_pending_modifications(vec![mod1, mod2])?;
+
+        // Create a call tracer that includes both AAs
+        let mut tracer = CallTracer::default();
+        tracer.insert_trace(aa);
+
+        assert_eq!(store.db.lock().unwrap().len(), 1);
+        let assertions: Vec<AssertionState> =
+            de(&store.db.lock().unwrap().get(aa)?.unwrap()).unwrap();
+
+        assert_eq!(assertions.len(), 1);
+
+        // Read at block 250 (should see no assertion)
+        let assertions = store.read(&tracer, U256::from(250))?;
+        assert_eq!(assertions.len(), 0);
+
+        let assertions = store.read(&tracer, U256::from(350))?;
+        assert_eq!(assertions.len(), 1);
 
         Ok(())
     }
