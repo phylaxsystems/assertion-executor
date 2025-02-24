@@ -48,8 +48,6 @@ use crate::{
         extract_assertion_contract,
         AssertionStore,
         AssertionStoreError,
-        DaClient,
-        DaClientError,
         PendingModification,
     },
     utils::reorg_utils::{
@@ -57,6 +55,11 @@ use crate::{
         CheckIfReorgedError,
     },
     ExecutorConfig,
+};
+
+use assertion_da_client::{
+    DaClient,
+    DaClientError,
 };
 
 use std::collections::BTreeMap;
@@ -479,8 +482,9 @@ impl<N: Network> Indexer<N> {
 
                 let bytecode = self
                     .da_client
-                    .fetch_assertion_bytecode(event.assertionId)
-                    .await?;
+                    .fetch_assertion(event.assertionId)
+                    .await?
+                    .bytecode;
 
                 let assertion_contract_res =
                     extract_assertion_contract(bytecode.clone(), &self.executor_config);
@@ -548,6 +552,7 @@ mod test_indexer {
     use crate::{
         inspectors::CallTracer,
         primitives::{
+            keccak256,
             Address,
             AssertionContract,
             Bytes,
@@ -558,12 +563,17 @@ mod test_indexer {
             bytecode,
             deployed_bytecode,
             mine_block,
+            random_bytes,
             selector_assertion,
             FN_SELECTOR,
         },
     };
 
     use sled::Config;
+
+    use tokio::task::JoinHandle;
+
+    use tokio::net::TcpListener;
 
     use alloy::hex::FromHex;
     use alloy_network::Ethereum;
@@ -583,6 +593,9 @@ mod test_indexer {
 
     use std::net::SocketAddr;
 
+    use assertion_da_client::DaSubmissionResponse;
+    use assertion_da_server::spawn_processes;
+
     use jsonrpsee::{
         server::{
             RpcModule,
@@ -600,7 +613,7 @@ mod test_indexer {
 
     }
 
-    async fn setup() -> (Indexer<Ethereum>, ServerHandle, AnvilInstance) {
+    async fn setup() -> (Indexer<Ethereum>, JoinHandle<()>, AnvilInstance) {
         let (provider, anvil) = anvil_provider().await;
 
         let state_oracle = Address::new([0; 20]);
@@ -642,9 +655,10 @@ mod test_indexer {
         let assertion_id = selector_assertion.id;
 
         let assertion = bytecode(FN_SELECTOR);
+
         indexer
             .da_client
-            .submit_assertion(assertion_id, assertion.clone())
+            .submit_assertion(assertion.clone())
             .await
             .unwrap();
 
@@ -685,58 +699,44 @@ mod test_indexer {
         protocol_addr
     }
 
-    async fn mock_da_server() -> (ServerHandle, u16) {
-        let server = ServerBuilder::default()
-            .build("127.0.0.1:0".to_string().parse::<SocketAddr>().unwrap())
-            .await
+    async fn mock_da_server() -> (JoinHandle<()>, u16) {
+        unsafe {
+            std::env::set_var(
+                "PRIVATE_KEY",
+                "00973f42a0620b6fee12391c525daeb64097412e117b8f09a2742e06ca14e0ae",
+            );
+        }
+
+        let config = assertion_da_server::Config {
+            db_path: tempfile::tempdir()
+                .unwrap()
+                .path()
+                .to_str()
+                .unwrap()
+                .to_string(),
+            listen_addr: "127.0.0.1:0".to_owned(),
+            cache_size: 1024,
+        };
+
+        println!("Binding to: {}", config.listen_addr);
+        let listener = TcpListener::bind(&config.listen_addr).await.unwrap();
+        let local_addr = listener.local_addr().unwrap();
+        println!("Bound to: {}", local_addr);
+
+        // Try to open the sled db
+        let db: sled::Db<1024> = sled::Config::new()
+            .path(&config.db_path)
+            .cache_capacity_bytes(config.cache_size)
+            .open()
             .unwrap();
 
-        let da = std::sync::Mutex::new(std::collections::HashMap::<B256, Bytes>::new());
+        // We now want to spawn all internal processes inside of a loop in this macro,
+        // tokio selecting them so we can essentially restart the whole assertion
+        // loader on demand in case anything fails.
 
-        let mut module = RpcModule::new(da);
-        module
-            .register_method("da_get_assertion", |params, ctx, _| {
-                let string: String = params.one()?;
+        let handle = tokio::spawn(async move { spawn_processes!(listener, db) });
 
-                let b256 = B256::from_hex(string).map_err(|_| {
-                    ErrorObjectOwned::owned(500, "Failed to decode hex of id", None::<()>)
-                })?;
-
-                match ctx.lock().unwrap_or_else(|e| e.into_inner()).get(&b256) {
-                    Some(code) => Ok(code.to_string()),
-                    None => {
-                        Err(ErrorObjectOwned::owned(
-                            404,
-                            "Assertion not found".to_string(),
-                            None::<()>,
-                        ))
-                    }
-                }
-            })
-            .unwrap();
-
-        module
-            .register_method("da_submit_assertion", |params, ctx, _| {
-                let (id_string, code_string): (String, String) = params.parse()?;
-
-                let b256 = B256::from_hex(id_string).map_err(|_| {
-                    ErrorObjectOwned::owned(500, "Failed to decode hex of id", None::<()>)
-                })?;
-                let code = Bytes::from_hex(code_string).map_err(|_| {
-                    ErrorObjectOwned::owned(500, "Failed to decode hex of code", None::<()>)
-                })?;
-
-                ctx.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(b256, code);
-                Ok::<(), ErrorObjectOwned>(())
-            })
-            .unwrap();
-
-        let port = server.local_addr().unwrap().port();
-        let handle = server.start(module);
-
-        (handle, port)
+        (handle, local_addr.port())
     }
 
     async fn mine_block_write_hash(indexer: &Indexer<Ethereum>) -> alloy_rpc_types::Header {

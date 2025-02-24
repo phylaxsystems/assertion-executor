@@ -13,6 +13,7 @@ tracing = "0.1.40"
 zerocopy = { version = "0.8.3", features = ["derive"] }
 tempfile = "3.13.0"
 parking_lot = "0.12.1"
+assertion-da-client = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git" }
 
 # ETH deps
 alloy = "0.8.3"
@@ -71,6 +72,7 @@ phoundry = ["revm_18"]
 rand = "0.8.5"
 serde_json = "1.0.133"
 tempfile = "3.13.0"
+assertion-da-server = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git" }
 
 [[bin]]
 name = "demo"

@@ -5,8 +5,7 @@ pub use assertion_contract_extractor::{
     FnSelectorExtractorError,
 };
 
-mod da_client;
-pub use da_client::{
+pub use assertion_da_client::{
     DaClient,
     DaClientError,
 };
