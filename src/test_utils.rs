@@ -2,6 +2,7 @@
 
 use crate::{
     db::SharedDB,
+    inspectors::TriggerRecorder,
     primitives::{
         address,
         fixed_bytes,
@@ -80,16 +81,16 @@ pub fn counter_acct_info() -> AccountInfo {
 pub const SIMPLE_ASSERTION_COUNTER: &str = "SimpleCounterAssertion.sol:SimpleCounterAssertion";
 
 pub fn counter_assertion() -> AssertionContract {
-    get_assertion_contract(SIMPLE_ASSERTION_COUNTER)
+    get_assertion_contract(SIMPLE_ASSERTION_COUNTER).0
 }
 
 pub const FN_SELECTOR: &str = "SelectorImpl.sol:SelectorImpl";
 
-fn get_assertion_contract(artifact: &str) -> AssertionContract {
+fn get_assertion_contract(artifact: &str) -> (AssertionContract, TriggerRecorder) {
     extract_assertion_contract(bytecode(artifact), &ExecutorConfig::default()).unwrap()
 }
 
-pub fn selector_assertion() -> AssertionContract {
+pub fn selector_assertion() -> (AssertionContract, TriggerRecorder) {
     get_assertion_contract(FN_SELECTOR)
 }
 

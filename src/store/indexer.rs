@@ -490,17 +490,18 @@ impl<N: Network> Indexer<N> {
                     extract_assertion_contract(bytecode.clone(), &self.executor_config);
 
                 match assertion_contract_res {
-                    Ok(assertion_contract) => {
+                    Ok((assertion_contract, trigger_recorder)) => {
                         let active_at_block = event
                             .activeAtBlock
                             .try_into()
                             .map_err(|_| IndexerError::BlockNumberExceedsU64)?;
 
                         Some(PendingModification::Add {
+                            assertion_adopter: event.contractAddress,
+                            assertion_contract,
+                            trigger_recorder,
                             active_at_block,
                             log_index,
-                            assertion_contract,
-                            assertion_adopter: event.contractAddress,
                         })
                     }
                     Err(e) => {
@@ -550,7 +551,10 @@ impl<N: Network> Indexer<N> {
 mod test_indexer {
     use super::*;
     use crate::{
-        inspectors::CallTracer,
+        inspectors::{
+            CallTracer,
+            TriggerRecorder,
+        },
         primitives::{
             keccak256,
             Address,
@@ -651,8 +655,8 @@ mod test_indexer {
 
         let protocol_addr = Address::random();
 
-        let selector_assertion = selector_assertion();
-        let assertion_id = selector_assertion.id;
+        let (assertion_contract, _) = selector_assertion();
+        let assertion_id = assertion_contract.id;
 
         let assertion = bytecode(FN_SELECTOR);
 
@@ -787,21 +791,22 @@ mod test_indexer {
 
         let pending_modifications: Vec<PendingModification> = bincode::deserialize(&value).unwrap();
 
-        let selector_assertion = selector_assertion();
+        let (assertion_contract, trigger_recorder) = selector_assertion();
 
         assert_eq!(
             pending_modifications,
             vec![
                 PendingModification::Add {
+                    assertion_adopter,
+                    assertion_contract: assertion_contract.clone(),
+                    trigger_recorder,
                     active_at_block: 65,
                     log_index: 0,
-                    assertion_contract: selector_assertion.clone(),
-                    assertion_adopter,
                 },
                 PendingModification::Remove {
                     inactive_at_block: 65,
                     log_index: 1,
-                    assertion_contract_id: selector_assertion.id,
+                    assertion_contract_id: assertion_contract.id,
                     assertion_adopter,
                 },
             ]
@@ -958,6 +963,7 @@ mod test_indexer {
         let modification = PendingModification::Add {
             assertion_adopter: aa,
             assertion_contract: AssertionContract::default(),
+            trigger_recorder: TriggerRecorder::default(),
             active_at_block: 3,
             log_index: 0,
         };

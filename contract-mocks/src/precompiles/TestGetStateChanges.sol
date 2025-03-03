@@ -5,13 +5,13 @@ import {Assertion} from "credible-std/Assertion.sol";
 import {PhEvm} from "credible-std/PhEvm.sol";
 import {Test} from "forge-std/Test.sol";
 import {console} from "forge-std/console.sol";
-import {Target, TARGET_ADDRESS} from "./Target.sol";
+import {Target, TARGET} from "./Target.sol";
 
 contract TestGetStateChanges is Assertion, Test {
     constructor() payable {}
 
-    function testGetStateChanges() external {
-        bytes32[] memory changes = ph.getStateChanges(address(TARGET_ADDRESS), bytes32(0));
+    function testGetStateChanges() external view {
+        bytes32[] memory changes = ph.getStateChanges(address(TARGET), bytes32(0));
 
         require(changes.length == 3, "changes.length != 3");
 
@@ -27,15 +27,15 @@ contract TestGetStateChanges is Assertion, Test {
 
 contract TriggeringTx {
     constructor() payable {
-        TARGET_ADDRESS.writeStorage(5);
+        TARGET.writeStorage(5);
 
         // Test that state changes before reverts are not included.
-        try TARGET_ADDRESS.writeStorageAndRevert(10) {
+        try TARGET.writeStorageAndRevert(10) {
             revert("Expected revert");
         } catch Error(string memory) {
             console.log("Caught revert as expected");
         }
 
-        TARGET_ADDRESS.writeStorage(15);
+        TARGET.writeStorage(15);
     }
 }

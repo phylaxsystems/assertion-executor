@@ -46,8 +46,7 @@ use std::collections::{
 pub struct AssertionContract {
     /// The hash of the deployment data.
     pub id: B256,
-    /// The selectors of the assertion functions.
-    pub fn_selectors: Vec<FixedBytes<4>>,
+
     /// The deployed code of the assertion contract.
     pub deployed_code: Bytecode,
     /// The hash of the deployed code.

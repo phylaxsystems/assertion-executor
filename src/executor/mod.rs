@@ -205,16 +205,17 @@ where
         trace!(
             target: "assertion-executor::execute_assertions",
             assertion_count = assertions.len(),
-            assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.id)).collect::<Vec<_>>(),
+            assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.0.id)).collect::<Vec<_>>(),
             "Retrieved Assertion contracts from Assertion store"
         );
 
         let results: ExecutorResult<Vec<AssertionContractExecution>, DB> = assertions
             .into_par_iter()
             .map(
-                move |assertion_contract| -> ExecutorResult<AssertionContractExecution, DB> {
+                move |(assertion_contract, fn_selectors)| -> ExecutorResult<AssertionContractExecution, DB> {
                     self.run_assertion_contract(
                         &assertion_contract,
+                        &fn_selectors,
                         block_env.clone(),
                         multi_fork_db.clone(),
                         context,
@@ -228,13 +229,12 @@ where
     fn run_assertion_contract(
         &self,
         assertion_contract: &AssertionContract,
+        fn_selectors: &[FixedBytes<4>],
         block_env: BlockEnv,
         mut multi_fork_db: MultiForkDb<ForkDb<DB>>,
         context: &PhEvmContext,
     ) -> ExecutorResult<AssertionContractExecution, DB> {
-        let AssertionContract {
-            fn_selectors, id, ..
-        } = assertion_contract;
+        let AssertionContract { id, .. } = assertion_contract;
 
         trace!(
             target: "executor::assertion",

@@ -1,15 +1,21 @@
 use crate::{
-    inspectors::CallTracer,
+    inspectors::{
+        CallTracer,
+        TriggerRecorder,
+    },
     primitives::{
         Address,
         AssertionContract,
         Bytes,
+        FixedBytes,
         B256,
         U256,
     },
     store::{
-        assertion_contract_extractor::extract_assertion_contract,
-        FnSelectorExtractorError,
+        assertion_contract_extractor::{
+            extract_assertion_contract,
+            FnSelectorExtractorError,
+        },
         PendingModification,
     },
     ExecutorConfig,
@@ -48,6 +54,7 @@ pub struct AssertionState {
     active_at_block: u64,
     inactive_at_block: Option<u64>,
     assertion_contract: AssertionContract,
+    trigger_recorder: TriggerRecorder,
 }
 
 impl AssertionState {
@@ -57,11 +64,13 @@ impl AssertionState {
         bytecode: Bytes,
         executor_config: &ExecutorConfig,
     ) -> Result<Self, FnSelectorExtractorError> {
-        let assertion_contract = extract_assertion_contract(bytecode.clone(), executor_config)?;
+        let (contract, trigger_recorder) =
+            extract_assertion_contract(bytecode.clone(), executor_config)?;
         Ok(Self {
-            assertion_contract,
             active_at_block: 0,
             inactive_at_block: None,
+            assertion_contract: contract,
+            trigger_recorder,
         })
     }
 
@@ -151,7 +160,7 @@ impl AssertionStore {
         &self,
         traces: &CallTracer,
         block_num: U256,
-    ) -> Result<Vec<AssertionContract>, AssertionStoreError> {
+    ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
         let block_num = block_num
             .try_into()
             .map_err(|_| AssertionStoreError::BlockNumberExceedsU64)?;
@@ -175,7 +184,7 @@ impl AssertionStore {
         &self,
         assertion_adopter: Address,
         block: u64,
-    ) -> Result<Vec<AssertionContract>, AssertionStoreError> {
+    ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
         let assertion_states = self
             .db
             .lock()
@@ -205,7 +214,12 @@ impl AssertionStore {
                 let in_bound_end = block < inactive_block;
                 in_bound_start && in_bound_end
             })
-            .map(|a| a.assertion_contract)
+            .map(|a| {
+                (
+                    a.assertion_contract,
+                    a.trigger_recorder.triggers.keys().cloned().collect(),
+                )
+            })
             .collect();
 
         Ok(active_assertion_contracts)
@@ -234,6 +248,7 @@ impl AssertionStore {
                 match modification {
                     PendingModification::Add {
                         assertion_contract,
+                        trigger_recorder,
                         active_at_block,
                         ..
                     } => {
@@ -247,9 +262,10 @@ impl AssertionStore {
                             }
                             None => {
                                 assertions.push(AssertionState {
-                                    assertion_contract,
                                     active_at_block,
                                     inactive_at_block: None,
+                                    assertion_contract,
+                                    trigger_recorder,
                                 });
                             }
                         }
@@ -317,6 +333,7 @@ mod tests {
                 id: B256::random(),
                 ..Default::default()
             },
+            trigger_recorder: TriggerRecorder::default(),
         };
         state
     }
@@ -336,13 +353,14 @@ mod tests {
         id: B256,
     ) -> PendingModification {
         PendingModification::Add {
-            log_index,
             assertion_adopter: aa,
             assertion_contract: AssertionContract {
                 id,
                 ..Default::default()
             },
+            trigger_recorder: TriggerRecorder::default(),
             active_at_block: active_at,
+            log_index,
         }
     }
 
@@ -379,7 +397,7 @@ mod tests {
         // Read at block 150 (should be active)
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].id, assertion_contract_id);
+        assert_eq!(assertions[0].0.id, assertion_contract_id);
 
         // Read at block 50 (should be inactive)
         let assertions = store.read(&tracer, U256::from(50))?;
@@ -407,7 +425,7 @@ mod tests {
         // Read at block 150 (should see first assertion only)
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].id, mod1.assertion_contract_id());
+        assert_eq!(assertions[0].0.id, mod1.assertion_contract_id());
 
         // Read at block 250 (should see both assertions)
         let assertions = store.read(&tracer, U256::from(250))?;
@@ -477,7 +495,7 @@ mod tests {
         // Should only see one assertion
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].id, mod1.assertion_contract_id());
+        assert_eq!(assertions[0].0.id, mod1.assertion_contract_id());
 
         Ok(())
     }

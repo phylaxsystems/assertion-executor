@@ -1,7 +1,7 @@
 use crate::{
     inspectors::sol_primitives::{
         Error,
-        Triggers,
+        ITriggerRecorder,
     },
     primitives::{
         address,
@@ -44,21 +44,38 @@ use std::{
     ops::Range,
 };
 
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
 /// Trigger recorder address
 /// address(uint160(uint256(keccak256("TriggerRecorder"))))
 pub const TRIGGER_RECORDER: Address = address!("55BB9AD8Dc1EE06D47279fC2B23Cd755B7f2d326");
 
-/// Trigger type
-#[derive(Clone, Debug, Default, PartialEq, Hash, Eq)]
+/// Trigger type represents different types of triggers that can be registered for assertions
+///
+/// Call { fn_selector: FixedBytes<4> } - Triggers on specific function calls matching the 4-byte selector
+/// AllCalls - Triggers on any function call to the contract
+/// BalanceChange - Triggers when the contract's ETH balance changes
+/// StorageChange { slot: FixedBytes<32> } - Triggers when a specific storage slot is modified
+/// AllStorageChanges - Triggers on any storage modification in the contract
+///
+/// These triggers are used to determine when an assertion should be executed.
+/// The trigger recorder keeps track of which triggers are registered for each contract.
+#[derive(Clone, Debug, PartialEq, Hash, Eq, Serialize, Deserialize)]
 pub enum TriggerType {
-    #[default]
-    Call,
+    Call { fn_selector: FixedBytes<4> },
+    AllCalls,
+    BalanceChange,
+    StorageChange { slot: FixedBytes<32> },
+    AllStorageChanges,
 }
 
 /// TriggerRecorder is an inspector for recording calls made to register triggers at the trigger
 /// recorder address.
 /// The recorder triggers are used to determine when to run an assertion.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TriggerRecorder {
     pub triggers: HashMap<FixedBytes<4>, HashSet<TriggerType>>,
 }
@@ -82,17 +99,70 @@ impl TriggerRecorder {
             .try_into()
             .unwrap_or_default()
         {
-            Triggers::registerCallTriggerCall::SELECTOR => {
-                let fn_selector =
-                    Triggers::registerCallTriggerCall::abi_decode(&inputs.input, true)?.fnSelector;
+            ITriggerRecorder::registerCallTrigger_0Call::SELECTOR => {
+                let call =
+                    ITriggerRecorder::registerCallTrigger_0Call::abi_decode(&inputs.input, true)?;
+                let triggers = self.triggers.entry(call.fnSelector).or_default();
+
+                // Remove any specific Call triggers and replace with AllCalls
+                triggers.retain(|t| !matches!(t, TriggerType::Call { .. }));
+                triggers.insert(TriggerType::AllCalls);
+            }
+
+            ITriggerRecorder::registerCallTrigger_1Call::SELECTOR => {
+                let call =
+                    ITriggerRecorder::registerCallTrigger_1Call::abi_decode(&inputs.input, true)?;
+                let triggers = self.triggers.entry(call.fnSelector).or_default();
+
+                // If AllCalls exists, don't add specific call trigger
+                if !triggers.contains(&TriggerType::AllCalls) {
+                    triggers.insert(TriggerType::Call {
+                        fn_selector: call.triggerSelector,
+                    });
+                }
+            }
+
+            ITriggerRecorder::registerStorageChangeTrigger_0Call::SELECTOR => {
+                let call = ITriggerRecorder::registerStorageChangeTrigger_0Call::abi_decode(
+                    &inputs.input,
+                    true,
+                )?;
+                let triggers = self.triggers.entry(call.fnSelector).or_default();
+
+                // Remove any specific StorageChange triggers and replace with AllStorageChanges
+                triggers.retain(|t| !matches!(t, TriggerType::StorageChange { .. }));
+                triggers.insert(TriggerType::AllStorageChanges);
+            }
+
+            ITriggerRecorder::registerStorageChangeTrigger_1Call::SELECTOR => {
+                let call = ITriggerRecorder::registerStorageChangeTrigger_1Call::abi_decode(
+                    &inputs.input,
+                    true,
+                )?;
+
+                let triggers = self.triggers.entry(call.fnSelector).or_default();
+
+                // If AllStorageChanges exists, don't add specific StorageChange trigger
+                if !triggers.contains(&TriggerType::AllStorageChanges) {
+                    triggers.insert(TriggerType::StorageChange { slot: call.slot });
+                }
+            }
+
+            ITriggerRecorder::registerBalanceChangeTriggerCall::SELECTOR => {
+                let fn_selector = ITriggerRecorder::registerBalanceChangeTriggerCall::abi_decode(
+                    &inputs.input,
+                    true,
+                )?
+                .fnSelector;
 
                 self.triggers
                     .entry(fn_selector)
                     .or_default()
-                    .insert(TriggerType::Call);
+                    .insert(TriggerType::BalanceChange);
             }
+
             _ => return Err(RecordError::FnSelectorNotFound),
-        };
+        }
         Ok(())
     }
 }
@@ -256,15 +326,61 @@ mod test {
     }
 
     #[test]
-    fn trigger_recording() {
+    fn record_trigger_on_any() {
         let mut triggers: HashMap<FixedBytes<4>, HashSet<TriggerType>> = HashMap::new();
         triggers.insert(
             fixed_bytes!("DEADBEEF"),
-            vec![TriggerType::Call].into_iter().collect(),
+            vec![
+                TriggerType::AllCalls,
+                TriggerType::AllStorageChanges,
+                TriggerType::BalanceChange,
+            ]
+            .into_iter()
+            .collect(),
         );
 
         assert_eq!(
-            run_trigger_recorder_test("CallTrigger"),
+            run_trigger_recorder_test("TriggerOnAny"),
+            TriggerRecorder { triggers }
+        );
+    }
+
+    #[test]
+    fn record_trigger_on_specific() {
+        let mut triggers: HashMap<FixedBytes<4>, HashSet<TriggerType>> = HashMap::new();
+        triggers.insert(
+            fixed_bytes!("DEADBEEF"),
+            vec![
+                TriggerType::Call {
+                    fn_selector: fixed_bytes!("f18c388a"),
+                },
+                TriggerType::StorageChange {
+                    slot: fixed_bytes!(
+                        "ccc4fa32c72b32fc1388e9b17cbcd9cb5939d52551871739e4c3415f4ee595a0"
+                    ),
+                },
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        assert_eq!(
+            run_trigger_recorder_test("TriggerOnSpecific"),
+            TriggerRecorder { triggers }
+        );
+    }
+
+    #[test]
+    fn record_trigger_override() {
+        let mut triggers: HashMap<FixedBytes<4>, HashSet<TriggerType>> = HashMap::new();
+        triggers.insert(
+            fixed_bytes!("DEADBEEF"),
+            vec![TriggerType::AllCalls, TriggerType::AllStorageChanges]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(
+            run_trigger_recorder_test("TriggerOverride"),
             TriggerRecorder { triggers }
         );
     }

@@ -59,11 +59,11 @@ pub enum FnSelectorExtractorError {
     NoTriggersFound,
 }
 
-/// Extracts [`AssertionContract`] from a given assertion contract's deployment bytecode.
+/// Extracts [`AssertionContract`] and [`TriggerRecorder`] from a given assertion contract's deployment bytecode
 pub fn extract_assertion_contract(
     assertion_code: Bytes,
     config: &ExecutorConfig,
-) -> Result<AssertionContract, FnSelectorExtractorError> {
+) -> Result<(AssertionContract, TriggerRecorder), FnSelectorExtractorError> {
     let block_env = BlockEnv::default();
 
     // Deploy the contract first
@@ -146,16 +146,20 @@ pub fn extract_assertion_contract(
         ..
     } = init_account;
 
-    Ok(AssertionContract {
-        deployed_code: info
-            .code
-            .ok_or(FnSelectorExtractorError::AssertionContractDeployFailed)?,
-        code_hash: info.code_hash,
-        storage,
-        account_status: status,
-        fn_selectors,
-        id: keccak256(&assertion_code),
-    })
+    let deployed_code = info
+        .code
+        .ok_or(FnSelectorExtractorError::AssertionContractDeployFailed)?;
+
+    Ok((
+        AssertionContract {
+            deployed_code,
+            code_hash: info.code_hash,
+            storage,
+            account_status: status,
+            id: keccak256(&assertion_code),
+        },
+        evm.context.external,
+    ))
 }
 
 #[test]
@@ -166,13 +170,23 @@ fn test_get_assertion_selectors() {
 
     let config = ExecutorConfig::default();
     // Test with valid assertion contract
-    let assertion_contract = extract_assertion_contract(bytecode(FN_SELECTOR), &config).unwrap();
+    let (_, trigger_recorder) = extract_assertion_contract(bytecode(FN_SELECTOR), &config).unwrap();
 
     // Verify the contract has the expected selectors from the counter assertion
     let expected_fn_selectors = vec![
+        fixed_bytes!("e7f48038"),
         fixed_bytes!("1ff1bc3a"),
         fixed_bytes!("d210b7cf"),
-        fixed_bytes!("e7f48038"),
-    ];
-    assert_eq!(assertion_contract.fn_selectors, expected_fn_selectors);
+    ]
+    .sort();
+
+    assert_eq!(
+        trigger_recorder
+            .triggers
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .sort(),
+        expected_fn_selectors
+    );
 }

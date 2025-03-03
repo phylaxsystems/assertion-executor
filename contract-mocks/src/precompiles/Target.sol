@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-Target constant TARGET_ADDRESS = Target(address(0x118DD24a3b0D02F90D8896E242D3838B4D37c181));
+Target constant TARGET = Target(address(0x118DD24a3b0D02F90D8896E242D3838B4D37c181));
 
 contract Target {
     event Log(uint256 value);

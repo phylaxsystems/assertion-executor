@@ -24,11 +24,15 @@ pub use indexer::{
     IndexerError,
 };
 
-use crate::primitives::{
-    Address,
-    AssertionContract,
-    B256,
+use crate::{
+    inspectors::TriggerRecorder,
+    primitives::{
+        Address,
+        AssertionContract,
+        B256,
+    },
 };
+
 use serde::{
     Deserialize,
     Serialize,
@@ -43,6 +47,7 @@ pub enum PendingModification {
     Add {
         assertion_adopter: Address,
         assertion_contract: AssertionContract,
+        trigger_recorder: TriggerRecorder,
         active_at_block: u64,
         log_index: u64,
     },
