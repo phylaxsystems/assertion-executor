@@ -87,12 +87,12 @@ impl AssertionState {
 
 #[derive(Debug, Clone)]
 pub struct AssertionStore {
-    db: Arc<Mutex<sled::Tree>>,
+    db: Arc<Mutex<sled::Db>>,
 }
 
 impl AssertionStore {
     /// Create a new assertion store
-    pub fn new(active_assertions_tree: sled::Tree) -> Self {
+    pub fn new(active_assertions_tree: sled::Db) -> Self {
         Self {
             db: Arc::new(Mutex::new(active_assertions_tree)),
         }
@@ -101,7 +101,7 @@ impl AssertionStore {
     /// Creates a new assertion store without persistence.
     pub fn new_ephemeral() -> Result<Self, AssertionStoreError> {
         let db = sled::Config::tmp()?.open()?;
-        Ok(Self::new(db.open_tree("active_assertions")?))
+        Ok(Self::new(db))
     }
 
     /// Inserts the given assertion into the store.
