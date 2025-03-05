@@ -2,6 +2,7 @@ use crate::{
     inspectors::{
         CallTracer,
         TriggerRecorder,
+        TriggerType,
     },
     primitives::{
         Address,
@@ -168,9 +169,8 @@ impl AssertionStore {
             .map_err(|_| AssertionStoreError::BlockNumberExceedsU64)?;
 
         let mut assertions = Vec::new();
-
-        for contract_address in traces.calls() {
-            let contract_assertions = self.read_adopter(contract_address, block_num)?;
+        for (contract_address, triggers) in traces.triggers() {
+            let contract_assertions = self.read_adopter(contract_address, triggers, block_num)?;
             assertions.extend(contract_assertions);
         }
 
@@ -185,6 +185,7 @@ impl AssertionStore {
     fn read_adopter(
         &self,
         assertion_adopter: Address,
+        triggers: HashSet<TriggerType>,
         block: u64,
     ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
         let assertion_states = self
@@ -217,17 +218,45 @@ impl AssertionStore {
                 in_bound_start && in_bound_end
             })
             .map(|a| {
-                (
-                    a.assertion_contract,
-                    a.trigger_recorder
+                // Get all function selectors from matching triggers
+                let mut all_selectors = HashSet::new();
+                let mut has_call_trigger = false;
+                let mut has_storage_trigger = false;
+
+                // Process specific triggers and detect trigger types
+                for trigger in &triggers {
+                    if let Some(selectors) = a.trigger_recorder.triggers.get(trigger) {
+                        all_selectors.extend(selectors.iter().cloned());
+                    }
+
+                    // Check trigger type while we're iterating
+                    match trigger {
+                        TriggerType::Call { .. } => has_call_trigger = true,
+                        TriggerType::StorageChange { .. } => has_storage_trigger = true,
+                        _ => {}
+                    }
+                }
+
+                // Add AllCalls selectors if needed
+                if has_call_trigger {
+                    if let Some(selectors) = a.trigger_recorder.triggers.get(&TriggerType::AllCalls)
+                    {
+                        all_selectors.extend(selectors.iter().cloned());
+                    }
+                }
+
+                // Add AllStorageChanges selectors if needed
+                if has_storage_trigger {
+                    if let Some(selectors) = a
+                        .trigger_recorder
                         .triggers
-                        .values()
-                        .flat_map(|v| v.iter())
-                        .cloned()
-                        .collect::<HashSet<_>>()
-                        .into_iter()
-                        .collect::<Vec<_>>(),
-                )
+                        .get(&TriggerType::AllStorageChanges)
+                    {
+                        all_selectors.extend(selectors.iter().cloned());
+                    }
+                }
+                // Convert HashSet to Vec to match the expected return type
+                (a.assertion_contract, all_selectors.into_iter().collect())
             })
             .collect();
 
@@ -328,8 +357,17 @@ impl AssertionStore {
 }
 #[cfg(test)]
 mod tests {
+
     use super::*;
-    use crate::primitives::Address;
+    use crate::primitives::{
+        Address,
+        JournalEntry,
+        JournaledState,
+        SpecId,
+    };
+
+    use revm::primitives::HashSet as RevmHashSet;
+    use std::collections::HashSet;
 
     fn create_test_assertion(
         active_at_block: u64,
@@ -555,5 +593,192 @@ mod tests {
             result,
             Err(AssertionStoreError::BlockNumberExceedsU64)
         ));
+    }
+
+    fn setup_and_match(
+        recorded_triggers: Vec<(TriggerType, HashSet<FixedBytes<4>>)>,
+        journal_entries: Vec<JournalEntry>,
+        assertion_adopter: Address,
+    ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
+        let store = AssertionStore::new_ephemeral()?;
+        let mut trigger_recorder = TriggerRecorder::default();
+
+        recorded_triggers.iter().for_each(|(trigger, selectors)| {
+            trigger_recorder
+                .triggers
+                .insert(trigger.clone(), selectors.clone());
+        });
+
+        let mut assertion = create_test_assertion(100, None);
+        assertion.trigger_recorder = trigger_recorder;
+        store.insert(assertion_adopter, assertion)?;
+
+        let mut tracer = CallTracer::default();
+        // insert_trace inserts (address, 0x00000000) in call_inputs to pretend a call
+        tracer.insert_trace(assertion_adopter);
+
+        tracer.journaled_state = Some(JournaledState::new(
+            SpecId::LONDON,
+            RevmHashSet::<Address>::default(),
+        ));
+
+        tracer
+            .journaled_state
+            .as_mut()
+            .unwrap()
+            .journal
+            .push(journal_entries);
+
+        store.read(&tracer, U256::from(100))
+    }
+
+    #[test]
+    fn test_read_adopter_with_all_triggers() -> Result<(), AssertionStoreError> {
+        let aa = Address::random();
+
+        let assertion_selector_call = FixedBytes::<4>::random();
+        let assertion_selector_storage = FixedBytes::<4>::random();
+        let assertion_selector_both = FixedBytes::<4>::random();
+        let mut expected_selectors = vec![
+            assertion_selector_call,
+            assertion_selector_storage,
+            assertion_selector_both,
+        ];
+        expected_selectors.sort();
+
+        // Create recorded triggers for all calls and storage changes
+        let recorded_triggers = vec![
+            (
+                TriggerType::AllCalls,
+                vec![assertion_selector_call, assertion_selector_both]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::AllStorageChanges,
+                vec![assertion_selector_storage, assertion_selector_both]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+        ];
+
+        let journal_entries = vec![JournalEntry::StorageChanged {
+            address: aa,
+            key: U256::from(1),
+            had_value: U256::from(0),
+        }];
+
+        let assertions = setup_and_match(recorded_triggers, journal_entries, aa)?;
+        assert_eq!(assertions.len(), 1);
+        let mut matched_selectors = assertions[0].1.clone();
+        matched_selectors.sort();
+        assert_eq!(matched_selectors, expected_selectors);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_adopter_with_specific_triggers() -> Result<(), AssertionStoreError> {
+        let aa = Address::random();
+        let assertion_selector_call = FixedBytes::<4>::random();
+        let assertion_selector_storage = FixedBytes::<4>::random();
+        let assertion_selector_balance = FixedBytes::<4>::random();
+
+        let mut expected_selectors = vec![
+            assertion_selector_call,
+            assertion_selector_storage,
+            assertion_selector_balance,
+        ];
+        expected_selectors.sort();
+
+        let trigger_selector = FixedBytes::<4>::default();
+
+        let recorded_triggers = vec![
+            (
+                TriggerType::Call { trigger_selector },
+                vec![assertion_selector_call]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::StorageChange {
+                    trigger_slot: U256::from(1).into(),
+                },
+                vec![assertion_selector_storage]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::BalanceChange,
+                vec![assertion_selector_balance]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+        ];
+
+        let journal_entries = vec![
+            JournalEntry::StorageChanged {
+                address: aa,
+                key: U256::from(1),
+                had_value: U256::from(0),
+            },
+            JournalEntry::BalanceTransfer {
+                from: aa,
+                to: Address::random(),
+                balance: U256::from(1),
+            },
+        ];
+
+        let assertions = setup_and_match(recorded_triggers, journal_entries, aa)?;
+        assert_eq!(assertions.len(), 1);
+        let mut matched_selectors = assertions[0].1.clone();
+        matched_selectors.sort();
+        assert_eq!(matched_selectors, expected_selectors);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_adopter_only_match_call_trigger() -> Result<(), AssertionStoreError> {
+        let aa = Address::random();
+
+        let assertion_selector_call = FixedBytes::<4>::random();
+        let assertion_selector_all_storage = FixedBytes::<4>::random();
+        let assertion_selector_balance = FixedBytes::<4>::random();
+        let mut expected_selectors = vec![assertion_selector_call];
+        expected_selectors.sort();
+
+        let trigger_selector_call = FixedBytes::<4>::default();
+
+        let recorded_triggers = vec![
+            (
+                TriggerType::Call {
+                    trigger_selector: trigger_selector_call,
+                },
+                vec![assertion_selector_call]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::AllStorageChanges,
+                vec![assertion_selector_all_storage]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::BalanceChange,
+                vec![assertion_selector_balance]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+        ];
+
+        let assertions = setup_and_match(recorded_triggers, vec![], aa)?;
+        assert_eq!(assertions.len(), 1);
+        let mut matched_selectors = assertions[0].1.clone();
+        matched_selectors.sort();
+        assert_eq!(matched_selectors, expected_selectors);
+
+        Ok(())
     }
 }

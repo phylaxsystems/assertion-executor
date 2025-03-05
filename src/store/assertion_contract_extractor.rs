@@ -163,21 +163,19 @@ fn test_get_assertion_selectors() {
     let (_, trigger_recorder) = extract_assertion_contract(bytecode(FN_SELECTOR), &config).unwrap();
 
     // Verify the contract has the expected selectors from the counter assertion
-    let expected_fn_selectors = vec![
+    let mut expected_selectors = vec![
         fixed_bytes!("e7f48038"),
         fixed_bytes!("1ff1bc3a"),
         fixed_bytes!("d210b7cf"),
-    ]
-    .sort();
+    ];
+    expected_selectors.sort();
 
-    assert_eq!(
-        trigger_recorder
-            .triggers
-            .values()
-            .flat_map(|v| v.iter())
-            .cloned()
-            .collect::<Vec<_>>()
-            .sort(),
-        expected_fn_selectors
-    );
+    let mut recorded_selectors = trigger_recorder
+        .triggers
+        .values()
+        .flat_map(|v| v.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    recorded_selectors.sort();
+    assert_eq!(recorded_selectors, expected_selectors);
 }
