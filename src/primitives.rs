@@ -29,6 +29,7 @@ pub use revm::{
         B256,
         U256,
     },
+    JournalEntry,
     JournaledState,
 };
 

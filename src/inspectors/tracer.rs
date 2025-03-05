@@ -1,7 +1,12 @@
-use crate::primitives::{
-    Address,
-    FixedBytes,
-    U256,
+use crate::{
+    inspectors::TriggerType,
+    primitives::{
+        Address,
+        FixedBytes,
+        JournalEntry,
+        JournaledState,
+        U256,
+    },
 };
 
 use revm::{
@@ -16,9 +21,6 @@ use revm::{
     EvmContext,
     Inspector,
 };
-
-use crate::primitives::JournaledState;
-
 use std::collections::{
     HashMap,
     HashSet,
@@ -66,6 +68,54 @@ impl CallTracer {
     pub fn insert_trace(&mut self, address: Address) {
         self.call_inputs
             .insert((address, FixedBytes::default()), vec![]);
+    }
+
+    pub fn triggers(&self) -> HashMap<Address, HashSet<TriggerType>> {
+        let mut result: HashMap<Address, HashSet<TriggerType>> = HashMap::new();
+
+        // Record call triggers
+        for (addr, selector) in self.call_inputs.keys() {
+            result.entry(*addr).or_default().insert(TriggerType::Call {
+                trigger_selector: *selector,
+            });
+        }
+
+        // Process journal entries for balance changes
+        if let Some(journaled_state) = &self.journaled_state {
+            // Flatten the two-dimensional journal array
+            for entry in journaled_state.journal.iter().flatten() {
+                match entry {
+                    JournalEntry::BalanceTransfer {
+                        from,
+                        to,
+                        balance: _,
+                    } => {
+                        // Add balance change trigger for both from and to addresses
+                        for addr in [from, to] {
+                            result
+                                .entry(*addr)
+                                .or_default()
+                                .insert(TriggerType::BalanceChange);
+                        }
+                    }
+
+                    JournalEntry::StorageChanged {
+                        address,
+                        key,
+                        had_value: _,
+                    } => {
+                        result
+                            .entry(*address)
+                            .or_default()
+                            .insert(TriggerType::StorageChange {
+                                trigger_slot: (*key).into(),
+                            });
+                    }
+                    _ => {} // Ignore other journal entry types
+                }
+            }
+        }
+        result
     }
 }
 
@@ -120,20 +170,25 @@ mod test {
     use super::*;
     #[cfg(feature = "optimism")]
     use crate::executor::config::create_optimism_fields;
-    use crate::primitives::{
-        address,
-        Bytecode,
+    use crate::{
+        build_evm::new_tx_fork_evm,
+        primitives::{
+            address,
+            Bytecode,
+        },
+        test_utils::deployed_bytecode,
     };
     use revm::{
         inspector_handle_register,
         primitives::{
             bytes,
+            BlockEnv,
             SpecId,
+            TxEnv,
         },
         Evm,
         InMemoryDB,
     };
-
     #[test]
     fn call_tracing() {
         let callee = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
@@ -170,5 +225,63 @@ mod test {
 
         let expected = HashSet::from_iter(vec![callee; 33]);
         assert_eq!(evm.context.external.calls(), expected);
+    }
+
+    #[test]
+    fn extract_triggers() {
+        let callee = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
+        let code = deployed_bytecode(&format!("{}.sol:{}", "TriggerContract", "TriggerContract"));
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            callee,
+            crate::primitives::AccountInfo {
+                balance: "0x100c5d668240db8e00".parse().unwrap(),
+                code_hash: revm::primitives::keccak256(&code),
+                code: Some(Bytecode::new_raw(code.clone())),
+                nonce: 1,
+            },
+        );
+
+        let fn_selector: FixedBytes<4> =
+            FixedBytes::<4>::from_slice(&revm::primitives::keccak256("trigger()")[..4]);
+
+        let tx_env = TxEnv {
+            caller: address!("5fdcca53617f4d2b9134b29090c87d01058e27e0"),
+            transact_to: crate::primitives::TxKind::Call(callee),
+            data: revm::primitives::Bytes::from(fn_selector.to_vec()),
+            value: crate::primitives::U256::ZERO,
+            #[cfg(feature = "optimism")]
+            optimism: create_optimism_fields(),
+            ..Default::default()
+        };
+
+        let mut evm = new_tx_fork_evm(
+            tx_env,
+            BlockEnv::default(),
+            Default::default(),
+            Default::default(),
+            &mut db,
+            CallTracer::default(),
+        );
+
+        evm.transact().expect("Transaction to work");
+
+        let expected_triggers_trigger_contract: HashSet<TriggerType> = HashSet::from_iter(vec![
+            TriggerType::Call {
+                trigger_selector: fn_selector,
+            },
+            TriggerType::StorageChange {
+                trigger_slot: U256::from(0).into(),
+            },
+            TriggerType::StorageChange {
+                trigger_slot: U256::from(1).into(),
+            },
+            TriggerType::BalanceChange,
+        ]);
+        assert_eq!(
+            *evm.context.external.triggers().entry(callee).or_default(),
+            expected_triggers_trigger_contract
+        );
     }
 }

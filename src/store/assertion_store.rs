@@ -38,6 +38,8 @@ use serde::{
 
 use tracing::error;
 
+use std::collections::HashSet;
+
 #[derive(thiserror::Error, Debug)]
 pub enum AssertionStoreError {
     #[error("Sled error")]
@@ -217,7 +219,14 @@ impl AssertionStore {
             .map(|a| {
                 (
                     a.assertion_contract,
-                    a.trigger_recorder.triggers.keys().cloned().collect(),
+                    a.trigger_recorder
+                        .triggers
+                        .values()
+                        .flat_map(|v| v.iter())
+                        .cloned()
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>(),
                 )
             })
             .collect();

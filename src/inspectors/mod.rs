@@ -14,4 +14,5 @@ pub use tracer::CallTracer;
 pub use trigger_recorder::{
     insert_trigger_recorder_account,
     TriggerRecorder,
+    TriggerType,
 };

@@ -556,10 +556,8 @@ mod test_indexer {
             TriggerRecorder,
         },
         primitives::{
-            keccak256,
             Address,
             AssertionContract,
-            Bytes,
             U256,
         },
         test_utils::{
@@ -567,7 +565,6 @@ mod test_indexer {
             bytecode,
             deployed_bytecode,
             mine_block,
-            random_bytes,
             selector_assertion,
             FN_SELECTOR,
         },
@@ -579,7 +576,6 @@ mod test_indexer {
 
     use tokio::net::TcpListener;
 
-    use alloy::hex::FromHex;
     use alloy_network::Ethereum;
     use alloy_network::{
         EthereumWallet,
@@ -595,19 +591,7 @@ mod test_indexer {
         SolCall,
     };
 
-    use std::net::SocketAddr;
-
-    use assertion_da_client::DaSubmissionResponse;
     use assertion_da_server::spawn_processes;
-
-    use jsonrpsee::{
-        server::{
-            RpcModule,
-            ServerBuilder,
-            ServerHandle,
-        },
-        types::ErrorObjectOwned,
-    };
 
     sol! {
 

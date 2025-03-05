@@ -18,7 +18,6 @@ use crate::{
         BlockEnv,
         Bytes,
         EVMError,
-        FixedBytes,
         ResultAndState,
         TxEnv,
         TxKind,
@@ -130,15 +129,6 @@ pub fn extract_assertion_contract(
         return Err(FnSelectorExtractorError::TriggersCallFailed);
     }
 
-    let mut fn_selectors: Vec<FixedBytes<4>> =
-        evm.context.external.triggers.keys().cloned().collect();
-
-    if fn_selectors.is_empty() {
-        return Err(FnSelectorExtractorError::NoTriggersFound);
-    }
-
-    fn_selectors.sort();
-
     let Account {
         info,
         storage,
@@ -183,7 +173,8 @@ fn test_get_assertion_selectors() {
     assert_eq!(
         trigger_recorder
             .triggers
-            .keys()
+            .values()
+            .flat_map(|v| v.iter())
             .cloned()
             .collect::<Vec<_>>()
             .sort(),
