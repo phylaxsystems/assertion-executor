@@ -1,12 +1,8 @@
-use alloy_network::{
-    BlockResponse,
-    Network,
-};
+use alloy_network::BlockResponse;
 use alloy_provider::{
     Provider,
     RootProvider,
 };
-use alloy_pubsub::PubSubFrontend;
 use alloy_rpc_types::{
     BlockId,
     BlockNumHash,
@@ -83,7 +79,7 @@ sol! {
 /// use sled::Config;
 ///
 /// use alloy_network::Ethereum;
-/// use alloy_provider::{ProviderBuilder, WsConnect};
+/// use alloy_provider::{ProviderBuilder, WsConnect, Provider};
 ///
 /// #[tokio::main]
 /// async fn main() {
@@ -98,6 +94,8 @@ sol! {
 ///    .on_ws(WsConnect::new("wss://127.0.0.1:0001"))
 ///    .await
 ///    .unwrap();
+///    let provider = provider.root().clone().boxed();
+///
 ///
 ///    let config = IndexerCfg {
 ///         provider,
@@ -115,8 +113,8 @@ sol! {
 ///    // Streams new blocks. Awaits infinitely unless an error occurs.
 ///    indexer.run().await.unwrap();
 /// }
-pub struct Indexer<N: Network> {
-    provider: PubSubProvider<N>,
+pub struct Indexer {
+    provider: PubSubProvider,
     block_hash_tree: sled::Tree,
     pending_modifications_tree: sled::Tree,
     store: AssertionStore,
@@ -126,7 +124,7 @@ pub struct Indexer<N: Network> {
     is_synced: bool,
 }
 
-type PubSubProvider<N> = RootProvider<PubSubFrontend, N>;
+type PubSubProvider = RootProvider;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexerError {
@@ -170,7 +168,7 @@ type IndexerResult<T = ()> = std::result::Result<T, IndexerError>;
 
 /// Configuration for the Indexer
 #[derive(Debug)]
-pub struct IndexerCfg<N: Network> {
+pub struct IndexerCfg {
     /// The State Oracle contract address
     pub state_oracle: Address,
     /// The DA Client
@@ -180,7 +178,7 @@ pub struct IndexerCfg<N: Network> {
     /// The Assertion Store
     pub store: AssertionStore,
     /// Rpc Provider
-    pub provider: PubSubProvider<N>,
+    pub provider: PubSubProvider,
     /// Block hash tree
     /// Used to store block hashes for reorg detection
     pub block_hash_tree: sled::Tree,
@@ -190,9 +188,9 @@ pub struct IndexerCfg<N: Network> {
     pub pending_modifications_tree: sled::Tree,
 }
 
-impl<N: Network> Indexer<N> {
+impl Indexer {
     /// Create a new Indexer
-    pub fn new(cfg: IndexerCfg<N>) -> Self {
+    pub fn new(cfg: IndexerCfg) -> Self {
         let IndexerCfg {
             provider,
             block_hash_tree,
@@ -216,7 +214,7 @@ impl<N: Network> Indexer<N> {
     }
 
     /// Create a new Indexer and sync it to the latest block
-    pub async fn new_synced(cfg: IndexerCfg<N>) -> IndexerResult<Self> {
+    pub async fn new_synced(cfg: IndexerCfg) -> IndexerResult<Self> {
         let mut indexer = Self::new(cfg);
         indexer.sync_to_head().await?;
         Ok(indexer)
@@ -332,7 +330,7 @@ impl<N: Network> Indexer<N> {
 
     /// Handle the latest block, sync the indexer to the latest block, and moving finalized
     /// pending modifications to the store
-    pub async fn handle_latest_block(&self, header: N::HeaderResponse) -> IndexerResult {
+    pub async fn handle_latest_block(&self, header: impl HeaderResponse) -> IndexerResult {
         self.sync(UpdateBlock {
             block_number: header.number(),
             block_hash: header.hash(),
@@ -576,7 +574,6 @@ mod test_indexer {
 
     use tokio::net::TcpListener;
 
-    use alloy_network::Ethereum;
     use alloy_network::{
         EthereumWallet,
         TransactionBuilder,
@@ -601,7 +598,7 @@ mod test_indexer {
 
     }
 
-    async fn setup() -> (Indexer<Ethereum>, JoinHandle<()>, AnvilInstance) {
+    async fn setup() -> (Indexer, JoinHandle<()>, AnvilInstance) {
         let (provider, anvil) = anvil_provider().await;
 
         let state_oracle = Address::new([0; 20]);
@@ -625,7 +622,7 @@ mod test_indexer {
         )
     }
 
-    async fn send_modifications(indexer: &Indexer<Ethereum>) -> Address {
+    async fn send_modifications(indexer: &Indexer) -> Address {
         let registration_mock = deployed_bytecode("AssertionRegistration.sol:RegistrationMock");
         let chain_id = indexer.provider.get_chain_id().await.unwrap();
 
@@ -727,7 +724,7 @@ mod test_indexer {
         (handle, local_addr.port())
     }
 
-    async fn mine_block_write_hash(indexer: &Indexer<Ethereum>) -> alloy_rpc_types::Header {
+    async fn mine_block_write_hash(indexer: &Indexer) -> alloy_rpc_types::Header {
         let header = mine_block(&indexer.provider).await;
 
         indexer

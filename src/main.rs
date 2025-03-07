@@ -4,8 +4,11 @@ use clap::Parser;
 
 use anyhow::Result;
 
-use alloy_provider::ProviderBuilder;
-use alloy_provider::WsConnect;
+use alloy_provider::{
+    Provider,
+    ProviderBuilder,
+    WsConnect,
+};
 
 /// The leaf fanout is a sled const that determines how fragmented
 /// the data stored on disk is.
@@ -27,6 +30,8 @@ async fn main() -> Result<()> {
         .on_ws(WsConnect::new("ws://localhost:6969"))
         .await
         .unwrap();
+    #[allow(deprecated)]
+    let provider = provider.root().clone().boxed();
 
     // Create the `SharedDb`
     let _shared_db = create_shared_db!(memory_db, config, provider);

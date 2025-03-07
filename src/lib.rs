@@ -28,4 +28,4 @@ pub mod test_utils;
 extern crate revm_18 as revm;
 
 #[cfg(not(feature = "phoundry"))]
-extern crate revm_17 as revm;
+extern crate revm_19 as revm;

@@ -1,10 +1,8 @@
 use alloy_consensus::BlockHeader;
 use alloy_provider::{
-    Network,
     Provider,
     RootProvider,
 };
-use alloy_pubsub::PubSubFrontend;
 use alloy_rpc_types::{
     BlockNumHash,
     BlockTransactionsKind,
@@ -29,14 +27,11 @@ pub enum CheckIfReorgedError {
 
 /// Checks if the new block is part of the same chain as the last indexed block.
 #[instrument(skip(provider))]
-pub async fn check_if_reorged<N: Network>(
-    provider: &RootProvider<PubSubFrontend, N>,
+pub async fn check_if_reorged(
+    provider: &RootProvider,
     update_block: &UpdateBlock,
     last_indexed_block: BlockNumHash,
-) -> Result<bool, CheckIfReorgedError>
-where
-    N::HeaderResponse: HeaderResponse,
-{
+) -> Result<bool, CheckIfReorgedError> {
     // If the new block number is the same as the last indexed block number, then
     // block is part of the same chain if the hashes are the same.
     if update_block.block_number == last_indexed_block.number {

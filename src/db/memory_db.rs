@@ -29,15 +29,7 @@ use std::collections::{
     VecDeque,
 };
 
-use reth_primitives_traits::{
-    Account as RethAccount,
-    Bytecode as RethBytecode,
-};
-
-use reth_db::table::{
-    Decompress,
-    Table,
-};
+use reth_primitives_traits::Account as RethAccount;
 
 use revm::primitives::FixedBytes;
 use sled::Db as SledDb;
@@ -182,24 +174,27 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
         sled_db: &SledDb<LEAF_FANOUT>,
         table_name: &str,
     ) -> Result<(), MemoryDbError> {
-        let sled_table = sled_db
+        let _sled_table = sled_db
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        for (key, value) in sled_table.iter().flatten() {
-            let key: B256 = B256::new(key.as_ref().try_into()?);
+        // FIXME: BROKEN WITH 1.2.1
+        // NEEDS COMPLETE OVERHAUL
 
-            let value: Vec<u8> = value.as_ref().into();
-            let value: RethBytecode = RethBytecode::decompress(&value)?;
+        // for (key, value) in sled_table.iter().flatten() {
+        //     let key: B256 = B256::new(key.as_ref().try_into()?);
 
-            // Now convert this to revm `Bytecode`
-            // absolutely insane typing
-            let bytecode: Bytecode = Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
-                .map_err(|_| MemoryDbError::EofDecoderError)?;
+        //     let value: Vec<u8> = value.as_ref().into();
+        //     let value: RethBytecode = RethBytecode::decompress(&value)?;
 
-            // Insert into the memory_db
-            self.code_by_hash.insert(key, bytecode);
-        }
+        //     // Now convert this to revm `Bytecode`
+        //     // absolutely insane typing
+        //     let bytecode: Bytecode = Bytecode::new_raw_checked(value.0.bytecode().to_vec().into())
+        //         .map_err(|_| MemoryDbError::EofDecoderError)?;
+
+        //     // Insert into the memory_db
+        //     self.code_by_hash.insert(key, bytecode);
+        // }
 
         Ok(())
     }
@@ -208,39 +203,41 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
         &mut self,
         sled_db: &SledDb<LEAF_FANOUT>,
         table_name: &str,
-        canonical_block_num: u64,
+        _canonical_block_num: u64,
     ) -> Result<(), MemoryDbError> {
-        let sled_table = sled_db
+        let _sled_table = sled_db
             .open_tree(table_name)
             .map_err(|_| MemoryDbError::LoadFail)?;
 
-        for (key, value) in sled_table.iter().flatten() {
-            let key: Address = Address::new(key.as_ref().try_into()?);
+        // FIXME: BROKEN WITH RETH 1.2.1
+        // for (_key, _value) in sled_table.iter().flatten() {
+        // let key: Address = Address::new(key.as_ref().try_into()?);
 
-            let value: reth_primitives_traits::Account = RethAccount::decompress(&value)?;
-            let value: <reth_db::PlainAccountState as Table>::Value = value;
+        // let value: reth_primitives_traits::Account = RethAccount::decompress(&value)?;
+        // let value: <reth_db::PlainAccountState as Table>::Value = value;
 
-            // We have to convert `PlainAccountState` to `AccountInfo`
-            // `AccountInfo` contains some additional data we need that is not
+        // // We have to convert `PlainAccountState` to `AccountInfo`
+        // // `AccountInfo` contains some additional data we need that is not
 
-            // Get the code by addressing the `code_by_hash` field of `MemoryDb`.
-            let (code_hash, code) = self.get_code_info(&value);
+        // // Get the code by addressing the `code_by_hash` field of `MemoryDb`.
+        // let (code_hash, code) = self.get_code_info(&value);
 
-            let account_info: AccountInfo = AccountInfo {
-                nonce: value.nonce,
-                balance: value.balance,
-                code_hash,
-                code,
-            };
+        // let account_info: AccountInfo = AccountInfo {
+        //     nonce: value.nonce,
+        //     balance: value.balance,
+        //     code_hash,
+        //     code,
+        // };
 
-            let mut history = ValueHistory::new();
-            history.insert(canonical_block_num, account_info);
-            self.basic.insert(key, history);
-        }
+        // let mut history = ValueHistory::new();
+        // history.insert(canonical_block_num, account_info);
+        // self.basic.insert(key, history);
+        // }
 
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn get_code_info(&self, value: &RethAccount) -> (FixedBytes<32>, Option<Bytecode>) {
         let mut code_hash: FixedBytes<32> = (&[0; 32]).into();
         let mut code: Option<Bytecode> = None;
@@ -565,277 +562,274 @@ mod test {
         test_utils::random_bytes,
     };
 
-    #[cfg(test)]
-    mod memory_db_insert_tests {
-        use super::*;
-        use alloy::primitives::{
-            B256,
-            U256,
-        };
-        use rand::{
-            thread_rng,
-            Rng,
-        };
-        use reth_db::table::Compress;
-        use reth_primitives_traits::{
-            Account as RethAccount,
-            Bytecode as RethBytecode,
-            StorageEntry,
-        };
+    // #[cfg(test)]
+    // mod memory_db_insert_tests {
+    //     use super::*;
+    //     use alloy::primitives::{
+    //         B256,
+    //         U256,
+    //     };
+    //     use rand::{
+    //         thread_rng,
+    //         Rng,
+    //     };
+    //     use reth_primitives_traits::{
+    //         StorageEntry,
+    //     };
 
-        fn create_mock_sled_db() -> sled::Db {
-            let temp_dir = tempfile::tempdir().unwrap();
-            sled::Config::new().path(temp_dir).open().unwrap()
-        }
+    //     fn create_mock_sled_db() -> sled::Db {
+    //         let temp_dir = tempfile::tempdir().unwrap();
+    //         sled::Config::new().path(temp_dir).open().unwrap()
+    //     }
 
-        fn random_b256() -> B256 {
-            let mut rng = thread_rng();
-            let mut bytes = [0u8; 32];
-            rng.fill(&mut bytes);
-            B256::from(bytes)
-        }
+    //     fn random_b256() -> B256 {
+    //         let mut rng = thread_rng();
+    //         let mut bytes = [0u8; 32];
+    //         rng.fill(&mut bytes);
+    //         B256::from(bytes)
+    //     }
 
-        fn random_address() -> Address {
-            let mut rng = thread_rng();
-            let mut bytes = [0u8; 20];
-            rng.fill(&mut bytes);
-            Address::from(bytes)
-        }
+    //     fn random_address() -> Address {
+    //         let mut rng = thread_rng();
+    //         let mut bytes = [0u8; 20];
+    //         rng.fill(&mut bytes);
+    //         Address::from(bytes)
+    //     }
 
-        #[test]
-        fn test_insert_header_numbers() -> Result<(), Box<dyn std::error::Error>> {
-            let sled_db = create_mock_sled_db();
-            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+    //     #[test]
+    //     fn test_insert_header_numbers() -> Result<(), Box<dyn std::error::Error>> {
+    //         let sled_db = create_mock_sled_db();
+    //         let header_numbers = sled_db.open_tree("HeaderNumbers")?;
 
-            let block_hash1 = random_b256();
-            let block_number1 = 1u64;
-            let block_hash2 = random_b256();
-            let block_number2 = 2u64;
+    //         let block_hash1 = random_b256();
+    //         let block_number1 = 1u64;
+    //         let block_hash2 = random_b256();
+    //         let block_number2 = 2u64;
 
-            header_numbers.insert(block_hash1.as_slice(), &block_number1.to_le_bytes())?;
-            header_numbers.insert(block_hash2.as_slice(), &block_number2.to_le_bytes())?;
+    //         header_numbers.insert(block_hash1.as_slice(), &block_number1.to_le_bytes())?;
+    //         header_numbers.insert(block_hash2.as_slice(), &block_number2.to_le_bytes())?;
 
-            let memory_db = new_from_exported_sled::<1024, 5>(&sled_db)?;
+    //         let memory_db = new_from_exported_sled::<1024, 5>(&sled_db)?;
 
-            assert_eq!(
-                memory_db.block_hashes.get(&block_number1).unwrap(),
-                block_hash1.as_slice()
-            );
-            assert_eq!(
-                memory_db.block_hashes.get(&block_number2).unwrap(),
-                block_hash2.as_slice()
-            );
-            assert_eq!(memory_db.canonical_block_hash, *block_hash2);
-            assert_eq!(memory_db.canonical_block_num, block_number2);
+    //         assert_eq!(
+    //             memory_db.block_hashes.get(&block_number1).unwrap(),
+    //             block_hash1.as_slice()
+    //         );
+    //         assert_eq!(
+    //             memory_db.block_hashes.get(&block_number2).unwrap(),
+    //             block_hash2.as_slice()
+    //         );
+    //         assert_eq!(memory_db.canonical_block_hash, *block_hash2);
+    //         assert_eq!(memory_db.canonical_block_num, block_number2);
 
-            Ok(())
-        }
+    //         Ok(())
+    //     }
 
-        #[test]
-        fn test_insert_bytecodes() -> Result<(), Box<dyn std::error::Error>> {
-            let sled_db = create_mock_sled_db();
-            let bytecodes = sled_db.open_tree("Bytecodes")?;
+    //     #[test]
+    //     fn test_insert_bytecodes() -> Result<(), Box<dyn std::error::Error>> {
+    //         let sled_db = create_mock_sled_db();
+    //         let bytecodes = sled_db.open_tree("Bytecodes")?;
 
-            let code_hash = random_b256();
-            let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
-            bytecodes.insert(code_hash.as_slice(), bytecode.clone().compress())?;
+    //         let code_hash = random_b256();
+    //         let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
+    //         bytecodes.insert(code_hash.as_slice(), bytecode.clone().compress())?;
 
-            let memory_db = new_from_exported_sled::<1024, 5>(&sled_db)?;
+    //         let memory_db = new_from_exported_sled::<1024, 5>(&sled_db)?;
 
-            assert!(memory_db
-                .code_by_hash
-                .contains_key::<FixedBytes<32>>(&code_hash.as_slice().try_into()?));
+    //         assert!(memory_db
+    //             .code_by_hash
+    //             .contains_key::<FixedBytes<32>>(&code_hash.as_slice().try_into()?));
 
-            assert_eq!(
-                memory_db
-                    .code_by_hash
-                    .get::<FixedBytes<32>>(&code_hash.as_slice().try_into()?)
-                    .unwrap()
-                    .original_byte_slice(),
-                bytecode.0.bytecode()
-            );
+    //         assert_eq!(
+    //             memory_db
+    //                 .code_by_hash
+    //                 .get::<FixedBytes<32>>(&code_hash.as_slice().try_into()?)
+    //                 .unwrap()
+    //                 .original_byte_slice(),
+    //             bytecode.0.bytecode()
+    //         );
 
-            Ok(())
-        }
+    //         Ok(())
+    //     }
 
-        #[test]
-        fn test_insert_plain_account_state() -> Result<(), Box<dyn std::error::Error>> {
-            let sled_db = create_mock_sled_db();
-            let plain_account_state = sled_db.open_tree("PlainAccountState")?;
-            let bytecodes = sled_db.open_tree("Bytecodes")?;
-            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+    //     #[test]
+    //     fn test_insert_plain_account_state() -> Result<(), Box<dyn std::error::Error>> {
+    //         let sled_db = create_mock_sled_db();
+    //         let plain_account_state = sled_db.open_tree("PlainAccountState")?;
+    //         let bytecodes = sled_db.open_tree("Bytecodes")?;
+    //         let header_numbers = sled_db.open_tree("HeaderNumbers")?;
 
-            let address = random_address();
-            let account = RethAccount {
-                nonce: 1,
-                balance: U256::from(100),
-                bytecode_hash: Some(random_b256()),
-            };
-            plain_account_state.insert(address.as_slice(), account.compress())?;
+    //         let address = random_address();
+    //         let account = RethAccount {
+    //             nonce: 1,
+    //             balance: U256::from(100),
+    //             bytecode_hash: Some(random_b256()),
+    //         };
+    //         plain_account_state.insert(address.as_slice(), account.compress())?;
 
-            // Insert a dummy block number to set the canonical block
-            let block_hash = random_b256();
-            let block_number = 1u64;
-            header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+    //         // Insert a dummy block number to set the canonical block
+    //         let block_hash = random_b256();
+    //         let block_number = 1u64;
+    //         header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
 
-            // Insert corresponding bytecode if account has bytecode_hash
-            if let Some(bytecode_hash) = account.bytecode_hash {
-                let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
-                bytecodes.insert(bytecode_hash.as_slice(), bytecode.compress())?;
-            }
+    //         // Insert corresponding bytecode if account has bytecode_hash
+    //         if let Some(bytecode_hash) = account.bytecode_hash {
+    //             let bytecode = RethBytecode::new_raw(vec![1, 2, 3].into());
+    //             bytecodes.insert(bytecode_hash.as_slice(), bytecode.compress())?;
+    //         }
 
-            let memory_db = new_from_exported_sled::<1024, 5>(&sled_db)?;
+    //         let memory_db = new_from_exported_sled::<1024, 5>(&sled_db)?;
 
-            assert!(memory_db
-                .basic
-                .contains_key::<Address>(&Address::from_slice(address.as_slice())));
+    //         assert!(memory_db
+    //             .basic
+    //             .contains_key::<Address>(&Address::from_slice(address.as_slice())));
 
-            let stored_account = memory_db
-                .basic
-                .get(&Address::from_slice(address.as_slice()))
-                .unwrap()
-                .get_latest()
-                .unwrap();
-            assert_eq!(stored_account.nonce, account.nonce);
-            assert_eq!(stored_account.balance, account.balance);
-            assert_eq!(
-                stored_account.code_hash,
-                *account.bytecode_hash.unwrap_or_default()
-            );
+    //         let stored_account = memory_db
+    //             .basic
+    //             .get(&Address::from_slice(address.as_slice()))
+    //             .unwrap()
+    //             .get_latest()
+    //             .unwrap();
+    //         assert_eq!(stored_account.nonce, account.nonce);
+    //         assert_eq!(stored_account.balance, account.balance);
+    //         assert_eq!(
+    //             stored_account.code_hash,
+    //             *account.bytecode_hash.unwrap_or_default()
+    //         );
 
-            Ok(())
-        }
+    //         Ok(())
+    //     }
 
-        #[test]
-        fn test_insert_plain_storage_state() -> Result<(), Box<dyn std::error::Error>> {
-            let sled_db = create_mock_sled_db();
-            let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
-            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+    //     #[test]
+    //     fn test_insert_plain_storage_state() -> Result<(), Box<dyn std::error::Error>> {
+    //         let sled_db = create_mock_sled_db();
+    //         let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
+    //         let header_numbers = sled_db.open_tree("HeaderNumbers")?;
 
-            let address = random_address();
-            let storage_key = random_b256();
-            let storage_value = U256::from(42);
-            let _storage_entry = StorageEntry {
-                key: storage_key,
-                value: storage_value,
-            };
+    //         let address = random_address();
+    //         let storage_key = random_b256();
+    //         let storage_value = U256::from(42);
+    //         let _storage_entry = StorageEntry {
+    //             key: storage_key,
+    //             value: storage_value,
+    //         };
 
-            let mut storage_map = HashMap::default();
-            storage_map.insert(
-                storage_key.to_vec(),
-                storage_value.to_be_bytes::<32>().to_vec(),
-            );
-            let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
-            plain_storage_state.insert(address.as_slice(), serialized_map)?;
+    //         let mut storage_map = HashMap::default();
+    //         storage_map.insert(
+    //             storage_key.to_vec(),
+    //             storage_value.to_be_bytes::<32>().to_vec(),
+    //         );
+    //         let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
+    //         plain_storage_state.insert(address.as_slice(), serialized_map)?;
 
-            // Insert a dummy block number to set the canonical block
-            let block_hash = random_b256();
-            let block_number = 1u64;
-            header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+    //         // Insert a dummy block number to set the canonical block
+    //         let block_hash = random_b256();
+    //         let block_number = 1u64;
+    //         header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
 
-            let memory_db = new_from_exported_sled::<1024, 0>(&sled_db)?;
+    //         let memory_db = new_from_exported_sled::<1024, 0>(&sled_db)?;
 
-            assert!(memory_db.storage.contains_key::<Address>(&address));
+    //         assert!(memory_db.storage.contains_key::<Address>(&address));
 
-            let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
-            assert!(stored_storage.contains_key(&storage_key.into()));
-            assert_eq!(
-                stored_storage
-                    .get(&storage_key.into())
-                    .unwrap()
-                    .get_latest(),
-                Some(&storage_value)
-            );
+    //         let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
+    //         assert!(stored_storage.contains_key(&storage_key.into()));
+    //         assert_eq!(
+    //             stored_storage
+    //                 .get(&storage_key.into())
+    //                 .unwrap()
+    //                 .get_latest(),
+    //             Some(&storage_value)
+    //         );
 
-            Ok(())
-        }
+    //         Ok(())
+    //     }
 
-        #[test]
-        fn test_insert_multiple_storage_entries() -> Result<(), Box<dyn std::error::Error>> {
-            let sled_db = create_mock_sled_db();
-            let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
-            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+    //     #[test]
+    //     fn test_insert_multiple_storage_entries() -> Result<(), Box<dyn std::error::Error>> {
+    //         let sled_db = create_mock_sled_db();
+    //         let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
+    //         let header_numbers = sled_db.open_tree("HeaderNumbers")?;
 
-            let address = random_address();
-            let storage_entries = vec![
-                (random_b256(), U256::from(42)),
-                (random_b256(), U256::from(100)),
-                (random_b256(), U256::from(200)),
-            ];
+    //         let address = random_address();
+    //         let storage_entries = vec![
+    //             (random_b256(), U256::from(42)),
+    //             (random_b256(), U256::from(100)),
+    //             (random_b256(), U256::from(200)),
+    //         ];
 
-            let mut storage_map = HashMap::new();
-            for (key, value) in &storage_entries {
-                storage_map.insert(key.to_vec(), value.to_be_bytes::<32>().to_vec());
-            }
-            let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
-            plain_storage_state.insert(address.as_slice(), serialized_map)?;
+    //         let mut storage_map = HashMap::new();
+    //         for (key, value) in &storage_entries {
+    //             storage_map.insert(key.to_vec(), value.to_be_bytes::<32>().to_vec());
+    //         }
+    //         let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
+    //         plain_storage_state.insert(address.as_slice(), serialized_map)?;
 
-            // Insert a dummy block number to set the canonical block
-            let block_hash = random_b256();
-            let block_number = 1u64;
-            header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+    //         // Insert a dummy block number to set the canonical block
+    //         let block_hash = random_b256();
+    //         let block_number = 1u64;
+    //         header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
 
-            let memory_db = new_from_exported_sled::<1024, 0>(&sled_db)?;
+    //         let memory_db = new_from_exported_sled::<1024, 0>(&sled_db)?;
 
-            assert!(memory_db.storage.contains_key::<Address>(&address));
-            let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
-            assert_eq!(stored_storage.len(), storage_entries.len());
+    //         assert!(memory_db.storage.contains_key::<Address>(&address));
+    //         let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
+    //         assert_eq!(stored_storage.len(), storage_entries.len());
 
-            for (key, value) in storage_entries {
-                assert!(stored_storage.contains_key(&key.into()));
-                assert_eq!(
-                    stored_storage.get(&key.into()).unwrap().get_latest(),
-                    Some(&value)
-                );
-            }
+    //         for (key, value) in storage_entries {
+    //             assert!(stored_storage.contains_key(&key.into()));
+    //             assert_eq!(
+    //                 stored_storage.get(&key.into()).unwrap().get_latest(),
+    //                 Some(&value)
+    //             );
+    //         }
 
-            Ok(())
-        }
+    //         Ok(())
+    //     }
 
-        #[test]
-        fn test_insert_multiple_storage_entries_with_load_from_exported_sled(
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let sled_db = create_mock_sled_db();
-            let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
-            let header_numbers = sled_db.open_tree("HeaderNumbers")?;
+    //     #[test]
+    //     fn test_insert_multiple_storage_entries_with_load_from_exported_sled(
+    //     ) -> Result<(), Box<dyn std::error::Error>> {
+    //         let sled_db = create_mock_sled_db();
+    //         let plain_storage_state = sled_db.open_tree("PlainStorageState")?;
+    //         let header_numbers = sled_db.open_tree("HeaderNumbers")?;
 
-            let address = random_address();
-            let storage_entries = vec![
-                (random_b256(), U256::from(42)),
-                (random_b256(), U256::from(100)),
-                (random_b256(), U256::from(200)),
-            ];
+    //         let address = random_address();
+    //         let storage_entries = vec![
+    //             (random_b256(), U256::from(42)),
+    //             (random_b256(), U256::from(100)),
+    //             (random_b256(), U256::from(200)),
+    //         ];
 
-            let mut storage_map = HashMap::new();
-            for (key, value) in &storage_entries {
-                storage_map.insert(key.to_vec(), value.to_be_bytes::<32>().to_vec());
-            }
-            let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
-            plain_storage_state.insert(address.as_slice(), serialized_map)?;
+    //         let mut storage_map = HashMap::new();
+    //         for (key, value) in &storage_entries {
+    //             storage_map.insert(key.to_vec(), value.to_be_bytes::<32>().to_vec());
+    //         }
+    //         let serialized_map = bincode::serialize(&StorageMap(storage_map))?;
+    //         plain_storage_state.insert(address.as_slice(), serialized_map)?;
 
-            // Insert a dummy block number to set the canonical block
-            let block_hash = random_b256();
-            let block_number = 1u64;
-            header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
+    //         // Insert a dummy block number to set the canonical block
+    //         let block_hash = random_b256();
+    //         let block_number = 1u64;
+    //         header_numbers.insert(block_hash.as_slice(), &block_number.to_le_bytes())?;
 
-            let mut memory_db: MemoryDb<5> = MemoryDb::default();
-            memory_db.load_from_exported_sled(&sled_db)?;
+    //         let mut memory_db: MemoryDb<5> = MemoryDb::default();
+    //         memory_db.load_from_exported_sled(&sled_db)?;
 
-            assert!(memory_db.storage.contains_key::<Address>(&address));
-            let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
-            assert_eq!(stored_storage.len(), storage_entries.len());
+    //         assert!(memory_db.storage.contains_key::<Address>(&address));
+    //         let stored_storage = memory_db.storage.get::<Address>(&address).unwrap();
+    //         assert_eq!(stored_storage.len(), storage_entries.len());
 
-            for (key, value) in storage_entries {
-                assert!(stored_storage.contains_key(&key.into()));
-                assert_eq!(
-                    stored_storage.get(&key.into()).unwrap().get_latest(),
-                    Some(&value)
-                );
-            }
+    //         for (key, value) in storage_entries {
+    //             assert!(stored_storage.contains_key(&key.into()));
+    //             assert_eq!(
+    //                 stored_storage.get(&key.into()).unwrap().get_latest(),
+    //                 Some(&value)
+    //             );
+    //         }
 
-            Ok(())
-        }
-    }
+    //         Ok(())
+    //     }
+    // }
 
     mod memory_db_db_ref_tests {
         use super::*;

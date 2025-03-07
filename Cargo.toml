@@ -13,37 +13,34 @@ tracing = "0.1.40"
 zerocopy = { version = "0.8.3", features = ["derive"] }
 tempfile = "3.13.0"
 parking_lot = "0.12.1"
-assertion-da-client = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git" }
+assertion-da-client = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git", rev = "feb05e9" }
 
 # ETH deps
-alloy = "0.8.3"
-alloy-provider = { version = "0.8.3", features = ["ws", "anvil-node"] }
+alloy = "0.11.1"
+alloy-provider = { version = "0.11.1", features = ["ws", "anvil-node"] }
 alloy-sol-types = "0.8.3"
-alloy-consensus = { version = "0.8.3", features = ["k256"] }
-alloy-rpc-types = "0.8.3"
-alloy-rpc-types-anvil = "0.8.3"
-alloy-pubsub = "0.8.3"
-alloy-rpc-client = "0.8.3"
-alloy-node-bindings = "0.8.3"
-alloy-network = "0.8.3"
-alloy-network-primitives = "0.8.3"
-alloy-signer = "0.8.3"
-alloy-signer-local = "0.8.3"
-alloy-transport = "0.8.3"
-alloy-transport-ws = "0.8.3"
+alloy-consensus = { version = "0.11.1", features = ["k256"] }
+alloy-rpc-types = "0.11.1"
+alloy-rpc-types-anvil = "0.11.1"
+alloy-pubsub = "0.11.1"
+alloy-rpc-client = "0.11.1"
+alloy-node-bindings = "0.11.1"
+alloy-network = "0.11.1"
+alloy-network-primitives = "0.11.1"
+alloy-signer = "0.11.1"
+alloy-signer-local = "0.11.1"
+alloy-transport = "0.11.1"
+alloy-transport-ws = "0.11.1"
 revm_18 = { version = "18.0.0", package = "revm", optional = true, features = ["serde"] }
-revm_17 = { version = "17.0.0", package = "revm", optional = true , features = ["serde"] }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
-
-# For Signed Authorization versioning conflict
-alloy-eip7702 = "0.4.2"
+revm_19 = { version = "19.0.0", package = "revm", optional = true , features = ["serde"] }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.2.1"}
 
 # ETL deps
 mending = { git = "ssh://git@github.com/phylaxsystems/mending.git", rev = "3a771745f"}
 anyhow = "1.0.89"
 reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
 reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.1.1"}
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.2.1"}
 bincode = "1.3.3"
 clap = "4.5.20"
 clap_derive = "4.5.18"
@@ -63,16 +60,17 @@ codegen-units = 1
 incremental = false
 
 [features]
-default = ["revm_17"]
-optimism = ["revm_17/optimism", "revm_17/optimism-default-handler", "revm_18/optimism", "revm_18/optimism-default-handler"]
-test = ["serde_json", "rand", "revm_17"]
+default = ["revm_19"]
+optimism = ["revm_19/optimism", "revm_19/optimism-default-handler", "revm_18/optimism", "revm_18/optimism-default-handler"]
+test = ["serde_json", "rand", "revm_19"]
 phoundry = ["revm_18"]
 
 [dev-dependencies]
 rand = "0.8.5"
 serde_json = "1.0.133"
 tempfile = "3.13.0"
-assertion-da-server = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git" }
+assertion-da-server = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git", rev = "feb05e9" }
+alloy-eip7702 = "0.5.1"
 
 [[bin]]
 name = "demo"

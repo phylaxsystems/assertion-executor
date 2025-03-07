@@ -81,14 +81,14 @@ pub fn fill_tx_env(input_tx: TxEnvelope, tx_env: &mut TxEnv, sender: Address) {
                     .iter()
                     .cloned()
                     .fold(vec![], |mut auth_list, auth_item| {
-                        // We must transmute because the version of alloy_eip7702 that revm uses is
-                        // different. This is safe because the types are structurally identical.
-                        auth_list.push(unsafe {
-                            std::mem::transmute::<
-                                alloy_eip7702::SignedAuthorization,
-                                revm::primitives::SignedAuthorization,
-                            >(auth_item)
-                        });
+                        let auth_item_revm = revm::primitives::SignedAuthorization::new_unchecked(
+                            auth_item.inner().to_owned(),
+                            auth_item.y_parity(),
+                            auth_item.r(),
+                            auth_item.s(),
+                        );
+
+                        auth_list.push(auth_item_revm);
                         auth_list
                     });
 
@@ -106,9 +106,9 @@ pub fn fill_tx_env(input_tx: TxEnvelope, tx_env: &mut TxEnv, sender: Address) {
             tx_env.blob_hashes.clear();
             tx_env.max_fee_per_blob_gas.take();
         }
-        case => unimplemented!("TxEnvelope match case: {case:?}"),
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,10 +132,7 @@ mod tests {
     };
 
     #[allow(deprecated)]
-    use alloy::primitives::{
-        Parity,
-        PrimitiveSignature,
-    };
+    use alloy::primitives::PrimitiveSignature;
 
     #[test]
     fn test_fill_tx_env_eip7702() {
@@ -221,8 +218,7 @@ mod tests {
             let tx_env_item_sig = tx_env_item.signature().unwrap();
             let auth_item_sig = auth_item.signature().unwrap();
 
-            #[allow(deprecated)]
-            let expected_parity = Parity::Parity(auth_item_sig.v());
+            let expected_parity = auth_item_sig.v();
 
             assert_eq!(tx_env_item_sig.v(), expected_parity);
             assert_eq!(tx_env_item_sig.r(), auth_item_sig.r());

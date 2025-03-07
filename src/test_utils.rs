@@ -39,8 +39,6 @@ use alloy_node_bindings::{
     AnvilInstance,
 };
 
-use alloy_pubsub::PubSubFrontend;
-
 use alloy_provider::{
     ext::AnvilApi,
     Provider,
@@ -190,7 +188,7 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
         .unwrap()
 }
 /// Mines a block from an anvil provider, returning the block header
-pub async fn mine_block(provider: &RootProvider<PubSubFrontend>) -> Header {
+pub async fn mine_block(provider: &RootProvider<alloy_network::Ethereum>) -> Header {
     let _ = provider.evm_mine(None).await;
     let block = provider
         .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
@@ -202,13 +200,15 @@ pub async fn mine_block(provider: &RootProvider<PubSubFrontend>) -> Header {
 }
 
 /// Get anvil provider
-pub async fn anvil_provider() -> (RootProvider<PubSubFrontend>, AnvilInstance) {
+pub async fn anvil_provider() -> (RootProvider<alloy_network::Ethereum>, AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let provider = ProviderBuilder::new()
         .on_ws(WsConnect::new(anvil.ws_endpoint()))
         .await
         .unwrap();
-
     provider.anvil_set_auto_mine(false).await.unwrap();
+    #[allow(deprecated)]
+    let provider = provider.root().clone().boxed();
+
     (provider, anvil)
 }

@@ -51,8 +51,6 @@ use sled::Config;
 
 use tracing::error;
 
-use alloy_pubsub::PubSubFrontend;
-
 use alloy_rpc_types::{
     BlockId,
     BlockNumHash,
@@ -95,7 +93,7 @@ pub enum SharedDbError {
 pub struct SharedDB<const BLOCKS_TO_RETAIN: usize = 64> {
     mem_db: Arc<RwLock<MemoryDb<BLOCKS_TO_RETAIN>>>,
     fs_db: Arc<Mutex<FsDb>>,
-    provider: RootProvider<PubSubFrontend>,
+    provider: RootProvider,
     executor_config: ExecutorConfig,
 }
 
@@ -131,7 +129,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
     /// Creates a new `SharedDb` struct from a path.
     pub fn new(
         path: &Path,
-        provider: RootProvider<PubSubFrontend>,
+        provider: RootProvider,
         executor_config: ExecutorConfig,
     ) -> Result<Self, SharedDbError> {
         Ok(Self {
@@ -146,7 +144,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
     pub fn new_with_config(
         mem_db: MemoryDb<BLOCKS_TO_RETAIN>,
         config: Config,
-        provider: RootProvider<PubSubFrontend>,
+        provider: RootProvider,
         executor_config: ExecutorConfig,
     ) -> Result<Self, SharedDbError> {
         Ok(Self {
@@ -261,7 +259,7 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
             let mut blob_excess_gas_and_price = None;
 
             if let Some(excess_blob_gas) = block.header.inner.excess_blob_gas {
-                blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(excess_blob_gas));
+                blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::new(excess_blob_gas, true));
             }
 
             let block_env = BlockEnv {
@@ -354,6 +352,9 @@ impl<const BLOCKS_TO_RETAIN: usize> SharedDB<BLOCKS_TO_RETAIN> {
             .on_ws(WsConnect::new(anvil.ws_endpoint()))
             .await
             .unwrap();
+
+        #[allow(deprecated)]
+        let provider = provider.root().clone().boxed();
 
         Self {
             executor_config: ExecutorConfig::default(),
