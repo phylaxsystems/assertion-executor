@@ -124,12 +124,11 @@ mod tests {
         Signed,
         TxEip7702,
     };
-    use rand::random;
-
     use alloy_eip7702::{
         Authorization,
         SignedAuthorization,
     };
+    use rand::random;
 
     #[allow(deprecated)]
     use alloy::primitives::PrimitiveSignature;
@@ -147,7 +146,7 @@ mod tests {
         let access_list = Default::default();
 
         let auth_item_address = Address::random();
-        let auth_item_chain_id = random();
+        let auth_item_chain_id = U256::default();
         let auth_item_nonce = random();
         let sender = Address::random();
 

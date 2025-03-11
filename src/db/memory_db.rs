@@ -29,8 +29,6 @@ use std::collections::{
     VecDeque,
 };
 
-use reth_primitives_traits::Account as RethAccount;
-
 use revm::primitives::FixedBytes;
 use sled::Db as SledDb;
 
@@ -55,8 +53,6 @@ pub enum MemoryDbError {
     LoadFail,
     #[error("Array conversion error: {0}")]
     ArrayConversionError(#[from] std::array::TryFromSliceError),
-    #[error("Database error: {0}")]
-    DatabaseError(#[from] reth_db::DatabaseError),
     #[error("Bincode deserialization error: {0}")]
     BincodeError(#[from] Box<bincode::ErrorKind>),
     #[error("EoF Decoder error")]
@@ -235,29 +231,6 @@ impl<const BLOCKS_TO_RETAIN: usize> MemoryDb<BLOCKS_TO_RETAIN> {
         // }
 
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn get_code_info(&self, value: &RethAccount) -> (FixedBytes<32>, Option<Bytecode>) {
-        let mut code_hash: FixedBytes<32> = (&[0; 32]).into();
-        let mut code: Option<Bytecode> = None;
-
-        if let Some(bytecode_hash) = value.bytecode_hash {
-            let bytecode_hash: FixedBytes<32> = bytecode_hash
-                .as_slice()
-                .try_into()
-                .map_err(|_| MemoryDbError::BytecodeHashConversionError)
-                .unwrap();
-
-            code_hash = bytecode_hash;
-
-            // If we have the bytecode hash, we can get the bytecode
-            if let Some(bytecode) = self.code_by_hash.get(&bytecode_hash) {
-                code = Some(bytecode.clone());
-            }
-        }
-
-        (code_hash, code)
     }
 
     fn load_plain_storage_state<const LEAF_FANOUT: usize>(
