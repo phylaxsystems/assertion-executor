@@ -2,7 +2,7 @@ use assertion_executor::{
     db::SharedDB,
     primitives::{
         BlockEnv,
-        ExecutionResult,
+        EvmExecutionResult,
         TxEnv,
     },
     AssertionExecutor,
@@ -23,9 +23,7 @@ pub async fn bench_execution(
 
     let start = Instant::now();
     for tx in transactions {
-        let _ = executor
-            .validate_transaction(block_env.clone(), tx, &mut fork_db)
-            .await;
+        let _ = executor.validate_transaction(block_env.clone(), tx, &mut fork_db);
     }
     start.elapsed()
 }
@@ -51,13 +49,13 @@ pub fn assert_txs_are_valid_and_compute_gas(
         })
         .for_each(|result_and_state| {
             let gas_used = match result_and_state.result {
-                ExecutionResult::Revert { output, .. } => {
+                EvmExecutionResult::Revert { output, .. } => {
                     panic!("Transaction reverted: {output:#?}")
                 }
-                ExecutionResult::Halt { reason, .. } => {
+                EvmExecutionResult::Halt { reason, .. } => {
                     panic!("TransactionHalted: {reason:#?}")
                 }
-                ExecutionResult::Success { gas_used, .. } => gas_used,
+                EvmExecutionResult::Success { gas_used, .. } => gas_used,
             };
 
             total_gas_used += gas_used;
@@ -92,11 +90,10 @@ pub async fn count_valid_assertion_results(
 
     let mut count = 0;
     for tx in transactions {
-        if let Ok(Some(_)) = executor
-            .validate_transaction(block_env.clone(), tx, &mut fork_db)
-            .await
-        {
-            count += 1;
+        if let Ok(res) = executor.validate_transaction(block_env.clone(), tx, &mut fork_db) {
+            if res.is_valid() {
+                count += 1;
+            }
         }
     }
     count
@@ -117,11 +114,9 @@ pub async fn count_assertions(
             .unwrap()
             .0;
 
-        let mut assertion_store_reader = executor.assertion_store_reader.clone();
-
-        let assertions = assertion_store_reader
-            .read(block_env.number, call_traces)
-            .await
+        let assertions = executor
+            .store
+            .read(&call_traces, block_env.number)
             .expect("Failed to read assertions");
 
         count += assertions.len();

@@ -4,10 +4,9 @@ use crate::{
 };
 
 use assertion_executor::{
-    primitives::Bytecode,
     store::{
-        AssertionStoreReader,
-        MockStore,
+        AssertionState,
+        AssertionStore,
     },
     test_utils::*,
 };
@@ -15,18 +14,14 @@ use assertion_executor::{
 use super::demo_lending::LENDING;
 
 /// Loads the assertion store with demo assertions
-pub fn setup_assertion_store() -> AssertionStoreReader {
-    let mut store = MockStore::default();
+pub async fn setup_assertion_store() -> AssertionStore {
+    let store = AssertionStore::new_ephemeral().unwrap();
 
     store
-        .insert(FORK_ADDRESS, vec![Bytecode::LegacyRaw(bytecode(COUNTER))])
+        .insert(FORK_ADDRESS, AssertionState::new_test(bytecode(COUNTER)))
         .unwrap();
     store
-        .insert(
-            LENDING_ADDRESS,
-            vec![Bytecode::LegacyRaw(bytecode(LENDING))],
-        )
+        .insert(LENDING_ADDRESS, AssertionState::new_test(bytecode(LENDING)))
         .unwrap();
-
-    store.reader()
+    store
 }
