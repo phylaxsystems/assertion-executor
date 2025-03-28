@@ -110,7 +110,7 @@ where
 
         if !result_and_state.result.is_success() {
             trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
-            return Ok(TxValidationResult::new(false, result_and_state, vec![]));
+            return Ok(TxValidationResult::new(true, result_and_state, vec![]));
         }
 
         trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
@@ -165,7 +165,7 @@ where
 
         if !result_and_state.result.is_success() {
             trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
-            return Ok(TxValidationResult::new(false, result_and_state, vec![]));
+            return Ok(TxValidationResult::new(true, result_and_state, vec![]));
         }
 
         trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
