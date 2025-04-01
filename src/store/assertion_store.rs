@@ -373,7 +373,7 @@ mod tests {
         active_at_block: u64,
         inactive_at_block: Option<u64>,
     ) -> AssertionState {
-        let state = AssertionState {
+        AssertionState {
             active_at_block,
             inactive_at_block,
             assertion_contract: AssertionContract {
@@ -381,8 +381,7 @@ mod tests {
                 ..Default::default()
             },
             trigger_recorder: TriggerRecorder::default(),
-        };
-        state
+        }
     }
 
     fn create_test_modification(

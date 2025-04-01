@@ -917,7 +917,7 @@ mod test_indexer {
             indexer
                 .handle_latest_block(latest_block)
                 .await
-                .expect(&format!("sync before mining: {sync_before_mining}\nerror"));
+                .unwrap_or_else(|_| panic!("sync before mining: {sync_before_mining}\nerror"));
 
             // Verify state after reorg
             let last_indexed_block = indexer.get_last_indexed_block_num_hash().unwrap().unwrap();

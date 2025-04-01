@@ -281,7 +281,7 @@ mod test_multi_fork {
 
         assert!(pre_tx_fork.journaled_state.is_none());
 
-        assert!(db.inactive_forks.get(&ForkId::PostTx).is_none());
+        assert!(!db.inactive_forks.contains_key(&ForkId::PostTx));
         assert_eq!(db.active_fork_id, ForkId::PostTx);
 
         assert_eq!(
@@ -296,7 +296,7 @@ mod test_multi_fork {
 
         assert!(post_tx_fork.journaled_state.is_some());
 
-        assert!(db.inactive_forks.get(&ForkId::PreTx).is_none());
+        assert!(!db.inactive_forks.contains_key(&ForkId::PreTx));
         assert_eq!(db.active_fork_id, ForkId::PreTx);
 
         assert_eq!(
@@ -313,7 +313,7 @@ mod test_multi_fork {
         let pre_tx_fork = db.inactive_forks.get(&ForkId::PreTx).unwrap();
         assert!(pre_tx_fork.journaled_state.is_some());
 
-        assert!(db.inactive_forks.get(&ForkId::PostTx).is_none());
+        assert!(!db.inactive_forks.contains_key(&ForkId::PostTx));
         assert_eq!(db.active_fork_id, ForkId::PostTx);
 
         assert_eq!(
@@ -379,7 +379,7 @@ mod test_multi_fork {
                 .balance,
             uint!(6900_U256)
         );
-        assert!(active_journaled_state.state.get(&address).is_none());
+        assert!(!active_journaled_state.state.contains_key(&address));
 
         let post_tx_journaled_state = db
             .inactive_forks

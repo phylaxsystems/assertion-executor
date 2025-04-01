@@ -239,7 +239,7 @@ mod tests {
             AccountInfo {
                 nonce: 0,
                 balance: U256::MAX,
-                code_hash: keccak256(&[]),
+                code_hash: keccak256([]),
                 code: None,
             },
         );
@@ -268,7 +268,7 @@ mod tests {
 
         let tx_env = TxEnv {
             transact_to: TxKind::Call(address),
-            caller: caller.clone(),
+            caller,
             gas_price: U256::from(1),
             gas_limit: gas_limit.unwrap_or(1_000_000),
             #[cfg(feature = "optimism")]
