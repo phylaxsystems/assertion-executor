@@ -11,6 +11,8 @@ pub use memory_db::MemoryDb;
 mod shared_db;
 pub use shared_db::SharedDB;
 
+pub mod overlay;
+
 mod error;
 pub use error::NotFoundError;
 
