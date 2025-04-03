@@ -8,7 +8,7 @@ on:
 jobs:
   call-rust-base-ci:
     name: Run phylax CI
-    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@fix/use-correct-channel
+    uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
       rust-channel: 'nightly'
       require-lockfile: true
@@ -16,11 +16,10 @@ jobs:
       dind: true
       submodules: 'true'
       requires-private-deps: true
-      compile-foundry-contracts: true
+      foundry-command: 'forge build --root contract-mocks'
 
       # [""] means default features
       # Feature matrices are supported as follows: ["", "--features=foo", "--features=bar", "--features=foo,bar"]
-      clippy-feature-sets: '["", "--features=optimism"]'
-      test-feature-sets: '["", "--features=optimism"]'
+      feature-sets: '["", "--features=optimism"]'
     secrets:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
