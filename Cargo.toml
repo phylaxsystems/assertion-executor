@@ -67,7 +67,9 @@ serde_json = "1.0.133"
 tempfile = "3.13.0"
 alloy-eip7702 = "0.5.1"
 assertion-da-server = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git" }
+# assertion-da-server = { path = "../assertion-da/crates/server", features = ["debug_assertions"] }
 criterion = { version = "0.5.1" }
+bollard = "0.18"
 
 [[bin]]
 name = "demo"
