@@ -1,16 +1,32 @@
 use crate::db::overlay::AccountInfo;
 use crate::db::NotFoundError;
+use crate::revm::db::CacheDB;
+use crate::revm::db::EmptyDBTyped;
 use crate::revm::DatabaseRef;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
+use moka::sync::Cache;
 use revm::primitives::{
     Bytecode,
     KECCAK_EMPTY,
 };
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::Mutex;
+
+use super::OverlayDb;
+
+impl<Db> OverlayDb<Db> {
+    pub fn new_test() -> OverlayDb<CacheDB<EmptyDBTyped<Infallible>>> {
+        let cache = Cache::builder().max_capacity(10_000).build();
+        OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>> {
+            underlying_db: Some(Arc::new(revm::InMemoryDB::new(EmptyDBTyped::new()))),
+            overlay: cache,
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct MockDb {

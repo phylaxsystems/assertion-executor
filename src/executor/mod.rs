@@ -478,17 +478,18 @@ where
 
 #[cfg(test)]
 mod test {
-
     use super::*;
+    use crate::db::overlay::TableKey;
+    use crate::db::overlay::TableValue;
+    use crate::revm::db::CacheDB;
+    use crate::revm::db::EmptyDBTyped;
     use crate::{
         db::{
+            overlay::OverlayDb,
             DatabaseRef,
-            SharedDB,
         },
         primitives::{
             uint,
-            Account,
-            BlockChanges,
             BlockEnv,
             U256,
         },
@@ -498,12 +499,12 @@ mod test {
         },
         test_utils::*,
     };
-
-    use std::collections::HashMap;
+    use std::convert::Infallible;
 
     #[tokio::test]
     async fn test_deploy_assertion_contract() {
-        let shared_db = SharedDB::<0>::new_test().await;
+        let shared_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
+
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
         let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
@@ -526,20 +527,12 @@ mod test {
 
     #[tokio::test]
     async fn test_execute_forked_tx() {
-        let mut shared_db = SharedDB::<0>::new_test().await;
+        let shared_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
 
-        let block_changes = BlockChanges {
-            state_changes: HashMap::from_iter(vec![(
-                COUNTER_ADDRESS,
-                Account {
-                    info: counter_acct_info(),
-                    ..Default::default()
-                },
-            )]),
-            ..Default::default()
-        };
-
-        shared_db.commit_block(block_changes).unwrap();
+        shared_db.overlay.insert(
+            TableKey::Basic(COUNTER_ADDRESS),
+            TableValue::Basic(counter_acct_info()),
+        );
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
@@ -575,22 +568,12 @@ mod test {
 
     #[tokio::test]
     async fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
-        let mut shared_db = SharedDB::<0>::new_test().await;
-        shared_db
-            .commit_block(BlockChanges {
-                state_changes: HashMap::from_iter(
-                    vec![(
-                        COUNTER_ADDRESS,
-                        Account {
-                            info: counter_acct_info(),
-                            ..Default::default()
-                        },
-                    )]
-                    .into_iter(),
-                ),
-                ..Default::default()
-            })
-            .unwrap();
+        let shared_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
+
+        shared_db.overlay.insert(
+            TableKey::Basic(COUNTER_ADDRESS),
+            TableValue::Basic(counter_acct_info()),
+        );
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 

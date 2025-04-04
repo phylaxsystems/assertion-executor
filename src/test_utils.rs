@@ -1,7 +1,9 @@
 #![cfg(any(test, feature = "test"))]
 
+use crate::revm::db::CacheDB;
+use crate::revm::db::EmptyDBTyped;
 use crate::{
-    db::SharedDB,
+    db::overlay::OverlayDb,
     inspectors::TriggerRecorder,
     primitives::{
         address,
@@ -27,6 +29,7 @@ use crate::{
     },
     ExecutorConfig,
 };
+use std::convert::Infallible;
 
 use alloy_rpc_types::{
     BlockId,
@@ -141,7 +144,7 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
     let caller = address!("5fdcca53617f4d2b9134b29090c87d01058e27e9");
     let target = address!("118dd24a3b0d02f90d8896e242d3838b4d37c181");
 
-    let db = SharedDB::<0>::new_test().await;
+    let db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
 
     let mut fork_db = db.fork();
 

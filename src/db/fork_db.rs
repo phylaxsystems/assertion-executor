@@ -169,11 +169,16 @@ impl<ExtDb> ForkDb<ExtDb> {
 #[cfg(test)]
 mod fork_db_tests {
     use super::*;
+    use crate::db::overlay::TableKey;
+    use crate::db::overlay::TableValue;
+    use crate::revm::db::CacheDB;
+    use crate::revm::db::EmptyDBTyped;
+    use std::convert::Infallible;
 
     use crate::{
         db::{
+            overlay::OverlayDb,
             DatabaseRef,
-            SharedDB,
         },
         primitives::{
             uint,
@@ -194,7 +199,7 @@ mod fork_db_tests {
 
     #[tokio::test]
     async fn test_basic() {
-        let mut shared_db = SharedDB::<0>::new_test().await;
+        let overlay_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
 
         let mut block_changes = BlockChanges::default();
         let mut evm_state = EvmState::default();
@@ -212,14 +217,27 @@ mod fork_db_tests {
             },
         );
 
+        let account_info = AccountInfo {
+            nonce: 0,
+            balance: uint!(1000_U256),
+            ..Default::default()
+        };
+
+        overlay_db.overlay.insert(
+            TableKey::Basic(Address::ZERO),
+            TableValue::Basic(account_info),
+        );
+
         block_changes.state_changes = evm_state.clone();
 
-        shared_db.commit_block(block_changes).unwrap();
-
-        let mut fork_db = shared_db.fork();
+        let mut fork_db = overlay_db.fork();
 
         assert_eq!(
-            shared_db.basic_ref(Address::ZERO).unwrap().unwrap().balance,
+            overlay_db
+                .basic_ref(Address::ZERO)
+                .unwrap()
+                .unwrap()
+                .balance,
             uint!(1000_U256)
         );
 
@@ -237,16 +255,18 @@ mod fork_db_tests {
             uint!(2000_U256)
         );
         assert_eq!(
-            shared_db.basic_ref(Address::ZERO).unwrap().unwrap().balance,
+            overlay_db
+                .basic_ref(Address::ZERO)
+                .unwrap()
+                .unwrap()
+                .balance,
             uint!(1000_U256)
         );
     }
 
     #[tokio::test]
     async fn test_storage() {
-        let mut shared_db = SharedDB::<0>::new_test().await;
-
-        let mut block_changes = BlockChanges::default();
+        let overlay_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
         let mut evm_state = EvmState::default();
 
         let mut storage = HashMap::from_iter([]);
@@ -267,15 +287,21 @@ mod fork_db_tests {
                 status: AccountStatus::Touched,
             },
         );
+        overlay_db.overlay.insert(
+            TableKey::Basic(Address::ZERO),
+            TableValue::Basic(AccountInfo::default()),
+        );
+        overlay_db.overlay.insert(
+            TableKey::Storage(Address::ZERO, uint!(0_U256)),
+            TableValue::Storage(uint!(1_U256).into()),
+        );
 
-        block_changes.state_changes = evm_state.clone();
-
-        shared_db.commit_block(block_changes).unwrap();
-
-        let mut fork_db = shared_db.fork();
+        let mut fork_db = overlay_db.fork();
 
         assert_eq!(
-            shared_db.storage_ref(Address::ZERO, uint!(0_U256)).unwrap(),
+            overlay_db
+                .storage_ref(Address::ZERO, uint!(0_U256))
+                .unwrap(),
             uint!(1_U256)
         );
 
@@ -296,7 +322,9 @@ mod fork_db_tests {
         fork_db.commit(evm_state);
 
         assert_eq!(
-            shared_db.storage_ref(Address::ZERO, uint!(0_U256)).unwrap(),
+            overlay_db
+                .storage_ref(Address::ZERO, uint!(0_U256))
+                .unwrap(),
             uint!(1_U256)
         );
 
@@ -308,18 +336,9 @@ mod fork_db_tests {
 
     #[tokio::test]
     async fn test_code_by_hash() {
-        let mut shared_db = SharedDB::<0>::new_test().await;
+        let overlay_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
         let mut evm_state = EvmState::default();
-        let mut fork_db = shared_db.fork();
-
-        assert_eq!(
-            shared_db.code_by_hash_ref(KECCAK_EMPTY),
-            Err(crate::db::NotFoundError)
-        );
-        assert_eq!(
-            fork_db.code_by_hash_ref(KECCAK_EMPTY),
-            Err(crate::db::NotFoundError)
-        );
+        let mut fork_db = overlay_db.fork();
 
         let code_bytes = random_bytes::<32>();
         let code_hash = keccak256(code_bytes);
@@ -337,15 +356,24 @@ mod fork_db_tests {
                 status: AccountStatus::Touched,
             },
         );
-        shared_db
-            .commit_block(BlockChanges {
-                state_changes: evm_state,
-                ..Default::default()
-            })
-            .unwrap();
 
-        assert_eq!(shared_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
+        let account_info = AccountInfo {
+            code_hash,
+            code: Some(bytecode.clone()),
+            ..Default::default()
+        };
 
+        overlay_db.overlay.insert(
+            TableKey::Basic(Address::ZERO),
+            TableValue::Basic(account_info),
+        );
+
+        overlay_db.overlay.insert(
+            TableKey::CodeByHash(bytecode.hash_slow()),
+            TableValue::CodeByHash(bytecode.clone()),
+        );
+
+        assert_eq!(overlay_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
         assert_eq!(fork_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
 
         let mut evm_state = EvmState::default();
@@ -369,33 +397,23 @@ mod fork_db_tests {
 
         fork_db.commit(evm_state);
 
-        assert_eq!(
-            shared_db.code_by_hash_ref(code_hash),
-            Err(crate::db::NotFoundError)
-        );
-
         assert_eq!(fork_db.code_by_hash_ref(code_hash).unwrap(), bytecode);
     }
 
     #[tokio::test]
     async fn test_block_hash() {
-        let mut shared_db = SharedDB::<0>::new_test().await;
+        let overlay_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
 
-        assert_eq!(shared_db.block_hash_ref(0), Err(crate::db::NotFoundError));
+        overlay_db
+            .overlay
+            .insert(TableKey::BlockHash(0), TableValue::BlockHash(KECCAK_EMPTY));
 
-        let block_changes = BlockChanges {
-            block_num: 0,
-            block_hash: KECCAK_EMPTY,
-            ..Default::default()
-        };
-
-        shared_db.commit_block(block_changes).unwrap();
-        assert_eq!(shared_db.block_hash_ref(0), Ok(KECCAK_EMPTY));
+        assert_eq!(overlay_db.block_hash_ref(0), Ok(KECCAK_EMPTY));
     }
 
     #[tokio::test]
     async fn test_commit_self_destruct() {
-        let mut shared_db = SharedDB::<0>::new_test().await;
+        let overlay_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
 
         let mut evm_state = EvmState::default();
 
@@ -417,16 +435,20 @@ mod fork_db_tests {
                 status: AccountStatus::Touched,
             },
         );
-        shared_db
-            .commit_block(BlockChanges {
-                state_changes: evm_state,
-                ..Default::default()
-            })
-            .unwrap();
+        overlay_db.overlay.insert(
+            TableKey::Basic(Address::ZERO),
+            TableValue::Basic(AccountInfo::default()),
+        );
+        overlay_db.overlay.insert(
+            TableKey::Storage(Address::ZERO, uint!(0_U256)),
+            TableValue::Storage(uint!(1_U256).into()),
+        );
 
-        let mut fork_db = shared_db.fork();
+        let mut fork_db = overlay_db.fork();
         assert_eq!(
-            shared_db.storage_ref(Address::ZERO, uint!(0_U256)).unwrap(),
+            overlay_db
+                .storage_ref(Address::ZERO, uint!(0_U256))
+                .unwrap(),
             evm_storage_slot.present_value()
         );
         assert_eq!(
@@ -447,7 +469,9 @@ mod fork_db_tests {
         fork_db.commit(evm_state);
 
         assert_eq!(
-            shared_db.storage_ref(Address::ZERO, uint!(0_U256)).unwrap(),
+            overlay_db
+                .storage_ref(Address::ZERO, uint!(0_U256))
+                .unwrap(),
             evm_storage_slot.present_value()
         );
 
