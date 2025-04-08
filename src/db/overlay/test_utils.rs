@@ -29,6 +29,7 @@ impl<Db> OverlayDb<Db> {
 }
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub(crate) struct MockDb {
     /// Simple storage for account info.
     accounts: HashMap<Address, AccountInfo>,
@@ -48,6 +49,7 @@ pub(crate) struct MockDb {
     block_hash_calls: Arc<Mutex<u64>>,
 }
 
+#[allow(dead_code)]
 impl MockDb {
     pub fn new() -> Self {
         Default::default()
@@ -114,6 +116,7 @@ impl DatabaseRef for MockDb {
 }
 
 // Helper function to create a simple AccountInfo
+#[allow(dead_code)]
 pub fn mock_account_info(balance: U256, nonce: u64, code: Option<Bytecode>) -> AccountInfo {
     AccountInfo {
         balance,

@@ -33,7 +33,7 @@ use moka::sync::Cache;
 use super::fork_db::ForkDb;
 
 pub mod active_overlay;
-#[cfg(test)]
+#[cfg(any(test, feature = "test"))]
 mod test_utils;
 
 /// Enum to represent different table types
