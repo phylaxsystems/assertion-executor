@@ -1,16 +1,16 @@
 use crate::db::overlay::AccountInfo;
 use crate::db::NotFoundError;
-use crate::revm::db::CacheDB;
-use crate::revm::db::EmptyDBTyped;
-use crate::revm::DatabaseRef;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
 use moka::sync::Cache;
+use revm::db::CacheDB;
+use revm::db::EmptyDBTyped;
 use revm::primitives::{
     Bytecode,
     KECCAK_EMPTY,
 };
+use revm::DatabaseRef;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;

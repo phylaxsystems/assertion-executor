@@ -3,9 +3,7 @@ use crate::{
     inspectors::precompiles::empty_outcome,
     inspectors::sol_primitives::PhEvm::loadCall,
     primitives::Address,
-    revm::DatabaseRef,
 };
-
 use revm::{
     interpreter::{
         CallInputs,
@@ -14,6 +12,7 @@ use revm::{
         InstructionResult,
         InterpreterResult,
     },
+    DatabaseRef,
     InnerEvmContext,
 };
 

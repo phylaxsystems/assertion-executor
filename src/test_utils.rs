@@ -1,7 +1,5 @@
 #![cfg(any(test, feature = "test"))]
 
-use crate::revm::db::CacheDB;
-use crate::revm::db::EmptyDBTyped;
 use crate::{
     db::overlay::OverlayDb,
     inspectors::TriggerRecorder,
@@ -29,6 +27,8 @@ use crate::{
     },
     ExecutorConfig,
 };
+use revm::db::CacheDB;
+use revm::db::EmptyDBTyped;
 use std::convert::Infallible;
 
 use alloy_rpc_types::{

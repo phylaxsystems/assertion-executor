@@ -1,4 +1,4 @@
-name: Rust Build, Test, Lint
+name: Rust Test, Lint
 on:
   push:
     branches: [ main ]
@@ -6,18 +6,17 @@ on:
     branches: [ main ]
 
 jobs:
-  call-rust-base-ci:
-    name: Run phylax CI
+  rust-base:
+    name: Rust Base
     uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
       rust-channel: 'nightly'
       require-lockfile: true
       install-foundry: true
       dind: true
-      submodules: 'true'
+      submodules: 'recursive'
       requires-private-deps: true
       foundry-command: 'forge build --root contract-mocks'
-
       # [""] means default features
       # Feature matrices are supported as follows: ["", "--features=foo", "--features=bar", "--features=foo,bar"]
       feature-sets: '["", "--features=optimism"]'

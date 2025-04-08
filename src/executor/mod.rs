@@ -44,10 +44,11 @@ use crate::{
         TxValidationResult,
         U256,
     },
-    revm::Database,
     store::AssertionStore,
     ExecutorConfig,
 };
+
+use revm::Database;
 
 use rayon::prelude::{
     IntoParallelIterator,
@@ -481,8 +482,6 @@ mod test {
     use super::*;
     use crate::db::overlay::TableKey;
     use crate::db::overlay::TableValue;
-    use crate::revm::db::CacheDB;
-    use crate::revm::db::EmptyDBTyped;
     use crate::{
         db::{
             overlay::OverlayDb,
@@ -499,6 +498,8 @@ mod test {
         },
         test_utils::*,
     };
+    use revm::db::CacheDB;
+    use revm::db::EmptyDBTyped;
     use std::convert::Infallible;
 
     #[tokio::test]

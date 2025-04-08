@@ -171,8 +171,8 @@ mod fork_db_tests {
     use super::*;
     use crate::db::overlay::TableKey;
     use crate::db::overlay::TableValue;
-    use crate::revm::db::CacheDB;
-    use crate::revm::db::EmptyDBTyped;
+    use revm::db::CacheDB;
+    use revm::db::EmptyDBTyped;
     use std::convert::Infallible;
 
     use crate::{

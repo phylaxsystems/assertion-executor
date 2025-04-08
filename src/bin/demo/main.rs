@@ -1,5 +1,3 @@
-extern crate revm_19 as revm;
-
 mod bench;
 mod setup;
 

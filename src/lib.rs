@@ -23,9 +23,3 @@ pub mod utils;
 
 #[cfg(any(test, feature = "test"))]
 pub mod test_utils;
-
-#[cfg(feature = "phoundry")]
-extern crate revm_18 as revm;
-
-#[cfg(not(feature = "phoundry"))]
-extern crate revm_19 as revm;

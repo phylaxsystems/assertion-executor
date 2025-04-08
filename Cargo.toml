@@ -34,8 +34,7 @@ alloy-signer = "0.11.1"
 alloy-signer-local = "0.11.1"
 alloy-transport = "0.11.1"
 alloy-transport-ws = "0.11.1"
-revm_18 = { version = "18.0.0", package = "revm", optional = true, features = ["serde"] }
-revm_19 = { version = "19.0.0", package = "revm", optional = true , features = ["serde"] }
+revm = { version = "19.4.0", features = ["serde"]}
 reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.2.1"}
 
 # Test deps
@@ -56,10 +55,8 @@ codegen-units = 1
 incremental = false
 
 [features]
-default = ["revm_19"]
-optimism = ["revm_19/optimism", "revm_19/optimism-default-handler", "revm_18/optimism", "revm_18/optimism-default-handler"]
-test = ["serde_json", "rand", "revm_19"]
-phoundry = ["revm_18"]
+optimism = ["revm/optimism", "revm/optimism-default-handler"]
+test = ["serde_json", "rand"]
 
 [dev-dependencies]
 rand = "0.9.0"
