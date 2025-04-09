@@ -37,7 +37,10 @@ use serde::{
     Serialize,
 };
 
-use tracing::error;
+use tracing::{
+    debug,
+    error,
+};
 
 use std::collections::HashSet;
 
@@ -282,6 +285,12 @@ impl AssertionStore {
                 .transpose()?
                 .unwrap_or_default();
 
+            debug!(
+                target = "assertion-store",
+                pending_modifations_len = assertions.len(),
+                "Applying pending modifications"
+            );
+
             for modification in modifications.clone().into_iter() {
                 match modification {
                     PendingModification::Add {
@@ -290,6 +299,13 @@ impl AssertionStore {
                         active_at_block,
                         ..
                     } => {
+                        debug!(
+                            target = "assertion-store",
+                            ?assertion_contract,
+                            ?trigger_recorder,
+                            active_at_block,
+                            "Applying pending assertion addition"
+                        );
                         let existing_state = assertions
                             .iter_mut()
                             .find(|a| a.assertion_contract_id() == assertion_contract.id);
@@ -313,6 +329,12 @@ impl AssertionStore {
                         inactive_at_block,
                         ..
                     } => {
+                        debug!(
+                            target = "assertion-store",
+                            ?assertion_contract_id,
+                            inactive_at_block,
+                            "Applying pending assertion removal"
+                        );
                         let existing_state = assertions
                             .iter_mut()
                             .find(|a| a.assertion_contract_id() == assertion_contract_id);

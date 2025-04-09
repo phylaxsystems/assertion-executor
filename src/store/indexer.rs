@@ -27,6 +27,7 @@ use bincode::{
 };
 
 use tracing::{
+    debug,
     error,
     instrument,
     warn,
@@ -235,6 +236,7 @@ impl Indexer {
 
     /// Sync the indexer to the latest block
     async fn sync_to_head(&mut self) -> IndexerResult {
+        debug!(target = "indexer", "Syncing indexer to latest block");
         let latest_block = match self
             .provider
             .get_block_by_number(BlockNumberOrTag::Latest, BlockTransactionsKind::Hashes)
@@ -271,6 +273,8 @@ impl Indexer {
             .await?;
 
         self.is_synced = true;
+
+        debug!(target = "indexer", "Indexer synced to latest block");
 
         Ok(())
     }
@@ -370,6 +374,7 @@ impl Indexer {
 
             if is_reorg {
                 let common_ancestor = self.find_common_ancestor(update_block.parent_hash).await?;
+                warn!(target = "indexer", common_ancestor, "Reorg detected");
                 from = common_ancestor + 1;
                 self.prune_from(from)?;
             } else {
@@ -385,6 +390,7 @@ impl Indexer {
 
     /// Move finalized pending modifications to the store
     /// Prune the pending modifications and block hashes trees
+    #[instrument(skip(self))]
     async fn move_finalized_pending_modifications(
         &self,
         finalized_block_number: u64,
@@ -474,6 +480,10 @@ impl Indexer {
     ) -> IndexerResult<Option<PendingModification>> {
         let pending_mod_opt = match log.topics().first() {
             Some(&AssertionAdded::SIGNATURE_HASH) => {
+                debug!(
+                    target = "indexer",
+                    "AssertionAdded event signature detected."
+                );
                 let topics = AssertionAdded::decode_topics(log.topics())?;
                 let data = AssertionAdded::abi_decode_data(&log.data, true)?;
                 let event = AssertionAdded::new(topics, data);
@@ -494,6 +504,13 @@ impl Indexer {
                             .try_into()
                             .map_err(|_| IndexerError::BlockNumberExceedsU64)?;
 
+                        debug!(
+                            target = "indexer",
+                            ?assertion_contract,
+                            active_at_block,
+                            "Assertion contract extracted"
+                        );
+
                         Some(PendingModification::Add {
                             assertion_adopter: event.contractAddress,
                             assertion_contract,
@@ -510,6 +527,10 @@ impl Indexer {
             }
 
             Some(&AssertionRemoved::SIGNATURE_HASH) => {
+                debug!(
+                    target = "indexer",
+                    "AssertionRemoved event signature detected."
+                );
                 let topics = AssertionRemoved::decode_topics(log.topics())?;
                 let data = AssertionRemoved::abi_decode_data(&log.data, true)?;
                 let event = AssertionRemoved::new(topics, data);
