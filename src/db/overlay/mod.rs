@@ -25,6 +25,7 @@ use revm::{
     },
     DatabaseRef,
 };
+use std::cell::UnsafeCell;
 use std::sync::Arc;
 
 use enum_as_inner::EnumAsInner;
@@ -130,7 +131,10 @@ impl<Db> OverlayDb<Db> {
     }
 
     /// Creates an `ActiveOverlay` with the current overlay and a database refrance.
-    pub fn create_overlay(&self, active_db: Arc<Db>) -> ActiveOverlay<Db> {
+    pub fn create_overlay<ActiveDbT>(
+        &self,
+        active_db: Arc<UnsafeCell<ActiveDbT>>,
+    ) -> ActiveOverlay<ActiveDbT> {
         ActiveOverlay::new(active_db, self.overlay.clone())
     }
 
@@ -581,7 +585,8 @@ mod overlay_db_tests {
     #[test]
     fn test_active_overlay_creation() {
         let overlay_db: OverlayDb<MockDb> = OverlayDb::default();
-        let mock_db_arc = Arc::new(MockDb::new());
-        let _active_overlay = overlay_db.create_overlay(mock_db_arc); // Ensure it compiles and runs
+        #[allow(clippy::arc_with_non_send_sync)]
+        let mock_db_arc = Arc::new(UnsafeCell::new(MockDb::new()));
+        let _active_overlay = overlay_db.create_overlay(mock_db_arc);
     }
 }

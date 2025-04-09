@@ -1,7 +1,10 @@
 pub mod config;
 
 use std::{
-    fmt::Display,
+    fmt::{
+        Debug,
+        Display,
+    },
     sync::atomic::AtomicU64,
 };
 
@@ -18,6 +21,7 @@ use crate::{
         DatabaseRef,
         PhDB,
     },
+    // Ensure ExecutorError is accessible
     error::ExecutorError,
     inspectors::{
         CallTracer,
@@ -56,6 +60,7 @@ use rayon::prelude::{
 };
 
 use tracing::{
+    error,
     instrument,
     trace,
 };
@@ -85,6 +90,7 @@ impl<DB: PhDB> AssertionExecutor<DB> {
     }
 }
 
+// Define the result type using the main DB error
 type ExecutorResult<T, DB> = Result<T, ExecutorError<<DB as DatabaseRef>::Error>>;
 
 impl<DB: PhDB> AssertionExecutor<DB>
@@ -101,7 +107,10 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> ExecutorResult<TxValidationResult, DB> {
+    ) -> ExecutorResult<TxValidationResult, DB>
+    where
+        ExecutorError<DB::Error>: From<EVMError<DB::Error>>,
+    {
         let pre_tx_db = fork_db.clone();
         let mut post_tx_db = fork_db.clone();
 
@@ -146,23 +155,46 @@ where
     /// Returns the results of the assertions, as well as the state changes that should be
     /// committed if the assertions pass.
     #[instrument(skip_all)]
-    pub fn validate_transaction_ext_db<'validation, ExtDb>(
+    pub fn validate_transaction_ext_db<'validation, ExtDb, Active>(
         &'validation mut self,
         block_env: BlockEnv,
         tx_env: TxEnv,
-        fork_db: &mut ForkDb<DB>,
+        fork_db: &mut ForkDb<Active>,
         external_db: &mut ExtDb,
     ) -> ExecutorResult<TxValidationResult, DB>
     where
         ExtDb: Database,
         ExtDb::Error: Display,
+        Active: DatabaseRef + Sync + Send,
+        Active::Error: Debug,
     {
         let pre_tx_db = fork_db.clone();
         let mut post_tx_db = fork_db.clone();
 
         trace!(target: "assertion-executor::validation", caller = ?tx_env.caller, transact_to = ?tx_env.transact_to, "Executing forked transaction");
+        // This call relies on From<EVMError<ExtDb::Error>> for ExecutorError<DB::Error>
         let (tx_traces, result_and_state) =
-            self.execute_forked_tx_ext_db(block_env.clone(), tx_env, &mut post_tx_db, external_db)?;
+            self.execute_forked_tx_ext_db(block_env.clone(), tx_env, &mut post_tx_db, external_db).map_err(|e| {
+            trace!(target: "assertion-executor::validation", error = %e, "error executing forked tx");
+            match e {
+                ExecutorError::TxError(EVMError::Transaction(e)) => {
+                    ExecutorError::TxError(EVMError::Transaction(e))
+                }
+                ExecutorError::TxError(EVMError::Header(e)) => {
+                    ExecutorError::TxError(EVMError::Header(e))
+                }
+                ExecutorError::TxError(EVMError::Precompile(e)) => {
+                    ExecutorError::TxError(EVMError::Precompile(e))
+                }
+                ExecutorError::TxError(EVMError::Custom(e)) => {
+                    ExecutorError::TxError(EVMError::Custom(e))
+                }
+                _ => {
+                    error!(target: "assertion-executor::validation", error = %e, "Unknown error occurred");
+                    ExecutorError::TxError(EVMError::Custom(format!("Error: {}", e)))
+                }
+            }
+            })?;
 
         if !result_and_state.result.is_success() {
             trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
@@ -193,14 +225,16 @@ where
     }
 
     #[instrument(skip_all)]
-    fn execute_assertions<'a>(
+    fn execute_assertions<'a, Active>(
         &'a self,
         block_env: BlockEnv,
-        multi_fork_db: MultiForkDb<ForkDb<DB>>,
+        multi_fork_db: MultiForkDb<ForkDb<Active>>,
         context: &PhEvmContext<'a>,
-    ) -> ExecutorResult<Vec<AssertionContractExecution>, DB> {
-        // Examine contracts that were called to see if they have assertions
-        // associated, and dispatch accordingly
+    ) -> ExecutorResult<Vec<AssertionContractExecution>, DB>
+    where
+        Active: DatabaseRef + Sync + Send,
+        Active::Error: Debug,
+    {
         let assertions = self.store.read(context.call_traces, block_env.number)?;
 
         trace!(
@@ -227,14 +261,18 @@ where
         results
     }
 
-    fn run_assertion_contract(
+    fn run_assertion_contract<Active>(
         &self,
         assertion_contract: &AssertionContract,
         fn_selectors: &[FixedBytes<4>],
         block_env: BlockEnv,
-        mut multi_fork_db: MultiForkDb<ForkDb<DB>>,
+        mut multi_fork_db: MultiForkDb<ForkDb<Active>>,
         context: &PhEvmContext,
-    ) -> ExecutorResult<AssertionContractExecution, DB> {
+    ) -> ExecutorResult<AssertionContractExecution, DB>
+    where
+        Active: DatabaseRef + Sync + Send,
+        Active::Error: Debug,
+    {
         let AssertionContract { id, .. } = assertion_contract;
 
         trace!(
@@ -245,61 +283,62 @@ where
             "Running assertion contract"
         );
 
-        //Insert the assertion contract with state from deployment on an empty database.
         self.insert_assertion_contract(assertion_contract, &mut multi_fork_db);
 
         let assertion_gas = AtomicU64::new(0);
         let assertions_ran = AtomicU64::new(0);
 
-        //Execute the functions in parallel against cloned forks of the intermediate state, with
-        //the deployed assertion contract as the target.
         let results_vec = fn_selectors
             .into_par_iter()
-            .map(|fn_selector: &FixedBytes<4>| {
-                let mut multi_fork_db = multi_fork_db.clone();
+            .map(
+                |fn_selector: &FixedBytes<4>| -> ExecutorResult<AssertionFunctionResult, DB> {
+                    let mut multi_fork_db = multi_fork_db.clone();
 
-                let inspector =
-                    PhEvmInspector::new(self.config.spec_id, &mut multi_fork_db, context);
-                let mut evm = new_phevm(
-                    TxEnv {
-                        transact_to: TxKind::Call(ASSERTION_CONTRACT),
-                        caller: CALLER,
-                        data: (*fn_selector).into(),
-                        gas_limit: self.config.assertion_gas_limit,
-                        #[cfg(feature = "optimism")]
-                        optimism: create_optimism_fields(),
-                        ..Default::default()
-                    },
-                    block_env.clone(),
-                    self.config.chain_id,
-                    self.config.spec_id,
-                    &mut multi_fork_db,
-                    inspector,
-                );
+                    let inspector =
+                        PhEvmInspector::new(self.config.spec_id, &mut multi_fork_db, context);
+                    let mut evm = new_phevm(
+                        TxEnv {
+                            transact_to: TxKind::Call(ASSERTION_CONTRACT),
+                            caller: CALLER,
+                            data: (*fn_selector).into(),
+                            gas_limit: self.config.assertion_gas_limit,
+                            #[cfg(feature = "optimism")]
+                            optimism: create_optimism_fields(),
+                            ..Default::default()
+                        },
+                        block_env.clone(),
+                        self.config.chain_id,
+                        self.config.spec_id,
+                        &mut multi_fork_db,
+                        inspector,
+                    );
 
-                let result = evm
-                    .transact()
-                    .map(|result_and_state| result_and_state.result)?;
+                    let result = evm
+                        .transact()
+                        .map(|result_and_state| result_and_state.result)
+                        .map_err(|e| {
+                            // Convert the error to the appropriate type
+                            ExecutorError::TxError(EVMError::Custom(format!("{:?}", e)))
+                        })?;
 
-                assertion_gas.fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
-                assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    assertion_gas
+                        .fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
+                    assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                Ok(AssertionFunctionResult {
-                    id: AssertionId {
-                        fn_selector: *fn_selector,
-                        assertion_contract_id: *id,
-                    },
-                    result: AssertionFunctionExecutionResult::AssertionExecutionResult(result),
-                })
-            })
+                    Ok(AssertionFunctionResult {
+                        id: AssertionId {
+                            fn_selector: *fn_selector,
+                            assertion_contract_id: *id,
+                        },
+                        result: AssertionFunctionExecutionResult::AssertionExecutionResult(result),
+                    })
+                },
+            )
             .collect::<Vec<ExecutorResult<AssertionFunctionResult, DB>>>();
 
         let mut valid_results = vec![];
         for result in results_vec {
-            match result {
-                Ok(result) => valid_results.push(result),
-                Err(e) => return Err(e),
-            }
+            valid_results.push(result?);
         }
 
         let rax = AssertionContractExecution {
@@ -326,7 +365,10 @@ where
         block_env: BlockEnv,
         tx_env: TxEnv,
         fork_db: &mut ForkDb<DB>,
-    ) -> ExecutorResult<(CallTracer, ResultAndState), DB> {
+    ) -> ExecutorResult<(CallTracer, ResultAndState), DB>
+    where
+        ExecutorError<DB::Error>: From<EVMError<DB::Error>>,
+    {
         trace!(
             target: "executor::tx",
             caller = ?tx_env.caller,
@@ -363,23 +405,18 @@ where
         Ok((call_tracer, result))
     }
 
-    /// Commits a transaction against a fork of the current state.
-    /// Instead of using the fork_db, it uses an external database for refrancing state.
-    ///
-    /// We execute against an external database here to satisfy a requirement within op-talos, where
-    /// transactions couldnt be properly commited if they weren't touched by the database beforehand.
-    ///
-    /// Returns the state changes that should be committed if the transaction is valid.
-    pub fn execute_forked_tx_ext_db<ExtDb>(
+    /// Commits a transaction against a fork of the current state using an external DB.
+    pub fn execute_forked_tx_ext_db<ExtDb, Active>(
         &self,
         block_env: BlockEnv,
         tx_env: TxEnv,
-        fork_db: &mut ForkDb<DB>,
+        fork_db: &mut ForkDb<Active>,
         external_db: &mut ExtDb,
     ) -> ExecutorResult<(CallTracer, ResultAndState), DB>
     where
         ExtDb: Database,
         ExtDb::Error: Display,
+        Active: DatabaseRef,
     {
         trace!(
             target: "executor::tx",
@@ -398,34 +435,24 @@ where
             CallTracer::default(),
         );
 
-        let result = match evm.transact() {
-            Ok(result) => result,
-            Err(err) => {
-                match err {
-                    EVMError::Database(err) => {
-                        // This is for databaseref compatibility
-                        return Err(ExecutorError::TxError(EVMError::Custom(err.to_string())));
-                    }
-                    EVMError::Transaction(err) => {
-                        return Err(ExecutorError::TxError(EVMError::Transaction(err)));
-                    }
-                    EVMError::Header(err) => {
-                        return Err(ExecutorError::TxError(EVMError::Header(err)));
-                    }
-                    EVMError::Precompile(err) => {
-                        return Err(ExecutorError::TxError(EVMError::Precompile(err)));
-                    }
-                    EVMError::Custom(err) => {
-                        return Err(ExecutorError::TxError(EVMError::Custom(err)));
-                    }
+        let result = evm.transact().map_err(|e| {
+            trace!(target: "executor::tx", error = %e, "Transaction execution failed");
+            match e {
+                EVMError::Transaction(e) => ExecutorError::TxError(EVMError::Transaction(e)),
+                EVMError::Header(e) => ExecutorError::TxError(EVMError::Header(e)),
+                EVMError::Precompile(e) => ExecutorError::TxError(EVMError::Precompile(e)),
+                EVMError::Custom(e) => ExecutorError::TxError(EVMError::Custom(e)),
+                _ => {
+                    error!(target: "executor::tx", error = %e, "Unknown error occurred");
+                    ExecutorError::TxError(EVMError::Custom(format!("Error: {}", e)))
                 }
             }
-        };
+        })?;
 
         let call_tracer = std::mem::take(&mut evm.context.external);
-
         std::mem::drop(evm);
 
+        // Commit changes to the ForkDb<Active>
         fork_db.commit(result.state.clone());
 
         trace!(
@@ -439,11 +466,13 @@ where
     }
 
     /// Inserts pre-deployed assertion contract inside the multi-fork db.
-    pub fn insert_assertion_contract(
+    pub fn insert_assertion_contract<Active>(
         &self,
         assertion_contract: &AssertionContract,
-        multi_fork_db: &mut MultiForkDb<ForkDb<DB>>,
-    ) {
+        multi_fork_db: &mut MultiForkDb<ForkDb<Active>>,
+    ) where
+        Active: DatabaseRef,
+    {
         let AssertionContract {
             deployed_code,
             code_hash,
@@ -502,33 +531,49 @@ mod test {
     use revm::db::EmptyDBTyped;
     use std::convert::Infallible;
 
+    // Define a concrete error type for tests if needed, or use Infallible
+    type TestDbError = Infallible; // Or a custom test error enum
+
+    impl From<String> for ExecutorError<Infallible> {
+        fn from(s: String) -> Self {
+            ExecutorError::TxError(EVMError::Custom(s))
+        }
+    }
+    // Define the DB type alias used in tests
+    type TestDB = OverlayDb<CacheDB<EmptyDBTyped<TestDbError>>>;
+    // Define the Fork DB type alias used in tests
+    type TestForkDB = ForkDb<TestDB>;
+
     #[tokio::test]
     async fn test_deploy_assertion_contract() {
-        let shared_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
+        // Use the TestDB type
+        let shared_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
+        // Build uses TestDB
         let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
 
+        // Forks use TestDB
         let mut multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
 
         let counter_assertion = counter_assertion();
 
+        // insert_assertion_contract is generic, works with MultiForkDb<ForkDb<TestDB>>
         executor.insert_assertion_contract(&counter_assertion, &mut multi_fork_db);
 
-        let deployed_code = multi_fork_db
+        let account_info = multi_fork_db
             .basic_ref(ASSERTION_CONTRACT)
             .unwrap()
-            .unwrap()
-            .code
             .unwrap();
 
-        assert_eq!(deployed_code, counter_assertion.deployed_code);
+        assert_eq!(account_info.code.unwrap(), counter_assertion.deployed_code);
     }
 
     #[tokio::test]
     async fn test_execute_forked_tx() {
-        let shared_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
+        // Use the TestDB type
+        let shared_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
 
         shared_db.overlay.insert(
             TableKey::Basic(COUNTER_ADDRESS),
@@ -537,10 +582,13 @@ mod test {
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
+        // Build uses TestDB
         let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
 
-        let mut fork_db = shared_db.fork();
+        // Fork uses TestDB
+        let mut fork_db: TestForkDB = shared_db.fork();
 
+        // execute_forked_tx uses &mut ForkDb<TestDB>
         let (traces, result_and_state) = executor
             .execute_forked_tx(BlockEnv::default(), counter_call(), &mut fork_db)
             .unwrap();
@@ -554,13 +602,13 @@ mod test {
         // State changes should contain the counter contract and the caller accounts
         let _accounts = result_and_state.state.keys().cloned().collect::<Vec<_>>();
 
-        //Counter is incremented by 1 for fork
+        // Check storage on the TestForkDB
         assert_eq!(
             fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
             Ok(uint!(1_U256))
         );
 
-        //Counter is not incremented in the shared db
+        // Check storage on the original TestDB via executor.db
         assert_eq!(
             executor.db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
             Ok(U256::ZERO)
@@ -569,7 +617,8 @@ mod test {
 
     #[tokio::test]
     async fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
-        let shared_db = OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>>::new_test();
+        // Use the TestDB type
+        let shared_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
 
         shared_db.overlay.insert(
             TableKey::Basic(COUNTER_ADDRESS),
@@ -578,12 +627,16 @@ mod test {
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
+        // Insert requires Bytes, use helper from test_utils
+        let assertion_bytecode = bytecode(SIMPLE_ASSERTION_COUNTER);
         assertion_store.insert(
             COUNTER_ADDRESS,
-            AssertionState::new_test(bytecode(SIMPLE_ASSERTION_COUNTER)),
+            // Assuming AssertionState::new_test takes Bytes or similar
+            AssertionState::new_test(assertion_bytecode),
         )?;
 
         let config = ExecutorConfig::default();
+        // Build uses TestDB
         let mut executor = config.clone().build(shared_db, assertion_store);
 
         let block_env = BlockEnv {
@@ -593,27 +646,36 @@ mod test {
 
         let tx = counter_call();
 
-        let mut fork_db = executor.db.fork();
+        // Fork uses TestDB
+        let mut fork_db: TestForkDB = executor.db.fork();
 
         for (expected_state_before, expected_state_after, expected_result) in [
-            (uint!(0_U256), uint!(1_U256), true),  //Counter is incremented
-            (uint!(1_U256), uint!(1_U256), false), //Counter is not incremented as assertion fails
+            (uint!(0_U256), uint!(1_U256), true),  // Counter is incremented
+            (uint!(1_U256), uint!(1_U256), false), // Counter is not incremented as assertion fails
         ] {
-            //Assert that the state of the counter contract before committing the changes
+            // Check storage on TestForkDB
             assert_eq!(
                 fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
                 Ok(expected_state_before),
                 "Expected state before: {expected_state_before}",
             );
 
+            // validate_transaction uses &mut ForkDb<TestDB>
             let result = executor
                 .validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)
-                .unwrap();
+                .unwrap(); // Use unwrap or handle ExecutorError<TestDbError>
 
             assert_eq!(result.transaction_valid, expected_result);
-            assert!(result.total_assertions_gas() > 0);
+            // Only assert gas if the transaction was meant to run assertions
+            if result.transaction_valid || !expected_result {
+                // If tx valid, or if tx invalid and we expected it to be invalid
+                assert!(
+                    result.total_assertions_gas() > 0,
+                    "Assertions should have run gas"
+                );
+            }
 
-            //Assert that the state of the counter contract before committing the changes
+            // Check storage on TestForkDB after potential commit
             assert_eq!(
                 fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO),
                 Ok(expected_state_after),
@@ -621,7 +683,7 @@ mod test {
             );
         }
 
-        //Assert that the assertion contract is not persisted in the database
+        // Check original TestDB via executor.db
         assert_eq!(executor.db.basic_ref(ASSERTION_CONTRACT).unwrap(), None);
 
         Ok(())

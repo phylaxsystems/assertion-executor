@@ -10,7 +10,10 @@ use revm::primitives::{
     Bytecode,
     KECCAK_EMPTY,
 };
-use revm::DatabaseRef;
+use revm::{
+    Database,
+    DatabaseRef,
+};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -110,6 +113,35 @@ impl DatabaseRef for MockDb {
     }
 
     fn block_hash_ref(&self, number: u64) -> Result<B256, Self::Error> {
+        *self.block_hash_calls.lock().unwrap() += 1;
+        self.block_hashes.get(&number).cloned().ok_or(NotFoundError)
+    }
+}
+
+impl Database for MockDb {
+    type Error = NotFoundError; // Simple error type for mock
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        *self.basic_calls.lock().unwrap() += 1;
+        Ok(self.accounts.get(&address).cloned())
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        *self.code_calls.lock().unwrap() += 1;
+        self.contracts.get(&code_hash).cloned().ok_or(NotFoundError)
+    }
+
+    fn storage(&mut self, address: Address, slot: U256) -> Result<U256, Self::Error> {
+        *self.storage_calls.lock().unwrap() += 1;
+        Ok(self
+            .storage
+            .get(&address)
+            .and_then(|s| s.get(&slot))
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
         *self.block_hash_calls.lock().unwrap() += 1;
         self.block_hashes.get(&number).cloned().ok_or(NotFoundError)
     }

@@ -1,3 +1,4 @@
+#![feature(unsafe_cell_access)]
 #![feature(test)]
 
 mod error;
