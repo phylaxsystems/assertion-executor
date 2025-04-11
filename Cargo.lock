@@ -1193,6 +1193,7 @@ dependencies = [
  "assertion-da-server",
  "bincode",
  "bollard",
+ "clap",
  "criterion",
  "enum-as-inner",
  "evm-glue",

@@ -35,6 +35,8 @@ use alloy_sol_types::{
     SolCall,
 };
 
+use tracing::debug;
+
 #[cfg(feature = "optimism")]
 use crate::executor::config::create_optimism_fields;
 
@@ -63,6 +65,14 @@ pub fn extract_assertion_contract(
     assertion_code: Bytes,
     config: &ExecutorConfig,
 ) -> Result<(AssertionContract, TriggerRecorder), FnSelectorExtractorError> {
+    let assertion_id = keccak256(&assertion_code);
+
+    debug!(
+        target = "assertion_executor:extract_assertion_contract",
+        assertion_id = ?assertion_id,
+        "Extracting assertion contract"
+    );
+
     let block_env = BlockEnv::default();
 
     // Deploy the contract first
@@ -146,7 +156,7 @@ pub fn extract_assertion_contract(
             code_hash: info.code_hash,
             storage,
             account_status: status,
-            id: keccak256(&assertion_code),
+            id: assertion_id,
         },
         evm.context.external,
     ))

@@ -10,7 +10,6 @@ use std::{
 
 use crate::{
     build_evm::{
-        new_evm,
         new_phevm,
         new_tx_fork_evm,
     },
@@ -32,12 +31,13 @@ use crate::{
         address,
         Account,
         AccountInfo,
+        AccountStatus,
         Address,
         AssertionContract,
         AssertionContractExecution,
+        AssertionFnId,
         AssertionFunctionExecutionResult,
         AssertionFunctionResult,
-        AssertionId,
         BlockEnv,
         EVMError,
         EvmState,
@@ -60,6 +60,7 @@ use rayon::prelude::{
 };
 
 use tracing::{
+    debug,
     error,
     instrument,
     trace,
@@ -97,55 +98,6 @@ impl<DB: PhDB> AssertionExecutor<DB>
 where
     DB: DatabaseRef<Error: std::fmt::Debug + Send>,
 {
-    /// Executes a transaction against the current state of the fork, and runs the appropriate
-    /// assertions.
-    /// Returns the results of the assertions, as well as the state changes that should be
-    /// committed if the assertions pass.
-    #[instrument(skip_all)]
-    pub fn validate_transaction<'a>(
-        &'a mut self,
-        block_env: BlockEnv,
-        tx_env: TxEnv,
-        fork_db: &mut ForkDb<DB>,
-    ) -> ExecutorResult<TxValidationResult, DB>
-    where
-        ExecutorError<DB::Error>: From<EVMError<DB::Error>>,
-    {
-        let pre_tx_db = fork_db.clone();
-        let mut post_tx_db = fork_db.clone();
-
-        trace!(target: "assertion-executor::validation", caller = ?tx_env.caller, transact_to = ?tx_env.transact_to, "Executing forked transaction");
-        let (tx_traces, result_and_state) =
-            self.execute_forked_tx(block_env.clone(), tx_env, &mut post_tx_db)?;
-
-        if !result_and_state.result.is_success() {
-            trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
-            return Ok(TxValidationResult::new(true, result_and_state, vec![]));
-        }
-
-        trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
-        let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
-
-        let context = PhEvmContext::new(result_and_state.result.logs(), &tx_traces);
-
-        let results = self.execute_assertions(block_env, multi_fork_db, &context)?;
-
-        trace!(
-            target: "assertion-executor::validation",
-            assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(),
-            gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(),
-            "Completed assertion execution"
-        );
-
-        let valid = results
-            .iter()
-            .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
-        if valid {
-            fork_db.commit(result_and_state.state.clone());
-        }
-        Ok(TxValidationResult::new(valid, result_and_state, results))
-    }
-
     /// Executes a transaction against an external revm database, and runs the appropriate
     /// assertions.
     ///
@@ -243,7 +195,6 @@ where
             assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.0.id)).collect::<Vec<_>>(),
             "Retrieved Assertion contracts from Assertion store"
         );
-
         let results: ExecutorResult<Vec<AssertionContractExecution>, DB> = assertions
             .into_par_iter()
             .map(
@@ -258,6 +209,7 @@ where
                 },
             )
             .collect();
+        trace!(target: "assertion-executor::execute_assertions", results=?results, "Assertion Execution Results");
         results
     }
 
@@ -276,7 +228,7 @@ where
         let AssertionContract { id, .. } = assertion_contract;
 
         trace!(
-            target: "executor::assertion",
+            target: "assertion-executor::run_assertion_contract",
             assertion_contract_id = ?id,
             selector_count = fn_selectors.len(),
             selectors = ?fn_selectors.iter().map(|s| format!("{:x?}", s)).collect::<Vec<_>>(),
@@ -296,23 +248,26 @@ where
 
                     let inspector =
                         PhEvmInspector::new(self.config.spec_id, &mut multi_fork_db, context);
+
+                    let tx_env = TxEnv {
+                        transact_to: TxKind::Call(ASSERTION_CONTRACT),
+                        caller: CALLER,
+                        data: (*fn_selector).into(),
+                        gas_limit: self.config.assertion_gas_limit,
+                        gas_price: block_env.basefee,
+                        #[cfg(feature = "optimism")]
+                        optimism: create_optimism_fields(),
+                        ..Default::default()
+                    };
+                    debug!(target: "assertion-executor::assertion", tx_env=?tx_env, "Transaction Environment");
                     let mut evm = new_phevm(
-                        TxEnv {
-                            transact_to: TxKind::Call(ASSERTION_CONTRACT),
-                            caller: CALLER,
-                            data: (*fn_selector).into(),
-                            gas_limit: self.config.assertion_gas_limit,
-                            #[cfg(feature = "optimism")]
-                            optimism: create_optimism_fields(),
-                            ..Default::default()
-                        },
+                        tx_env,
                         block_env.clone(),
                         self.config.chain_id,
                         self.config.spec_id,
                         &mut multi_fork_db,
                         inspector,
                     );
-
                     let result = evm
                         .transact()
                         .map(|result_and_state| result_and_state.result)
@@ -320,13 +275,13 @@ where
                             // Convert the error to the appropriate type
                             ExecutorError::TxError(EVMError::Custom(format!("{:?}", e)))
                         })?;
-
+                    debug!(target: "assertion-executor::assertion", result=?result, "Assertion executed");
                     assertion_gas
                         .fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
                     assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                     Ok(AssertionFunctionResult {
-                        id: AssertionId {
+                        id: AssertionFnId {
                             fn_selector: *fn_selector,
                             assertion_contract_id: *id,
                         },
@@ -335,7 +290,7 @@ where
                 },
             )
             .collect::<Vec<ExecutorResult<AssertionFunctionResult, DB>>>();
-
+        debug!(target: "assertion-executor::assertion", results_vec=?results_vec, "Assertion Execution Results");
         let mut valid_results = vec![];
         for result in results_vec {
             valid_results.push(result?);
@@ -348,7 +303,7 @@ where
         };
 
         trace!(
-            target: "executor::assertion",
+            target: "assertion-executor::assertion",
             assertion_contract_id = ?id,
             total_gas = rax.total_assertion_gas,
             assertions_ran = rax.total_assertion_funcs_ran,
@@ -356,53 +311,6 @@ where
         );
 
         Ok(rax)
-    }
-
-    /// Commits a transaction against a fork of the current state.
-    /// Returns the state changes that should be committed if the transaction is valid.
-    pub fn execute_forked_tx(
-        &self,
-        block_env: BlockEnv,
-        tx_env: TxEnv,
-        fork_db: &mut ForkDb<DB>,
-    ) -> ExecutorResult<(CallTracer, ResultAndState), DB>
-    where
-        ExecutorError<DB::Error>: From<EVMError<DB::Error>>,
-    {
-        trace!(
-            target: "executor::tx",
-            caller = ?tx_env.caller,
-            transact_to = ?tx_env.transact_to,
-            gas_limit = ?tx_env.gas_limit,
-            "Executing forked transaction"
-        );
-
-        let mut db = revm::db::WrapDatabaseRef(&fork_db);
-
-        let mut evm = new_tx_fork_evm(
-            tx_env,
-            block_env,
-            self.config.chain_id,
-            self.config.spec_id,
-            &mut db,
-            CallTracer::default(),
-        );
-
-        let result = evm.transact()?;
-        let call_tracer = std::mem::take(&mut evm.context.external);
-
-        std::mem::drop(evm);
-
-        fork_db.commit(result.state.clone());
-
-        trace!(
-            target: "executor::tx",
-            gas_used = ?result.result.gas_used(),
-            success = result.result.is_success(),
-            "Completed forked transaction execution"
-        );
-
-        Ok((call_tracer, result))
     }
 
     /// Commits a transaction against a fork of the current state using an external DB.
@@ -419,14 +327,14 @@ where
         Active: DatabaseRef,
     {
         trace!(
-            target: "executor::tx",
+            target: "assertion-executor::tx",
             caller = ?tx_env.caller,
             transact_to = ?tx_env.transact_to,
             gas_limit = ?tx_env.gas_limit,
             "Executing forked transaction with external db"
         );
 
-        let mut evm = new_evm(
+        let mut evm = new_tx_fork_evm(
             tx_env,
             block_env,
             self.config.chain_id,
@@ -436,14 +344,14 @@ where
         );
 
         let result = evm.transact().map_err(|e| {
-            trace!(target: "executor::tx", error = %e, "Transaction execution failed");
+            trace!(target: "assertion-executor::tx", error = %e, "Transaction execution failed");
             match e {
                 EVMError::Transaction(e) => ExecutorError::TxError(EVMError::Transaction(e)),
                 EVMError::Header(e) => ExecutorError::TxError(EVMError::Header(e)),
                 EVMError::Precompile(e) => ExecutorError::TxError(EVMError::Precompile(e)),
                 EVMError::Custom(e) => ExecutorError::TxError(EVMError::Custom(e)),
                 _ => {
-                    error!(target: "executor::tx", error = %e, "Unknown error occurred");
+                    error!(target: "assertion-executor::tx", error = %e, "Unknown error occurred");
                     ExecutorError::TxError(EVMError::Custom(format!("Error: {}", e)))
                 }
             }
@@ -456,7 +364,7 @@ where
         fork_db.commit(result.state.clone());
 
         trace!(
-            target: "executor::tx",
+            target: "assertion-executor::tx",
             gas_used = ?result.result.gas_used(),
             success = result.result.is_success(),
             "Completed forked transaction execution"
@@ -483,6 +391,7 @@ where
 
         let account_info = AccountInfo {
             nonce: 1,
+            // TODO(Odysseas) Why do we need to set the balance to max?
             balance: U256::MAX,
             code: Some(deployed_code.clone()),
             code_hash: *code_hash,
@@ -494,13 +403,23 @@ where
             status: *account_status,
         };
 
+        let caller_account = Account {
+            info: AccountInfo {
+                nonce: 42,
+                balance: U256::MAX,
+                ..Default::default()
+            },
+            status: AccountStatus::Touched,
+            ..Default::default()
+        };
+
         let mut state = EvmState::default();
         state.insert(ASSERTION_CONTRACT, account);
-
+        state.insert(CALLER, caller_account);
         multi_fork_db.commit(state);
 
         trace!(
-            target: "executor::assertion",
+            target: "assertion-executor::assertion",
             "Inserted assertion contract into multi fork db"
         );
     }
@@ -509,8 +428,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::db::overlay::TableKey;
-    use crate::db::overlay::TableValue;
+    use crate::db::overlay::test_utils::MockDb;
     use crate::{
         db::{
             overlay::OverlayDb,
@@ -547,15 +465,15 @@ mod test {
     #[tokio::test]
     async fn test_deploy_assertion_contract() {
         // Use the TestDB type
-        let shared_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
+        let test_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
         // Build uses TestDB
-        let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
+        let executor = ExecutorConfig::default().build(test_db.clone(), assertion_store);
 
         // Forks use TestDB
-        let mut multi_fork_db = MultiForkDb::new(shared_db.fork(), shared_db.fork());
+        let mut multi_fork_db = MultiForkDb::new(test_db.fork(), test_db.fork());
 
         let counter_assertion = counter_assertion();
 
@@ -575,10 +493,8 @@ mod test {
         // Use the TestDB type
         let shared_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
 
-        shared_db.overlay.insert(
-            TableKey::Basic(COUNTER_ADDRESS),
-            TableValue::Basic(counter_acct_info()),
-        );
+        let mut mock_db = MockDb::new();
+        mock_db.insert_account(COUNTER_ADDRESS, counter_acct_info());
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
@@ -590,7 +506,12 @@ mod test {
 
         // execute_forked_tx uses &mut ForkDb<TestDB>
         let (traces, result_and_state) = executor
-            .execute_forked_tx(BlockEnv::default(), counter_call(), &mut fork_db)
+            .execute_forked_tx_ext_db(
+                BlockEnv::default(),
+                counter_call(),
+                &mut fork_db,
+                &mut mock_db,
+            )
             .unwrap();
 
         //Traces should contain the call to the counter contract
@@ -614,16 +535,14 @@ mod test {
             Ok(U256::ZERO)
         );
     }
-
     #[tokio::test]
     async fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
         // Use the TestDB type
-        let shared_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
+        let test_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
 
-        shared_db.overlay.insert(
-            TableKey::Basic(COUNTER_ADDRESS),
-            TableValue::Basic(counter_acct_info()),
-        );
+        let mut mock_db = MockDb::new();
+
+        mock_db.insert_account(COUNTER_ADDRESS, counter_acct_info());
 
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
@@ -636,15 +555,29 @@ mod test {
         )?;
 
         let config = ExecutorConfig::default();
-        // Build uses TestDB
-        let mut executor = config.clone().build(shared_db, assertion_store);
 
+        // Build uses TestDB
+        let mut executor = config.clone().build(test_db, assertion_store);
+
+        let basefee = uint!(10_U256);
         let block_env = BlockEnv {
             number: uint!(1_U256),
+            basefee,
             ..Default::default()
         };
 
-        let tx = counter_call();
+        let tx = TxEnv {
+            gas_price: basefee,
+            ..counter_call()
+        };
+
+        mock_db.insert_account(
+            tx.caller,
+            AccountInfo {
+                balance: U256::MAX,
+                ..Default::default()
+            },
+        );
 
         // Fork uses TestDB
         let mut fork_db: TestForkDB = executor.db.fork();
@@ -662,7 +595,12 @@ mod test {
 
             // validate_transaction uses &mut ForkDb<TestDB>
             let result = executor
-                .validate_transaction(block_env.clone(), tx.clone(), &mut fork_db)
+                .validate_transaction_ext_db::<_, _>(
+                    block_env.clone(),
+                    tx.clone(),
+                    &mut fork_db,
+                    &mut mock_db,
+                )
                 .unwrap(); // Use unwrap or handle ExecutorError<TestDbError>
 
             assert_eq!(result.transaction_valid, expected_result);
@@ -673,6 +611,10 @@ mod test {
                     result.total_assertions_gas() > 0,
                     "Assertions should have run gas"
                 );
+            }
+
+            if result.transaction_valid {
+                mock_db.commit(result.result_and_state.state.clone());
             }
 
             // Check storage on TestForkDB after potential commit

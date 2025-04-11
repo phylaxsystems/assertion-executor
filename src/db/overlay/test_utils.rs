@@ -1,5 +1,8 @@
 use crate::db::overlay::AccountInfo;
+use crate::db::DatabaseCommit;
 use crate::db::NotFoundError;
+use crate::primitives::EvmState;
+
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
@@ -86,6 +89,52 @@ impl MockDb {
     }
     pub fn get_block_hash_calls(&self) -> u64 {
         *self.block_hash_calls.lock().unwrap()
+    }
+}
+
+impl DatabaseCommit for MockDb {
+    fn commit(&mut self, changes: EvmState) {
+        for (address, account) in changes {
+            if !account.is_touched() {
+                continue;
+            }
+            if account.is_selfdestructed() {
+                self.accounts.insert(address, account.info.clone());
+
+                let storage = self.storage.entry(address).or_default();
+
+                storage.clear();
+
+                continue;
+            }
+
+            if account.info.code.is_some() {
+                self.contracts
+                    .insert(account.info.code_hash, account.info.code.clone().unwrap());
+            }
+
+            self.accounts.insert(address, account.info.clone());
+            match self.storage.get_mut(&address) {
+                Some(s) => {
+                    s.extend(
+                        account
+                            .storage
+                            .into_iter()
+                            .map(|(k, v)| (k, v.present_value())),
+                    );
+                }
+                None => {
+                    self.storage.insert(
+                        address,
+                        account
+                            .storage
+                            .into_iter()
+                            .map(|(k, v)| (k, v.present_value()))
+                            .collect(),
+                    );
+                }
+            }
+        }
     }
 }
 

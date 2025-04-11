@@ -54,7 +54,7 @@ pub struct AssertionContract {
 
 /// Id of an assertion function
 #[derive(Debug)]
-pub struct AssertionId {
+pub struct AssertionFnId {
     /// The selector of the assertion function
     pub fn_selector: FixedBytes<4>,
     /// The hash of the assertion contract deployment data.
@@ -122,7 +122,7 @@ pub struct AssertionContractExecution {
 #[derive(Debug)]
 pub struct AssertionFunctionResult {
     /// The id of the assertion function
-    pub id: AssertionId,
+    pub id: AssertionFnId,
     /// The result of the assertion function execution
     pub result: AssertionFunctionExecutionResult,
 }

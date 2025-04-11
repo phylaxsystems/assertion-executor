@@ -19,6 +19,7 @@ pub use assertion_store::{
 
 mod indexer;
 pub use indexer::{
+    BlockTag,
     Indexer,
     IndexerCfg,
     IndexerError,

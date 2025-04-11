@@ -29,11 +29,17 @@ use bincode::{
 use tracing::{
     debug,
     error,
+    info,
     instrument,
     warn,
 };
 
-use alloy::primitives::LogData;
+use alloy::primitives::{
+    LogData,
+    U256,
+};
+
+use clap::ValueEnum;
 
 use crate::{
     primitives::{
@@ -75,7 +81,7 @@ sol! {
 /// Writes finalized pending modifications to the Assertion Store
 /// # Example
 /// ``` no_run
-/// use assertion_executor::{store::{AssertionStore, DaClient, Indexer, IndexerCfg}, primitives::Address,ExecutorConfig};
+/// use assertion_executor::{store::{AssertionStore, DaClient, Indexer, BlockTag, IndexerCfg}, primitives::Address,ExecutorConfig};
 ///
 /// use sled::Config;
 ///
@@ -102,10 +108,12 @@ sol! {
 ///         provider,
 ///         block_hash_tree: db.open_tree("block_hashes").unwrap(),
 ///         pending_modifications_tree: db.open_tree("pending_modifications").unwrap(),
+///         latest_block_tree: db.open_tree("latest_block").unwrap(),
 ///         store,
 ///         da_client,
 ///         state_oracle,
 ///         executor_config: ExecutorConfig::default(),
+///         await_tag: BlockTag::Latest,
 ///    };
 ///
 ///    // Await syncing the indexer to the latest block.
@@ -115,14 +123,47 @@ sol! {
 ///    indexer.run().await.unwrap();
 /// }
 pub struct Indexer {
+    /// The provider for fetching blocks and logs
     provider: PubSubProvider,
+    /// The sled db tree for storing block hashes
     block_hash_tree: sled::Tree,
+    /// The sled db tree for storing the latest block. Required for tracking progress if not
+    /// awaiting(AwaitTag::Latest)
+    latest_block_tree: sled::Tree,
+    /// The sled db tree for storing pending modifications
     pending_modifications_tree: sled::Tree,
+    /// The Assertion Store
     store: AssertionStore,
+    /// The DA Client
     da_client: DaClient,
+    /// The State Oracle contract address
     state_oracle: Address,
+    /// The executor configuration for extracting the assertion contract
     executor_config: ExecutorConfig,
+    /// Whether the indexer is synced to the latest block
     is_synced: bool,
+    /// Tag to use as the upper bound of pending modifications which should be applied to the
+    /// store.
+    pub await_tag: BlockTag,
+}
+
+/// Restricted version of `BlockNumberOrTag` enum.
+/// Only exposes the `Latest`, `Finalized`, and `Safe` variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BlockTag {
+    Latest,
+    Finalized,
+    Safe,
+}
+
+impl From<BlockTag> for BlockNumberOrTag {
+    fn from(tag: BlockTag) -> Self {
+        match tag {
+            BlockTag::Latest => BlockNumberOrTag::Latest,
+            BlockTag::Finalized => BlockNumberOrTag::Finalized,
+            BlockTag::Safe => BlockNumberOrTag::Safe,
+        }
+    }
 }
 
 type PubSubProvider = RootProvider;
@@ -183,10 +224,16 @@ pub struct IndexerCfg {
     /// Block hash tree
     /// Used to store block hashes for reorg detection
     pub block_hash_tree: sled::Tree,
+    /// The sled db tree for storing the latest block. Required for tracking progress if not
+    /// awaiting(AwaitTag::Latest)
+    pub latest_block_tree: sled::Tree,
     /// Pending modifications tree
     /// Used to store pending modifications for blocks before moving
     /// them to the store
     pub pending_modifications_tree: sled::Tree,
+    /// Tag to use as the upper bound of pending modifications which should be applied to the
+    /// store.
+    pub await_tag: BlockTag,
 }
 
 impl Indexer {
@@ -196,21 +243,25 @@ impl Indexer {
             provider,
             block_hash_tree,
             pending_modifications_tree,
+            latest_block_tree,
             store,
             da_client,
             state_oracle,
             executor_config,
+            await_tag,
         } = cfg;
 
         Self {
             provider,
             block_hash_tree,
+            latest_block_tree,
             pending_modifications_tree,
             store,
             da_client,
             state_oracle,
             executor_config,
             is_synced: false,
+            await_tag,
         }
     }
 
@@ -222,6 +273,7 @@ impl Indexer {
     }
 
     /// Run the indexer
+    #[instrument(skip(self))]
     pub async fn run(&self) -> IndexerResult {
         if !self.is_synced {
             return Err(IndexerError::StoreNotSynced);
@@ -235,8 +287,12 @@ impl Indexer {
     }
 
     /// Sync the indexer to the latest block
+    #[instrument(skip(self))]
     async fn sync_to_head(&mut self) -> IndexerResult {
-        debug!(target = "indexer", "Syncing indexer to latest block");
+        info!(
+            target = "assertion_executor::indexer",
+            "Syncing indexer to latest block"
+        );
         let latest_block = match self
             .provider
             .get_block_by_number(BlockNumberOrTag::Latest, BlockTransactionsKind::Hashes)
@@ -250,57 +306,62 @@ impl Indexer {
         };
 
         let latest_block_header = latest_block.header();
+        let latest_block_number = latest_block_header.number();
+        let latest_block_hash = latest_block_header.hash();
         self.sync(UpdateBlock {
-            block_number: latest_block_header.number(),
+            block_number: latest_block_number,
             block_hash: latest_block_header.hash(),
             parent_hash: latest_block_header.parent_hash(),
         })
         .await?;
 
-        let finalized_block = match self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Finalized, BlockTransactionsKind::Hashes)
-            .await?
-        {
-            Some(block) => block,
-            None => {
-                warn!("Finalized block not found");
-                return Ok(());
-            }
-        };
-
-        self.move_finalized_pending_modifications(finalized_block.header().number())
-            .await?;
-
         self.is_synced = true;
 
-        debug!(target = "indexer", "Indexer synced to latest block");
+        info!(
+            target = "assertion_executor::indexer",
+            latest_block_number = ?latest_block_number,
+            latest_block_hash = ?latest_block_hash,
+            "Indexer synced to latest block"
+        );
 
         Ok(())
     }
 
     /// Prune the pending modifications and block hashes trees up to a block number
     fn prune_to(&self, to: u64) -> IndexerResult<Vec<PendingModification>> {
-        let to = ser(&to)?;
-
         let mut pending_modifications = Vec::new();
-        while let Some((key, _)) = self.block_hash_tree.pop_first_in_range(..to.clone())? {
+        let ser_to = ser(&U256::from(to))?;
+
+        while let Some((key, _)) = self.block_hash_tree.pop_first_in_range(..ser_to.clone())? {
             if let Some(pending_mods) = self.pending_modifications_tree.remove(&key)? {
                 let pending_mods: Vec<PendingModification> = de(&pending_mods)?;
                 pending_modifications.extend(pending_mods);
             }
         }
+        debug!(
+            target = "assertion_executor::indexer",
+            to,
+            ?pending_modifications,
+            "Pruned pending modifications and block hashes trees"
+        );
 
         Ok(pending_modifications)
     }
 
     /// Prune the pending modifications and block hashes trees from a block number
     fn prune_from(&self, from: u64) -> IndexerResult {
-        let from = ser(&from)?;
+        let ser_from = ser(&U256::from(from))?;
 
-        while let Some((key, _)) = self.block_hash_tree.pop_first_in_range(from.clone()..)? {
+        while let Some((key, _)) = self
+            .block_hash_tree
+            .pop_first_in_range(ser_from.clone()..)?
+        {
             self.pending_modifications_tree.remove(&key)?;
         }
+        debug!(
+            target = "assertion_executor::indexer",
+            from, "Pruned pending modifications and block hashes trees"
+        );
 
         Ok(())
     }
@@ -308,7 +369,7 @@ impl Indexer {
     /// Finds the common ancestor
     /// Traverses from the cursor backwords until it finds a common ancestor in the block_hashes
     /// tree.
-    #[instrument(skip(self))]
+    #[instrument(skip(self), level = "trace")]
     async fn find_common_ancestor(&self, cursor_hash: B256) -> IndexerResult<u64> {
         let block_hashes_tree = &self.block_hash_tree;
 
@@ -322,7 +383,7 @@ impl Indexer {
             let cursor_header = cursor.header();
 
             cursor_hash = cursor_header.parent_hash();
-            if let Some(hash) = block_hashes_tree.get(ser(&cursor_header.number())?)? {
+            if let Some(hash) = block_hashes_tree.get(ser(&U256::from(cursor_header.number()))?)? {
                 if hash == ser(&cursor_header.hash())? {
                     return Ok(cursor_header.number());
                 }
@@ -332,25 +393,19 @@ impl Indexer {
         }
     }
 
-    /// Handle the latest block, sync the indexer to the latest block, and moving finalized
+    /// Handle the latest block, sync the indexer to the latest block, and moving
     /// pending modifications to the store
-    pub async fn handle_latest_block(&self, header: impl HeaderResponse) -> IndexerResult {
+    #[instrument(skip(self), level = "trace")]
+    pub async fn handle_latest_block(
+        &self,
+        header: impl HeaderResponse + std::fmt::Debug,
+    ) -> IndexerResult {
         self.sync(UpdateBlock {
             block_number: header.number(),
             block_hash: header.hash(),
             parent_hash: header.parent_hash(),
         })
         .await?;
-
-        // get finalized and move finalized pending mods to store.
-        if let Some(finalized_block) = self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Finalized, BlockTransactionsKind::Hashes)
-            .await?
-        {
-            self.move_finalized_pending_modifications(finalized_block.header().number())
-                .await?;
-        }
 
         Ok(())
     }
@@ -362,6 +417,7 @@ impl Indexer {
     /// If reorg, prunes the pending modifications and block hashes trees.
     /// Then indexes the new blocks.
     /// If no block has been indexed, indexes from block 0.
+    #[instrument(skip(self))]
     pub async fn sync(&self, update_block: UpdateBlock) -> IndexerResult {
         let last_indexed_block_num_hash = self.get_last_indexed_block_num_hash()?;
 
@@ -374,9 +430,16 @@ impl Indexer {
 
             if is_reorg {
                 let common_ancestor = self.find_common_ancestor(update_block.parent_hash).await?;
-                warn!(target = "indexer", common_ancestor, "Reorg detected");
+                debug!(
+                    target = "assertion_executor::indexer",
+                    common_ancestor, "Reorg detected"
+                );
                 from = common_ancestor + 1;
                 self.prune_from(from)?;
+                self.insert_last_indexed_block_num_hash(BlockNumHash {
+                    number: common_ancestor,
+                    hash: update_block.parent_hash,
+                })?;
             } else {
                 from = last_indexed_block_num_hash.number + 1;
             }
@@ -388,21 +451,23 @@ impl Indexer {
         Ok(())
     }
 
-    /// Move finalized pending modifications to the store
+    /// Move pending modifications to the store, with the specified block as an upper bound
     /// Prune the pending modifications and block hashes trees
-    #[instrument(skip(self))]
-    async fn move_finalized_pending_modifications(
-        &self,
-        finalized_block_number: u64,
-    ) -> IndexerResult {
-        // Delay pruning genesis block until the first finalized block is indexed.
+    #[instrument(skip(self), level = "trace")]
+    async fn move_pending_modifications_to_store(&self, upper_bound: u64) -> IndexerResult {
+        // Delay pruning genesis block until the first block is ready to be moved.
         // Otherwise it would immediately prune the genesis block and would not be able to find a
         // common ancestor if there was a reorg to the genesis block.
-        if finalized_block_number == 0 {
+        if upper_bound == 0 {
             return Ok(());
         }
 
-        let pending_modifications = self.prune_to(finalized_block_number + 1)?;
+        debug!(
+            target = "assertion_executor::indexer",
+            upper_bound, "Moving pending modifications to store"
+        );
+
+        let pending_modifications = self.prune_to(upper_bound + 1)?;
         self.store
             .apply_pending_modifications(pending_modifications)?;
 
@@ -411,8 +476,13 @@ impl Indexer {
 
     /// Fetch the events from the State Oracle contract.
     /// Store the events in the pending_modifications tree for the indexed blocks.
-    #[instrument(skip(self))]
+    #[instrument(skip(self), level = "trace")]
     async fn index_range(&self, from: u64, to: u64) -> IndexerResult {
+        debug!(
+            target = "assertion_executor::indexer",
+            from, to, "Indexing range"
+        );
+
         let filter = Filter::new()
             .address(self.state_oracle)
             .from_block(BlockNumberOrTag::Number(from))
@@ -442,14 +512,24 @@ impl Indexer {
         let mut pending_mods_batch = sled::Batch::default();
 
         for (block, log_map) in pending_modifications.iter() {
-            let block_mods = log_map.values().collect::<Vec<&PendingModification>>();
-            pending_mods_batch.insert(ser(block)?, ser(&block_mods)?);
+            let block_mods = log_map
+                .values()
+                .cloned()
+                .collect::<Vec<PendingModification>>();
+            pending_mods_batch.insert(ser(&U256::from(*block))?, ser(&block_mods)?);
         }
 
         self.pending_modifications_tree
             .apply_batch(pending_mods_batch)?;
 
-        let mut block_hashes_batch = sled::Batch::default();
+        debug!(
+            target = "assertion_executor::indexer",
+            from, to, "Building block hashes batch"
+        );
+
+        // Build the block hashes batch
+        let mut block_hashes = vec![];
+
         for i in from..=to {
             let block_hash = self
                 .provider
@@ -462,10 +542,41 @@ impl Indexer {
                 .header()
                 .hash();
 
-            block_hashes_batch.insert(ser(&i)?, ser(&block_hash)?);
+            block_hashes.push(BlockNumHash {
+                number: i,
+                hash: block_hash,
+            });
         }
 
-        self.block_hash_tree.apply_batch(block_hashes_batch)?;
+        if let Some(last_indexed_block_num_hash) = block_hashes.last() {
+            self.insert_last_indexed_block_num_hash(*last_indexed_block_num_hash)?;
+        }
+
+        self.write_block_num_hash_batch(block_hashes)?;
+        debug!(
+            target = "assertion_executor::indexer",
+            from, to, "Block hashes batch applied"
+        );
+
+        let block_to_move = self
+            .provider
+            .get_block_by_number(self.await_tag.into(), BlockTransactionsKind::Hashes)
+            .await?
+            .ok_or(IndexerError::ParentBlockNotFound)?
+            .header()
+            .number();
+
+        debug!(
+            target = "assertion_executor::indexer",
+            block_to_move, "Moving pending modifications to store"
+        );
+
+        self.move_pending_modifications_to_store(block_to_move)
+            .await?;
+        debug!(
+            target = "assertion_executor::indexer",
+            block_to_move, "Pending modifications moved to store"
+        );
 
         Ok(())
     }
@@ -473,6 +584,7 @@ impl Indexer {
     /// Extract the pending modifications from the logs
     /// Resolves the bytecode via the assertion da.
     /// Extracts the fn selectors from the contract.
+    #[instrument(skip(self))]
     async fn extract_pending_modifications(
         &self,
         log: &LogData,
@@ -481,13 +593,24 @@ impl Indexer {
         let pending_mod_opt = match log.topics().first() {
             Some(&AssertionAdded::SIGNATURE_HASH) => {
                 debug!(
-                    target = "indexer",
+                    target = "assertion_executor::indexer",
                     "AssertionAdded event signature detected."
                 );
                 let topics = AssertionAdded::decode_topics(log.topics())?;
                 let data = AssertionAdded::abi_decode_data(&log.data, true)?;
                 let event = AssertionAdded::new(topics, data);
 
+                debug!(
+                    target = "assertion_executor::indexer",
+                    ?event,
+                    "AssertionAdded event decoded"
+                );
+
+                // TODO(@0xgregthedev): Improve fault tolerance of the requests to the DA layer.
+                // We should avoid failing if the request to the DA can be resolved before
+                // the modification should be moved to the store. But we also need to avoid back
+                // pressure on extracting the assertion contracts once we have fetched them from
+                // the DA.
                 let bytecode = self
                     .da_client
                     .fetch_assertion(event.assertionId)
@@ -505,7 +628,7 @@ impl Indexer {
                             .map_err(|_| IndexerError::BlockNumberExceedsU64)?;
 
                         debug!(
-                            target = "indexer",
+                            target = "assertion_executor::indexer",
                             ?assertion_contract,
                             active_at_block,
                             "Assertion contract extracted"
@@ -519,8 +642,12 @@ impl Indexer {
                             log_index,
                         })
                     }
-                    Err(e) => {
-                        error!("Failed to extract assertion contract: {:?}", e);
+                    Err(err) => {
+                        error!(
+                            target = "assertion_executor::indexer",
+                            ?err,
+                            "Failed to extract assertion contract"
+                        );
                         None
                     }
                 }
@@ -528,12 +655,18 @@ impl Indexer {
 
             Some(&AssertionRemoved::SIGNATURE_HASH) => {
                 debug!(
-                    target = "indexer",
+                    target = "assertion_executor::indexer",
                     "AssertionRemoved event signature detected."
                 );
                 let topics = AssertionRemoved::decode_topics(log.topics())?;
                 let data = AssertionRemoved::abi_decode_data(&log.data, true)?;
                 let event = AssertionRemoved::new(topics, data);
+
+                debug!(
+                    target = "assertion_executor::indexer",
+                    ?event,
+                    "AssertionRemoved event decoded"
+                );
 
                 let inactive_at_block = event
                     .activeAtBlock
@@ -552,17 +685,35 @@ impl Indexer {
         Ok(pending_mod_opt)
     }
 
+    /// Insert last indexed block number and hash into the sled db
+    fn insert_last_indexed_block_num_hash(&self, block_num_hash: BlockNumHash) -> IndexerResult {
+        let value = ser(&block_num_hash)?;
+        self.latest_block_tree.insert("", value)?;
+        Ok(())
+    }
+
     /// Get the last indexed block number and hash
     fn get_last_indexed_block_num_hash(&self) -> IndexerResult<Option<BlockNumHash>> {
-        let last_indexed_block = self.block_hash_tree.last()?;
+        let last_indexed_block = self.latest_block_tree.get("")?;
         if let Some(last_indexed_block) = last_indexed_block {
-            Ok(Some(BlockNumHash {
-                number: de(&last_indexed_block.0)?,
-                hash: de(&last_indexed_block.1)?,
-            }))
+            let last_indexed_block: BlockNumHash = de(&last_indexed_block)?;
+            Ok(Some(last_indexed_block))
         } else {
             Ok(None)
         }
+    }
+
+    /// Write the block number and hash to the sled db
+    fn write_block_num_hash_batch(&self, block_num_hashes: Vec<BlockNumHash>) -> IndexerResult {
+        let mut batch = sled::Batch::default();
+        for block_num_hash in block_num_hashes {
+            let key = ser(&U256::from(block_num_hash.number))?;
+            let value = ser(&B256::from(block_num_hash.hash))?;
+            batch.insert(key, value);
+        }
+        self.block_hash_tree.apply_batch(batch)?;
+
+        Ok(())
     }
 }
 
@@ -622,7 +773,11 @@ mod test_indexer {
         function removeAssertion(address contractAddress, bytes32 assertionId) public {}
     }
 
-    async fn setup() -> (Indexer, JoinHandle<()>, AnvilInstance) {
+    // TODO(@0xgregthedev): Create clearer delineation between integration tests and unit tests.
+    // Then move integration tests to an integration test directory. A feature flag for docker
+    // dependent integration tests may be helpful as well.
+
+    async fn setup_with_tag(await_tag: BlockTag) -> (Indexer, JoinHandle<()>, AnvilInstance) {
         let (provider, anvil) = anvil_provider().await;
 
         let state_oracle = Address::new([0; 20]);
@@ -636,14 +791,20 @@ mod test_indexer {
                 provider,
                 block_hash_tree: db.open_tree("block_hashes").unwrap(),
                 pending_modifications_tree: db.open_tree("pending_modifications").unwrap(),
+                latest_block_tree: db.open_tree("latest_block").unwrap(),
                 store,
                 da_client,
                 state_oracle,
                 executor_config: ExecutorConfig::default(),
+                await_tag,
             }),
             handle,
             anvil,
         )
+    }
+
+    async fn setup() -> (Indexer, JoinHandle<()>, AnvilInstance) {
+        setup_with_tag(BlockTag::Finalized).await
     }
 
     async fn send_modifications(indexer: &Indexer) -> (Address, FixedBytes<32>) {
@@ -1177,14 +1338,124 @@ mod test_indexer {
         let header = mine_block(&indexer.provider).await;
 
         indexer
-            .block_hash_tree
-            .insert(
-                bincode::serialize(&header.number).unwrap(),
-                bincode::serialize(&header.hash).unwrap(),
-            )
+            .write_block_num_hash_batch(vec![BlockNumHash {
+                number: header.number,
+                hash: header.hash,
+            }])
             .unwrap();
 
         header
+    }
+
+    #[tokio::test]
+    async fn test_get_latest_block_num_hash() {
+        let batch_a = vec![
+            BlockNumHash {
+                number: 0,
+                hash: B256::from([0; 32]),
+            },
+            BlockNumHash {
+                number: 1,
+                hash: B256::from([1; 32]),
+            },
+        ];
+
+        let batch_b = vec![
+            BlockNumHash {
+                number: 0,
+                hash: B256::from([0; 32]),
+            },
+            BlockNumHash {
+                number: u64::MAX,
+                hash: B256::from([1; 32]),
+            },
+        ];
+
+        let batch_c = vec![
+            BlockNumHash {
+                number: u64::MAX / 2,
+                hash: B256::from([0; 32]),
+            },
+            BlockNumHash {
+                number: u64::MAX,
+                hash: B256::from([1; 32]),
+            },
+        ];
+
+        let batch_d = vec![
+            BlockNumHash {
+                number: 0,
+                hash: B256::from([0; 32]),
+            },
+            BlockNumHash {
+                number: u64::MAX / 2,
+                hash: B256::from([1; 32]),
+            },
+        ];
+
+        for batch in [batch_a, batch_b, batch_c, batch_d] {
+            let (indexer, _da, _anvil) = setup().await;
+            indexer.write_block_num_hash_batch(batch.clone()).unwrap();
+            assert_eq!(
+                indexer.block_hash_tree.last().unwrap().map(|(k, v)| {
+                    let number: U256 = de(&k).unwrap();
+                    let hash: B256 = de(&v).unwrap();
+                    BlockNumHash {
+                        number: number.try_into().unwrap(),
+                        hash,
+                    }
+                }),
+                Some(*batch.last().unwrap())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_index_range_await_latest() {
+        let (indexer, da, _anvil) = setup_with_tag(BlockTag::Latest).await;
+        tokio::task::spawn(da);
+
+        let (assertion_adopter, _id) = send_modifications(&indexer).await;
+
+        let block = indexer
+            .provider
+            .get_block_by_number(0.into(), Default::default())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let block_number = block.header.number;
+
+        assert_eq!(block_number, 0);
+
+        let timestamp = block.header.inner.timestamp;
+
+        let _ = indexer
+            .provider
+            .evm_mine(Some(MineOptions::Timestamp(Some(timestamp + 5))))
+            .await;
+
+        indexer.index_range(0, 1).await.unwrap();
+
+        assert_eq!(
+            indexer
+                .get_last_indexed_block_num_hash()
+                .unwrap()
+                .unwrap()
+                .number,
+            1
+        );
+
+        assert_eq!(indexer.store.assertion_contract_count(assertion_adopter), 1);
+
+        assert_eq!(
+            indexer
+                .get_last_indexed_block_num_hash()
+                .unwrap()
+                .unwrap()
+                .number,
+            1
+        );
     }
 
     #[tokio::test]
@@ -1213,11 +1484,20 @@ mod test_indexer {
 
         indexer.index_range(0, 1).await.unwrap();
 
+        assert_eq!(
+            indexer
+                .get_last_indexed_block_num_hash()
+                .unwrap()
+                .unwrap()
+                .number,
+            1
+        );
+
         let pending_mods_tree = indexer.pending_modifications_tree;
 
         assert_eq!(pending_mods_tree.len(), 1);
 
-        let key = bincode::serialize(&1_u64).unwrap();
+        let key = bincode::serialize(&U256::from(1_u64)).unwrap();
 
         let value = pending_mods_tree.get(&key).unwrap().unwrap();
 
@@ -1322,12 +1602,12 @@ mod test_indexer {
             .unwrap();
 
         // Store initial block in db
+        //
         indexer
-            .block_hash_tree
-            .insert(
-                bincode::serialize(&0u64).unwrap(),
-                bincode::serialize(&block0.header.hash).unwrap(),
-            )
+            .write_block_num_hash_batch(vec![BlockNumHash {
+                number: block0.header.number,
+                hash: block0.header.hash,
+            }])
             .unwrap();
 
         // Create a block subscription
@@ -1372,10 +1652,16 @@ mod test_indexer {
 
             // Process the newly mined block
             let latest_block = block_stream.recv().await.unwrap();
-            indexer
-                .handle_latest_block(latest_block)
-                .await
-                .unwrap_or_else(|_| panic!("sync before mining: {sync_before_mining}\nerror"));
+
+            #[allow(clippy::expect_fun_call)] // Error information is helpful, and the extra
+            // context is as well.
+            indexer.handle_latest_block(latest_block).await.expect(
+                format!(
+                    "Failed to handle latest block. Sync before mining: {}",
+                    sync_before_mining
+                )
+                .as_str(),
+            );
 
             // Verify state after reorg
             let last_indexed_block = indexer.get_last_indexed_block_num_hash().unwrap().unwrap();
@@ -1390,7 +1676,7 @@ mod test_indexer {
     }
 
     #[tokio::test]
-    async fn test_move_finalized() {
+    async fn test_move_to_store() {
         let (mut indexer, _da, _anvil) = setup().await;
 
         indexer.provider.evm_mine(None).await.unwrap();
@@ -1410,7 +1696,7 @@ mod test_indexer {
         indexer
             .pending_modifications_tree
             .insert(
-                bincode::serialize(&2u64).unwrap(),
+                bincode::serialize(&U256::from(2u64)).unwrap(),
                 bincode::serialize(&vec![modification]).unwrap(),
             )
             .unwrap();
@@ -1418,15 +1704,15 @@ mod test_indexer {
         assert_eq!(indexer.pending_modifications_tree.len(), 1);
         assert_eq!(indexer.block_hash_tree.len(), 3);
 
-        let run_0 = (1, 3); // finalize block 0 -> Do nothing
-        let run_1 = (1, 1); // finalize block 1 -> Remove block 0 and Block 1 hashes
-        let run_2 = (0, 0); // finalize block 2 -> Remove Block 2 hashes and Pending modification
+        let run_0 = (1, 3); // latest block 0 -> Do nothing
+        let run_1 = (1, 1); // latest block 1 -> Remove block 0 and Block 1 hashes
+        let run_2 = (0, 0); // latest block 2 -> Remove Block 2 hashes and Pending modification
 
-        for (finalized_block, (expected_pending_mods, expected_block_hashes)) in
+        for (latest_block, (expected_pending_mods, expected_block_hashes)) in
             [run_0, run_1, run_2].iter().enumerate()
         {
             indexer
-                .move_finalized_pending_modifications(finalized_block as u64)
+                .move_pending_modifications_to_store(latest_block as u64)
                 .await
                 .unwrap();
 
@@ -1436,12 +1722,13 @@ mod test_indexer {
             assert_eq!(
                 pending_mods_tree.len(),
                 *expected_pending_mods,
-                "finalized block: {finalized_block}"
+                "pending_mod length unexpected, latest block: {latest_block}"
             );
+
             assert_eq!(
                 block_hashes_tree.len(),
                 *expected_block_hashes,
-                "finalized block: {finalized_block}"
+                "latest block: {latest_block}"
             );
         }
         let mut call_tracer = CallTracer::new();

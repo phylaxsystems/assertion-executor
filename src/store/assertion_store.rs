@@ -118,6 +118,14 @@ impl AssertionStore {
         assertion_adopter: Address,
         assertion: AssertionState,
     ) -> Result<Option<AssertionState>, AssertionStoreError> {
+        debug!(
+            target: "assertion-executor::assertion_store",
+            assertion_adopter=?assertion_adopter,
+            active_at_block=?assertion.active_at_block,
+            triggers=?assertion.trigger_recorder.triggers,
+            "Inserting assertion into store"
+        );
+
         let db_lock = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let mut assertions: Vec<AssertionState> = db_lock
             .get(assertion_adopter)?
@@ -137,7 +145,6 @@ impl AssertionStore {
         };
 
         db_lock.insert(assertion_adopter, ser(&assertions)?)?;
-
         Ok(previous)
     }
 
@@ -176,7 +183,7 @@ impl AssertionStore {
             let contract_assertions = self.read_adopter(contract_address, triggers, block_num)?;
             assertions.extend(contract_assertions);
         }
-
+        debug!(target: "assertion-executor::assertion_store", assertions=?assertions, triggers=?traces.triggers(), "Assertions found based on triggers");
         Ok(assertions)
     }
 
@@ -199,7 +206,6 @@ impl AssertionStore {
             .map(|a| de::<Vec<AssertionState>>(&a))
             .transpose()?
             .unwrap_or_default();
-
         let active_assertion_contracts = assertion_states
             .into_iter()
             .filter(|a| {
@@ -215,7 +221,6 @@ impl AssertionStore {
                     }
                     None => u64::MAX,
                 };
-
                 let in_bound_start = a.active_at_block <= block;
                 let in_bound_end = block < inactive_block;
                 in_bound_start && in_bound_end
@@ -286,7 +291,7 @@ impl AssertionStore {
                 .unwrap_or_default();
 
             debug!(
-                target = "assertion-store",
+                target: "assertion-executor::assertion_store",
                 pending_modifations_len = assertions.len(),
                 "Applying pending modifications"
             );
@@ -300,7 +305,7 @@ impl AssertionStore {
                         ..
                     } => {
                         debug!(
-                            target = "assertion-store",
+                            target: "assertion-executor::assertion_store",
                             ?assertion_contract,
                             ?trigger_recorder,
                             active_at_block,
@@ -330,7 +335,7 @@ impl AssertionStore {
                         ..
                     } => {
                         debug!(
-                            target = "assertion-store",
+                            target: "assertion-executor::assertion_store",
                             ?assertion_contract_id,
                             inactive_at_block,
                             "Applying pending assertion removal"
@@ -346,7 +351,7 @@ impl AssertionStore {
                             None => {
                                 // The assertion was not found, so we add it with the inactive_at_block set.
                                 error!(
-                                    target = "assertion-executor::ssertion_store",
+                                    target: "assertion-executor::assertion_store",
                                     ?assertion_contract_id,
                                     "Apply pending modifications error: Assertion not found for removal",
                                 );
@@ -370,11 +375,30 @@ impl AssertionStore {
             } else {
                 tracing::debug!(
                     target: "assertion-executor::assertion_store",
-                    ?result, "Assertion store CAS failed, retrying");
+                    ?result,
+                    "Assertion store Compare and Swap failed, retrying"
+                );
             }
         }
 
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn assertion_contract_count(&self, assertion_adopter: Address) -> usize {
+        let assertions_serialized = self
+            .db
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(assertion_adopter)
+            .unwrap();
+
+        if let Some(assertions_serialized) = assertions_serialized {
+            let assertions: Vec<AssertionState> = de(&assertions_serialized).unwrap_or_default();
+            assertions.len()
+        } else {
+            0
+        }
     }
 }
 #[cfg(test)]

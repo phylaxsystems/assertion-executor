@@ -35,7 +35,7 @@ use super::fork_db::ForkDb;
 
 pub mod active_overlay;
 #[cfg(any(test, feature = "test"))]
-mod test_utils;
+pub mod test_utils;
 
 /// Enum to represent different table types
 #[derive(Debug, PartialEq, Eq, Hash, Clone, EnumAsInner)]
