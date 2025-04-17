@@ -1,4 +1,5 @@
 use crate::{
+    db::PhDB,
     primitives::SpecId,
     store::AssertionStore,
     AssertionExecutor,
@@ -33,6 +34,8 @@ pub struct ExecutorConfig {
     pub spec_id: SpecId,
     pub chain_id: u64,
     pub assertion_gas_limit: u64,
+    /// The number of logical cores to not create a high priority thread for assertion execution.
+    pub logical_cores_to_reserve: u16,
 }
 
 impl Default for ExecutorConfig {
@@ -41,6 +44,7 @@ impl Default for ExecutorConfig {
             spec_id: SpecId::LATEST,
             chain_id: 1,
             assertion_gas_limit: 3_000_000,
+            logical_cores_to_reserve: 1,
         }
     }
 }
@@ -65,11 +69,11 @@ impl ExecutorConfig {
     }
 
     /// Build the assertion executor
-    pub fn build<DB>(self, db: DB, store: AssertionStore) -> AssertionExecutor<DB> {
-        AssertionExecutor {
-            db,
-            store,
-            config: self,
-        }
+    pub fn build<DB: PhDB>(
+        self,
+        db: DB,
+        store: AssertionStore,
+    ) -> Result<AssertionExecutor<DB>, rayon::ThreadPoolBuildError> {
+        AssertionExecutor::new(db, self, store)
     }
 }

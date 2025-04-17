@@ -160,7 +160,9 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
         .insert(target, AssertionState::new_test(assertion_code))
         .unwrap();
 
-    let mut executor = ExecutorConfig::default().build(db, assertion_store);
+    let mut executor = ExecutorConfig::default()
+        .build(db, assertion_store)
+        .unwrap();
 
     // Deploy mock using bytecode of contract-mocks/src/GetLogsTest.sol:Target
     let target_deployment_tx = TxEnv {

@@ -1,24 +1,23 @@
 name: Rust Test, Lint
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  rust-base:
-    name: Rust Base
+  rust-base-linux:
+    name: Rust Base (Linux)
     uses: phylaxsystems/actions/.github/workflows/rust-base.yaml@main
     with:
-      rust-channel: 'nightly'
+      rust-channel: "nightly"
       require-lockfile: true
       install-foundry: true
       dind: true
-      submodules: 'recursive'
+      submodules: "recursive"
       requires-private-deps: true
-      foundry-command: 'forge build --root contract-mocks'
-      # [""] means default features
-      # Feature matrices are supported as follows: ["", "--features=foo", "--features=bar", "--features=foo,bar"]
+      foundry-command: "forge build --root contract-mocks"
       feature-sets: '["", "--features=optimism"]'
+      runner: "ubuntu-latest" # Explicitly specify Linux runner
     secrets:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}

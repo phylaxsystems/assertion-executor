@@ -46,6 +46,16 @@ tokio-util = "0.7.13"
 evm-glue = { git = "https://git@github.com/Philogy/evm-glue.git", version = "0.1.0" }
 moka = { version = "0.12.10", features = ["sync"] }
 enum-as-inner = "0.6.1"
+num_cpus = "1.16.0"
+
+
+# Mac specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.172"
+
+# Linux specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.172"
 
 # Maxperf profile for absolute maximum performance
 # Only use for builds that are going to get used by end users
