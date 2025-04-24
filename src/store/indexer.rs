@@ -630,6 +630,7 @@ impl Indexer {
                         debug!(
                             target = "assertion_executor::indexer",
                             ?assertion_contract,
+                            ?trigger_recorder,
                             active_at_block,
                             "Assertion contract extracted"
                         );

@@ -48,16 +48,20 @@ sol! {
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum FnSelectorExtractorError {
-    #[error("Failed to call triggers function")]
+    #[error("Failed to call triggers function: {0}")]
     TriggersCallError(EVMError<Infallible>),
-    #[error("Failed to call triggers function")]
-    TriggersCallFailed,
-    #[error("Error with assertion contract deployment")]
+    #[error("Failed to call triggers function: {0:?}")]
+    TriggersCallFailed(ResultAndState),
+    #[error("Error with assertion contract deployment: {0}")]
     AssertionContractDeployError(EVMError<Infallible>),
-    #[error("Assertion contract deployment failed")]
-    AssertionContractDeployFailed,
+    #[error("Assertion contract deployment failed: {0:?}")]
+    AssertionContractDeployFailed(ResultAndState),
     #[error("No triggers found in assertion contract")]
     NoTriggersFound,
+    #[error("Assertion Contract not found at expected address.")]
+    AssertionContractNotFound,
+    #[error("Assertion Contract did not contain code at expected address.")]
+    AssertionContractNoCode,
 }
 
 /// Extracts [`AssertionContract`] and [`TriggerRecorder`] from a given assertion contract's deployment bytecode
@@ -88,7 +92,7 @@ pub fn extract_assertion_contract(
 
     let mut db = InMemoryDB::default();
 
-    let ResultAndState { result, state } = new_evm(
+    let result_and_state = new_evm(
         tx_env,
         block_env.clone(),
         config.chain_id,
@@ -99,16 +103,19 @@ pub fn extract_assertion_contract(
     .transact()
     .map_err(FnSelectorExtractorError::AssertionContractDeployError)?;
 
-    if !result.is_success() {
-        return Err(FnSelectorExtractorError::AssertionContractDeployFailed);
+    if !result_and_state.result.is_success() {
+        return Err(FnSelectorExtractorError::AssertionContractDeployFailed(
+            result_and_state,
+        ));
     }
 
-    let init_account = state
+    let init_account = result_and_state
+        .state
         .get(&ASSERTION_CONTRACT)
         .cloned()
-        .ok_or(FnSelectorExtractorError::AssertionContractDeployFailed)?;
+        .ok_or(FnSelectorExtractorError::AssertionContractNotFound)?;
 
-    db.commit(state);
+    db.commit(result_and_state.state);
 
     insert_trigger_recorder_account(&mut db);
 
@@ -118,7 +125,7 @@ pub fn extract_assertion_contract(
             transact_to: TxKind::Call(ASSERTION_CONTRACT),
             caller: CALLER,
             data: triggersCall::SELECTOR.into(),
-            gas_limit: config.assertion_gas_limit - result.gas_used(),
+            gas_limit: config.assertion_gas_limit - result_and_state.result.gas_used(),
             #[cfg(feature = "optimism")]
             optimism: create_optimism_fields(),
             ..Default::default()
@@ -130,13 +137,14 @@ pub fn extract_assertion_contract(
         TriggerRecorder::default(),
     );
 
-    if !evm
+    let trigger_call_result = evm
         .transact()
-        .map_err(FnSelectorExtractorError::TriggersCallError)?
-        .result
-        .is_success()
-    {
-        return Err(FnSelectorExtractorError::TriggersCallFailed);
+        .map_err(FnSelectorExtractorError::TriggersCallError)?;
+
+    if !trigger_call_result.result.is_success() {
+        return Err(FnSelectorExtractorError::TriggersCallFailed(
+            trigger_call_result,
+        ));
     }
 
     let Account {
@@ -148,7 +156,7 @@ pub fn extract_assertion_contract(
 
     let deployed_code = info
         .code
-        .ok_or(FnSelectorExtractorError::AssertionContractDeployFailed)?;
+        .ok_or(FnSelectorExtractorError::AssertionContractNoCode)?;
 
     Ok((
         AssertionContract {
