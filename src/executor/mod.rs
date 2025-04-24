@@ -5,10 +5,7 @@ use std::{
         Debug,
         Display,
     },
-    sync::{
-        atomic::AtomicU64,
-        Arc,
-    },
+    sync::atomic::AtomicU64,
 };
 
 use crate::{
@@ -67,7 +64,6 @@ use tracing::{
     error,
     instrument,
     trace,
-    warn,
 };
 
 #[cfg(feature = "optimism")]
@@ -86,23 +82,12 @@ pub struct AssertionExecutor<DB> {
     pub db: DB,
     pub config: ExecutorConfig,
     pub store: AssertionStore,
-    pub thread_pool: Arc<rayon::ThreadPool>,
 }
 
 impl<DB: PhDB> AssertionExecutor<DB> {
     /// Creates a new assertion executor.
-    pub fn new(
-        db: DB,
-        config: ExecutorConfig,
-        store: AssertionStore,
-    ) -> Result<Self, rayon::ThreadPoolBuildError> {
-        let thread_pool = create_thread_pool(config.logical_cores_to_reserve as usize)?;
-        Ok(Self {
-            db,
-            config,
-            store,
-            thread_pool: Arc::new(thread_pool),
-        })
+    pub fn new(db: DB, config: ExecutorConfig, store: AssertionStore) -> Self {
+        Self { db, config, store }
     }
 }
 
@@ -210,27 +195,20 @@ where
             assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.0.id)).collect::<Vec<_>>(),
             "Retrieved Assertion contracts from Assertion store"
         );
-        if assertions.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let results = self.thread_pool.install(|| {
-            assertions
-                .into_par_iter()
-                .map(
-                    move |(assertion_contract, fn_selectors)| -> ExecutorResult<AssertionContractExecution, DB> {
-                        self.run_assertion_contract(
-                            &assertion_contract,
-                            &fn_selectors,
-                            block_env.clone(),
-                            multi_fork_db.clone(),
-                            context,
-                        )
-                    },
-                )
-                .collect::<ExecutorResult<Vec<AssertionContractExecution>, DB>>()
-        });
-
+        let results: ExecutorResult<Vec<AssertionContractExecution>, DB> = assertions
+            .into_par_iter()
+            .map(
+                move |(assertion_contract, fn_selectors)| -> ExecutorResult<AssertionContractExecution, DB> {
+                    self.run_assertion_contract(
+                        &assertion_contract,
+                        &fn_selectors,
+                        block_env.clone(),
+                        multi_fork_db.clone(),
+                        context,
+                    )
+                },
+            )
+            .collect();
         trace!(target: "assertion-executor::execute_assertions", results=?results, "Assertion Execution Results");
         results
     }
@@ -447,99 +425,6 @@ where
     }
 }
 
-/// Creates a thread pool for assertion execution.
-fn create_thread_pool(
-    logical_cores_to_reserve: usize,
-) -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
-    let optimal_threads = if num_cpus::get() > logical_cores_to_reserve {
-        let cores_for_execution = num_cpus::get() - logical_cores_to_reserve;
-        debug!(
-            target: "assertion-executor::create_thread_pool",
-            logical_cores_to_reserve = logical_cores_to_reserve,
-            cores_for_execution,
-            "Reserving logical cores for assertion execution",
-        );
-        cores_for_execution
-    } else {
-        warn!(
-            target: "assertion-executor::create_thread_pool",
-            logical_cores_to_reserve = logical_cores_to_reserve,
-            num_cpus = num_cpus::get(),
-            "Not enough logical cores available to reserve, using all cores"
-        );
-        num_cpus::get() // For dual-core or single-core systems, use all cores
-    };
-
-    rayon::ThreadPoolBuilder::new()
-            .num_threads(optimal_threads)
-            .thread_name(|i| format!("assertion-execution-{}", i))
-            .start_handler(|thread_id | {
-                debug!(target: "assertion-executor::thread_pool_start_handler", thread_id, "Starting assertion execution thread");
-                set_max_priority();
-        }).build()
-}
-
-#[cfg(target_os = "linux")]
-fn set_max_priority() {
-    use libc::{
-        pthread_self,
-        pthread_setschedparam,
-        sched_param,
-        SCHED_FIFO,
-    };
-    use std::mem;
-
-    unsafe {
-        let thread_id = pthread_self();
-        let mut param: sched_param = mem::zeroed();
-        // 99 is usually the max priority for SCHED_FIFO
-        param.sched_priority = 99;
-        pthread_setschedparam(thread_id, SCHED_FIFO, &param);
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn set_max_priority() {
-    use libc::{
-        pthread_self,
-        pthread_setschedparam,
-        sched_param,
-    };
-    use std::mem;
-
-    // On macOS, the priority values are different
-    const THREAD_QOS_USER_INTERACTIVE: i32 = 63;
-
-    unsafe {
-        let thread_id = pthread_self();
-        let mut param: sched_param = mem::zeroed();
-
-        // macOS thread priority range is typically 0-63
-        // with higher values meaning higher priority
-        param.sched_priority = THREAD_QOS_USER_INTERACTIVE;
-
-        // Try to set the priority (may fail if not privileged)
-        let policy = libc::SCHED_RR; // Round Robin scheduling
-        let result = pthread_setschedparam(thread_id, policy, &param);
-
-        if result != 0 {
-            // Alternative approach if the first method fails
-            // macOS also has pthread_setprio but it's deprecated
-            // Instead, use QoS classes if available
-
-            // For modern macOS versions, you might want to use
-            // pthread_set_qos_class_self_np which isn't in libc crate
-
-            warn!(target= "assertion_executor::set_max_priority", prio_set_result=?result, "Failed to set thread priority");
-        }
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn set_max_priority() {
-    // No-op for other platforms
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -585,9 +470,7 @@ mod test {
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
         // Build uses TestDB
-        let executor = ExecutorConfig::default()
-            .build(test_db.clone(), assertion_store)
-            .unwrap();
+        let executor = ExecutorConfig::default().build(test_db.clone(), assertion_store);
 
         // Forks use TestDB
         let mut multi_fork_db = MultiForkDb::new(test_db.fork(), test_db.fork());
@@ -616,9 +499,7 @@ mod test {
         let assertion_store = AssertionStore::new_ephemeral().unwrap();
 
         // Build uses TestDB
-        let executor = ExecutorConfig::default()
-            .build(shared_db.clone(), assertion_store)
-            .unwrap();
+        let executor = ExecutorConfig::default().build(shared_db.clone(), assertion_store);
 
         // Fork uses TestDB
         let mut fork_db: TestForkDB = shared_db.fork();
@@ -676,7 +557,7 @@ mod test {
         let config = ExecutorConfig::default();
 
         // Build uses TestDB
-        let mut executor = config.clone().build(test_db, assertion_store).unwrap();
+        let mut executor = config.clone().build(test_db, assertion_store);
 
         let basefee = uint!(10_U256);
         let block_env = BlockEnv {
