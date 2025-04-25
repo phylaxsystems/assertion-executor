@@ -66,6 +66,7 @@ pub struct AssertionState {
 impl AssertionState {
     /// Creates a new active assertion state.
     /// WIll be active across all blocks.
+    #[allow(clippy::result_large_err)]
     pub fn new_active(
         bytecode: Bytes,
         executor_config: &ExecutorConfig,

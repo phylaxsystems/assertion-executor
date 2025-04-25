@@ -65,6 +65,7 @@ pub enum FnSelectorExtractorError {
 }
 
 /// Extracts [`AssertionContract`] and [`TriggerRecorder`] from a given assertion contract's deployment bytecode
+#[allow(clippy::result_large_err)]
 pub fn extract_assertion_contract(
     assertion_code: Bytes,
     config: &ExecutorConfig,

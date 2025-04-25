@@ -19,6 +19,6 @@ jobs:
       foundry-command: 'forge build --root contract-mocks'
       # [""] means default features
       # Feature matrices are supported as follows: ["", "--features=foo", "--features=bar", "--features=foo,bar"]
-      feature-sets: '["", "--features=optimism"]'
+      feature-sets: '["", "--no-default-features"]'
     secrets:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}

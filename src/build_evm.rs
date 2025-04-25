@@ -124,7 +124,13 @@ where
 }
 
 /// Create a new context and handler configuration.
-/// This is useful for creating a new EVM instance with a custom handler.
+///
+/// This is useful for creating a new EVM instance with a custom handler configuration.
+/// The configuration is determined by the provided spec_id, and potentially
+/// modified based on feature flags (e.g., `optimism`).
+///
+/// When the `optimism` feature is enabled, the handler configuration is modified
+/// to enable Optimism-specific behavior (`is_optimism = true`).
 fn new_ctx_and_handler_cfg<'db, DB: Database, I: Inspector<&'db mut DB>>(
     tx_env: TxEnv,
     block_env: BlockEnv,
@@ -142,10 +148,20 @@ fn new_ctx_and_handler_cfg<'db, DB: Database, I: Inspector<&'db mut DB>>(
         cfg: cfg_env,
     };
 
-    let EnvWithHandlerCfg { env, handler_cfg } =
-        EnvWithHandlerCfg::new_with_spec_id(Box::new(env), spec_id);
+    // Make handler_cfg mutable as we might modify it.
+    #[allow(unused_mut)]
+    let EnvWithHandlerCfg {
+        env,
+        mut handler_cfg,
+    } = EnvWithHandlerCfg::new_with_spec_id(Box::new(env), spec_id);
 
-    let context = Context::new(EvmContext::new_with_env(db, env), inspector);
+    #[cfg(feature = "optimism")]
+    {
+        handler_cfg.is_optimism = true;
+    }
+
+    let evm_context = EvmContext::new_with_env(db, env);
+    let context = Context::new(evm_context, inspector);
 
     (context, handler_cfg)
 }
@@ -153,7 +169,7 @@ fn new_ctx_and_handler_cfg<'db, DB: Database, I: Inspector<&'db mut DB>>(
 /// Reprice the gas of an operation to a fixed cost.
 /// Will still run out of gas if the operation spends all gas intentionally.
 macro_rules! reprice_gas {
-    ($interpreter:expr,$host:expr, $operation:expr, $gas:expr) => {{
+    ($interpreter:expr, $host:expr, $operation:expr, $gas:expr) => {{
         // Spend the new expected gas. Will revert execution with an out-of-gas error if the gas
         // limit is exceeded.
         gas!($interpreter, $gas);
