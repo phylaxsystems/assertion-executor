@@ -19,6 +19,7 @@ use revm::{
 };
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -29,7 +30,8 @@ impl<Db> OverlayDb<Db> {
         let cache = Cache::builder().max_capacity(10_000).build();
         OverlayDb::<CacheDB<EmptyDBTyped<Infallible>>> {
             underlying_db: Some(Arc::new(revm::InMemoryDB::new(EmptyDBTyped::new()))),
-            overlay: cache,
+            active_locked: AtomicBool::new(true).into(),
+            overlay: cache.into(),
         }
     }
 }

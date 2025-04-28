@@ -25,8 +25,11 @@ use revm::{
     },
     DatabaseRef,
 };
-use std::cell::UnsafeCell;
 use std::sync::Arc;
+use std::{
+    cell::UnsafeCell,
+    sync::atomic::AtomicBool,
+};
 
 use enum_as_inner::EnumAsInner;
 use moka::sync::Cache;
@@ -67,14 +70,19 @@ pub enum TableValue {
 /// - standalone: Without any underlying db.
 #[derive(Debug)]
 pub struct OverlayDb<Db> {
+    /// The underlying database for the overlay
     underlying_db: Option<Arc<Db>>,
-    pub overlay: Cache<TableKey, TableValue>,
+    /// Lock for activedbs that permits reads
+    active_locked: Arc<AtomicBool>,
+    /// The overlay cache
+    pub overlay: Arc<Cache<TableKey, TableValue>>,
 }
 
 impl<Db> Clone for OverlayDb<Db> {
     fn clone(&self) -> Self {
         Self {
             underlying_db: self.underlying_db.clone(),
+            active_locked: AtomicBool::new(true).into(),
             overlay: self.overlay.clone(),
         }
     }
@@ -84,7 +92,8 @@ impl<Db> Default for OverlayDb<Db> {
     fn default() -> Self {
         Self {
             underlying_db: None,
-            overlay: Cache::builder().max_capacity(1024).build(),
+            active_locked: AtomicBool::new(true).into(),
+            overlay: Cache::builder().max_capacity(1024).build().into(),
         }
     }
 }
@@ -95,7 +104,8 @@ impl<Db> OverlayDb<Db> {
         let cache = Cache::builder().max_capacity(max_capacity).build();
         Self {
             underlying_db,
-            overlay: cache,
+            active_locked: AtomicBool::new(true).into(),
+            overlay: cache.into(),
         }
     }
 
@@ -105,7 +115,8 @@ impl<Db> OverlayDb<Db> {
         let cache = Cache::new(max_capacity);
         Self {
             underlying_db,
-            overlay: cache,
+            active_locked: AtomicBool::new(true).into(),
+            overlay: cache.into(),
         }
     }
 
@@ -135,7 +146,19 @@ impl<Db> OverlayDb<Db> {
         &self,
         active_db: Arc<UnsafeCell<ActiveDbT>>,
     ) -> ActiveOverlay<ActiveDbT> {
-        ActiveOverlay::new(active_db, self.overlay.clone())
+        ActiveOverlay::new(active_db, self.active_locked.clone(), self.overlay.clone())
+    }
+
+    // Set the active lock to true, preventing activedb access
+    pub fn lock(&self) {
+        self.active_locked
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    // Set the active lock to false, allowing activedb access
+    pub fn unlock(&self) {
+        self.active_locked
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Check if a value is present inside of the cache.

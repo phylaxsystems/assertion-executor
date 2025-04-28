@@ -59,6 +59,7 @@ use rayon::prelude::{
     ParallelIterator,
 };
 
+use tokio_util::sync::CancellationToken;
 use tracing::{
     debug,
     error,
@@ -113,6 +114,7 @@ where
         tx_env: TxEnv,
         fork_db: &mut ForkDb<Active>,
         external_db: &mut ExtDb,
+        cancellation_token: CancellationToken,
     ) -> ExecutorResult<TxValidationResult, DB>
     where
         ExtDb: Database,
@@ -158,7 +160,8 @@ where
 
         let context = PhEvmContext::new(result_and_state.result.logs(), &tx_traces);
 
-        let results = self.execute_assertions(block_env, multi_fork_db, &context)?;
+        let results =
+            self.execute_assertions(block_env, multi_fork_db, &context, cancellation_token)?;
 
         trace!(
             target: "assertion-executor::validation",
@@ -182,6 +185,7 @@ where
         block_env: BlockEnv,
         multi_fork_db: MultiForkDb<ForkDb<Active>>,
         context: &PhEvmContext<'a>,
+        cancellation_token: CancellationToken,
     ) -> ExecutorResult<Vec<AssertionContractExecution>, DB>
     where
         Active: DatabaseRef + Sync + Send,
@@ -205,6 +209,7 @@ where
                         block_env.clone(),
                         multi_fork_db.clone(),
                         context,
+                        cancellation_token.clone(),
                     )
                 },
             )
@@ -220,6 +225,7 @@ where
         block_env: BlockEnv,
         mut multi_fork_db: MultiForkDb<ForkDb<Active>>,
         context: &PhEvmContext,
+        cancellation_token: CancellationToken,
     ) -> ExecutorResult<AssertionContractExecution, DB>
     where
         Active: DatabaseRef + Sync + Send,
@@ -244,6 +250,10 @@ where
             .into_par_iter()
             .map(
                 |fn_selector: &FixedBytes<4>| -> ExecutorResult<AssertionFunctionResult, DB> {
+                    if cancellation_token.is_cancelled() {
+                        return Err(ExecutorError::Cancelled);
+                    }
+
                     let mut multi_fork_db = multi_fork_db.clone();
 
                     let inspector =
@@ -535,6 +545,7 @@ mod test {
             Ok(U256::ZERO)
         );
     }
+
     #[tokio::test]
     async fn test_validate_tx() -> Result<(), Box<dyn std::error::Error>> {
         // Use the TestDB type
@@ -600,6 +611,7 @@ mod test {
                     tx.clone(),
                     &mut fork_db,
                     &mut mock_db,
+                    CancellationToken::default(),
                 )
                 .unwrap(); // Use unwrap or handle ExecutorError<TestDbError>
 
@@ -627,6 +639,84 @@ mod test {
 
         // Check original TestDB via executor.db
         assert_eq!(executor.db.basic_ref(ASSERTION_CONTRACT).unwrap(), None);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_tx_cancelled() -> Result<(), Box<dyn std::error::Error>> {
+        // --- Setup (Similar to test_validate_tx) ---
+        let test_db: TestDB = OverlayDb::<CacheDB<EmptyDBTyped<TestDbError>>>::new_test();
+        let mut mock_db = MockDb::new();
+
+        // Initial state in external DB
+        mock_db.insert_account(COUNTER_ADDRESS, counter_acct_info());
+        mock_db.insert_storage(COUNTER_ADDRESS, U256::ZERO, uint!(0_U256)); // Start counter at 0
+
+        let assertion_store = AssertionStore::new_ephemeral().unwrap();
+        let assertion_bytecode = bytecode(SIMPLE_ASSERTION_COUNTER);
+        assertion_store.insert(
+            COUNTER_ADDRESS,
+            AssertionState::new_test(assertion_bytecode),
+        )?;
+
+        let config = ExecutorConfig::default();
+        let mut executor = config.clone().build(test_db, assertion_store);
+
+        let basefee = uint!(10_U256);
+        let block_env = BlockEnv {
+            number: uint!(1_U256),
+            basefee,
+            ..Default::default()
+        };
+        let tx = TxEnv {
+            gas_price: basefee,
+            ..counter_call()
+        };
+
+        mock_db.insert_account(
+            tx.caller,
+            AccountInfo {
+                balance: U256::MAX,
+                ..Default::default()
+            },
+        );
+
+        let mut fork_db: TestForkDB = executor.db.fork();
+
+        let initial_counter_value = fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO).unwrap();
+        assert_eq!(
+            initial_counter_value,
+            uint!(0_U256),
+            "Initial counter value mismatch"
+        );
+
+        // Create and immediately cancel the token
+        let cancellation_token = CancellationToken::new();
+        cancellation_token.cancel();
+
+        // Call the function with the cancelled token
+        let result = executor.validate_transaction_ext_db::<_, _>(
+            block_env.clone(),
+            tx.clone(),
+            &mut fork_db,
+            &mut mock_db,
+            cancellation_token.clone(), // Pass the CANCELLED token
+        );
+
+        // Assert that the function returned the cancellation error
+        assert!(
+            matches!(result, Err(ExecutorError::Cancelled)),
+            "Expected cancellation error, but got {:?}",
+            result
+        );
+
+        // Assert that the state in the fork_db did NOT change
+        let final_counter_value = fork_db.storage_ref(COUNTER_ADDRESS, U256::ZERO).unwrap();
+        assert_eq!(
+            initial_counter_value, final_counter_value,
+            "Counter value should not change on cancellation"
+        );
 
         Ok(())
     }

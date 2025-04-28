@@ -33,6 +33,7 @@ use crate::{
 use revm::db::CacheDB;
 use revm::db::EmptyDBTyped;
 use std::convert::Infallible;
+use tokio_util::sync::CancellationToken;
 
 use alloy_rpc_types::{
     BlockId,
@@ -198,7 +199,13 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
 
     //Execute triggering tx.
     executor
-        .validate_transaction_ext_db(BlockEnv::default(), trigger_tx, &mut fork_db, &mut mock_db)
+        .validate_transaction_ext_db(
+            BlockEnv::default(),
+            trigger_tx,
+            &mut fork_db,
+            &mut mock_db,
+            CancellationToken::default(),
+        )
         .unwrap()
 }
 /// Mines a block from an anvil provider, returning the block header

@@ -8,7 +8,10 @@ use crate::db::{
 };
 use std::{
     cell::UnsafeCell,
-    sync::Arc,
+    sync::{
+        atomic::AtomicBool,
+        Arc,
+    },
 };
 
 use alloy_primitives::{
@@ -36,10 +39,14 @@ use moka::sync::Cache;
 /// data in any way it is perfectly safe. Additional safety is provided via an Arc.
 ///
 /// The use of the active overlay may result in undefined begaviour if the active_db
-/// is holding a refrance that is not valid anymore. There are no protections for this.
+/// is holding a refrance that is not valid anymore.
+///
+/// In order to access the active_db refrance, a lock from the Overlay must be
+/// manually acquired AND released.
 pub struct ActiveOverlay<Db> {
     active_db: Arc<UnsafeCell<Db>>,
-    overlay: Cache<TableKey, TableValue>,
+    active_locked: Arc<AtomicBool>,
+    overlay: Arc<Cache<TableKey, TableValue>>,
 }
 
 unsafe impl<Db> Send for ActiveOverlay<Db> {}
@@ -49,6 +56,7 @@ impl<Db> Clone for ActiveOverlay<Db> {
     fn clone(&self) -> Self {
         Self {
             active_db: self.active_db.clone(),
+            active_locked: self.active_locked.clone(),
             overlay: self.overlay.clone(),
         }
     }
@@ -56,8 +64,16 @@ impl<Db> Clone for ActiveOverlay<Db> {
 
 impl<Db> ActiveOverlay<Db> {
     /// Creates a new `ActiveOverlay` given a `revm::DatabaseRef` and an `OverlayDb` cache.
-    pub fn new(active_db: Arc<UnsafeCell<Db>>, overlay: Cache<TableKey, TableValue>) -> Self {
-        Self { active_db, overlay }
+    pub fn new(
+        active_db: Arc<UnsafeCell<Db>>,
+        active_locked: Arc<AtomicBool>,
+        overlay: Arc<Cache<TableKey, TableValue>>,
+    ) -> Self {
+        Self {
+            active_db,
+            active_locked,
+            overlay,
+        }
     }
 
     /// Creates a new forkdb from the current overlay.
@@ -86,6 +102,12 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
         if let Some(value) = self.overlay.get(&key) {
             // Found in cache
             return Ok(value.as_basic().cloned());
+        }
+
+        // If the active db lock is loaded that means we should not be accessing
+        // and possibly derefrencing the underlying db
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+            return Err(NotFoundError);
         }
 
         // Not in cache, query mandatory underlying DB
@@ -118,6 +140,12 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
             return Ok(value.as_code_by_hash().cloned().unwrap()); // unwrap safe, Clone Bytecode
         }
 
+        // If the active db lock is loaded that means we should not be accessing
+        // and possibly derefrencing the underlying db
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+            return Err(NotFoundError);
+        }
+
         // Not in cache, query mandatory underlying DB
         // Map error if needed
         unsafe {
@@ -140,6 +168,12 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
             return Ok((*value.as_storage().unwrap()).into()); // unwrap safe
         }
 
+        // If the active db lock is loaded that means we should not be accessing
+        // and possibly derefrencing the underlying db
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+            return Err(NotFoundError);
+        }
+
         // Not in cache, query mandatory underlying DB
         unsafe {
             let value_u256 = self
@@ -159,6 +193,12 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
         if let Some(value) = self.overlay.get(&key) {
             // Found in cache
             return Ok(*value.as_block_hash().unwrap()); // unwrap safe
+        }
+
+        // If the active db lock is loaded that means we should not be accessing
+        // and possibly derefrencing the underlying db
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+            return Err(NotFoundError);
         }
 
         // Not in cache, query mandatory underlying DB
@@ -214,7 +254,11 @@ mod active_overlay_tests {
         let overlay_cache = Cache::new(10);
 
         // Create the ActiveOverlay
-        let active_overlay = ActiveOverlay::new(mock_db_arc.clone(), overlay_cache);
+        let active_overlay = ActiveOverlay::new(
+            mock_db_arc.clone(),
+            AtomicBool::new(false).into(),
+            overlay_cache.into(),
+        );
 
         // 1. Initial state: Cache is empty
         assert!(!active_overlay.is_cached(&key1));
@@ -276,7 +320,11 @@ mod active_overlay_tests {
         #[allow(clippy::arc_with_non_send_sync)]
         let mock_db_arc = Arc::new(UnsafeCell::new(mock_db));
         let overlay_cache = Cache::new(10);
-        let active_overlay = ActiveOverlay::new(mock_db_arc.clone(), overlay_cache);
+        let active_overlay = ActiveOverlay::new(
+            mock_db_arc.clone(),
+            AtomicBool::new(false).into(),
+            overlay_cache.into(),
+        );
 
         // 1. Initial state
         assert!(!active_overlay.is_cached(&key1));
@@ -329,7 +377,11 @@ mod active_overlay_tests {
         #[allow(clippy::arc_with_non_send_sync)]
         let mock_db_arc = Arc::new(UnsafeCell::new(mock_db));
         let overlay_cache = Cache::new(10);
-        let active_overlay = ActiveOverlay::new(mock_db_arc.clone(), overlay_cache);
+        let active_overlay = ActiveOverlay::new(
+            mock_db_arc.clone(),
+            AtomicBool::new(false).into(),
+            overlay_cache.into(),
+        );
 
         // 1. Initial state
         assert!(!active_overlay.is_cached(&key1));
@@ -370,7 +422,11 @@ mod active_overlay_tests {
         #[allow(clippy::arc_with_non_send_sync)]
         let mock_db_arc = Arc::new(UnsafeCell::new(mock_db));
         let overlay_cache = Cache::new(10);
-        let active_overlay = ActiveOverlay::new(mock_db_arc.clone(), overlay_cache);
+        let active_overlay = ActiveOverlay::new(
+            mock_db_arc.clone(),
+            AtomicBool::new(false).into(),
+            overlay_cache.into(),
+        );
 
         // 1. Initial state
         assert!(!active_overlay.is_cached(&key1));
@@ -424,8 +480,16 @@ mod active_overlay_tests {
 
         // Create two ActiveOverlays using DIFFERENT DBs but the SAME cache
         // Pass the correctly wrapped Arcs
-        let active_overlay1 = ActiveOverlay::new(mock_db1_arc.clone(), shared_cache.clone());
-        let active_overlay2 = ActiveOverlay::new(mock_db2_arc.clone(), shared_cache.clone());
+        let active_overlay1 = ActiveOverlay::new(
+            mock_db1_arc.clone(),
+            AtomicBool::new(false).into(),
+            shared_cache.clone().into(),
+        );
+        let active_overlay2 = ActiveOverlay::new(
+            mock_db2_arc.clone(),
+            AtomicBool::new(false).into(),
+            shared_cache.clone().into(),
+        );
 
         // Sanity check: initially empty
         assert!(!active_overlay1.is_cached(&key1));
