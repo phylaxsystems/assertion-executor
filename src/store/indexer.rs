@@ -63,6 +63,7 @@ use crate::{
 use assertion_da_client::{
     DaClient,
     DaClientError,
+    DaFetchResponse,
 };
 
 use std::collections::BTreeMap;
@@ -611,14 +612,17 @@ impl Indexer {
                 // the modification should be moved to the store. But we also need to avoid back
                 // pressure on extracting the assertion contracts once we have fetched them from
                 // the DA.
-                let bytecode = self
-                    .da_client
-                    .fetch_assertion(event.assertionId)
-                    .await?
-                    .bytecode;
+                let DaFetchResponse {
+                    bytecode,
+                    encoded_constructor_args,
+                    ..
+                } = self.da_client.fetch_assertion(event.assertionId).await?;
+
+                let mut deployment_bytecode: Vec<u8> = (*bytecode.clone()).to_vec();
+                deployment_bytecode.extend(encoded_constructor_args.to_vec());
 
                 let assertion_contract_res =
-                    extract_assertion_contract(bytecode.clone(), &self.executor_config);
+                    extract_assertion_contract(deployment_bytecode.into(), &self.executor_config);
 
                 match assertion_contract_res {
                     Ok((assertion_contract, trigger_recorder)) => {
@@ -1237,11 +1241,11 @@ mod test_indexer {
             .await
         {
             Ok(rax) => {
-                println!("response: {:?}", rax);
+                println!("response: {rax:?}");
                 rax
             }
             Err(e) => {
-                panic!("Failed to submit assertion: {:#?}", e);
+                panic!("Failed to submit assertion: {e:#?}");
             }
         };
 
@@ -1306,7 +1310,7 @@ mod test_indexer {
             TcpListener::bind(&config.listen_addr).await.unwrap(),
         ));
         let local_addr = listener.local_addr().unwrap();
-        println!("Bound to: {}", local_addr);
+        println!("Bound to: {local_addr}");
 
         // Try to open the sled db
         let db: sled::Db<1024> = sled::Config::new()
@@ -1657,11 +1661,8 @@ mod test_indexer {
             #[allow(clippy::expect_fun_call)] // Error information is helpful, and the extra
             // context is as well.
             indexer.handle_latest_block(latest_block).await.expect(
-                format!(
-                    "Failed to handle latest block. Sync before mining: {}",
-                    sync_before_mining
-                )
-                .as_str(),
+                format!("Failed to handle latest block. Sync before mining: {sync_before_mining}",)
+                    .as_str(),
             );
 
             // Verify state after reorg

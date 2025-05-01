@@ -106,7 +106,7 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
 
         // If the active db lock is loaded that means we should not be accessing
         // and possibly derefrencing the underlying db
-        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(NotFoundError);
         }
 
@@ -142,7 +142,7 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
 
         // If the active db lock is loaded that means we should not be accessing
         // and possibly derefrencing the underlying db
-        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(NotFoundError);
         }
 
@@ -170,7 +170,7 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
 
         // If the active db lock is loaded that means we should not be accessing
         // and possibly derefrencing the underlying db
-        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(NotFoundError);
         }
 
@@ -197,7 +197,7 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
 
         // If the active db lock is loaded that means we should not be accessing
         // and possibly derefrencing the underlying db
-        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) == true {
+        if self.active_locked.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(NotFoundError);
         }
 

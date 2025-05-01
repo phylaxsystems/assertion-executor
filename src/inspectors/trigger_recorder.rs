@@ -279,7 +279,7 @@ mod test {
 
     fn run_trigger_recorder_test(artifact: &str) -> TriggerRecorder {
         let assertion_contract = Address::random();
-        let deployed_code = deployed_bytecode(&format!("{}.sol:{}", artifact, artifact));
+        let deployed_code = deployed_bytecode(&format!("{artifact}.sol:{artifact}"));
 
         let mut db = InMemoryDB::default();
         db.insert_account_info(
@@ -313,8 +313,7 @@ mod test {
 
         assert!(
             result.result.is_success(),
-            "Failed to transact: {:#?}",
-            result
+            "Failed to transact: {result:#?}",
         );
 
         evm.context.external

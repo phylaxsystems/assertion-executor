@@ -110,7 +110,7 @@ fn read_artifact(input: &str) -> serde_json::Value {
     let mut parts = input.split(':');
     let file_name = parts.next().expect("Failed to read filename");
     let contract_name = parts.next().expect("Failed to read contract name");
-    let path = format!("contract-mocks/out/{}/{}.json", file_name, contract_name);
+    let path = format!("contract-mocks/out/{file_name}/{contract_name}.json");
 
     let file = std::fs::File::open(path).expect("Failed to open file");
     serde_json::from_reader(file).expect("Failed to parse JSON")
@@ -154,7 +154,7 @@ pub async fn run_precompile_test(artifact: &str) -> TxValidationResult {
 
     // Write test assertion to assertion store
     // bytecode of contract-mocks/src/GetLogsTest.sol:GetLogsTest
-    let assertion_code = bytecode(&format!("{}.sol:{}", artifact, artifact));
+    let assertion_code = bytecode(&format!("{artifact}.sol:{artifact}"));
 
     let assertion_store = AssertionStore::new_ephemeral().unwrap();
     assertion_store

@@ -145,7 +145,7 @@ where
                 }
                 _ => {
                     error!(target: "assertion-executor::validation", error = %e, "Unknown error occurred");
-                    ExecutorError::TxError(EVMError::Custom(format!("Error: {}", e)))
+                    ExecutorError::TxError(EVMError::Custom(format!("Error: {e}")))
                 }
             }
             })?;
@@ -237,7 +237,7 @@ where
             target: "assertion-executor::run_assertion_contract",
             assertion_contract_id = ?id,
             selector_count = fn_selectors.len(),
-            selectors = ?fn_selectors.iter().map(|s| format!("{:x?}", s)).collect::<Vec<_>>(),
+            selectors = ?fn_selectors.iter().map(|s| format!("{s:x?}")).collect::<Vec<_>>(),
             "Running assertion contract"
         );
 
@@ -283,7 +283,7 @@ where
                         .map(|result_and_state| result_and_state.result)
                         .map_err(|e| {
                             // Convert the error to the appropriate type
-                            ExecutorError::TxError(EVMError::Custom(format!("{:?}", e)))
+                            ExecutorError::TxError(EVMError::Custom(format!("{e:?}")))
                         })?;
                     debug!(target: "assertion-executor::assertion", result=?result, "Assertion executed");
                     assertion_gas
@@ -362,7 +362,7 @@ where
                 EVMError::Custom(e) => ExecutorError::TxError(EVMError::Custom(e)),
                 _ => {
                     error!(target: "assertion-executor::tx", error = %e, "Unknown error occurred");
-                    ExecutorError::TxError(EVMError::Custom(format!("Error: {}", e)))
+                    ExecutorError::TxError(EVMError::Custom(format!("Error: {e}")))
                 }
             }
         })?;
@@ -707,8 +707,7 @@ mod test {
         // Assert that the function returned the cancellation error
         assert!(
             matches!(result, Err(ExecutorError::Cancelled)),
-            "Expected cancellation error, but got {:?}",
-            result
+            "Expected cancellation error, but got {result:?}",
         );
 
         // Assert that the state in the fork_db did NOT change
