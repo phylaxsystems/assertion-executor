@@ -618,8 +618,8 @@ impl Indexer {
                     ..
                 } = self.da_client.fetch_assertion(event.assertionId).await?;
 
-                let mut deployment_bytecode: Vec<u8> = (*bytecode.clone()).to_vec();
-                deployment_bytecode.extend(encoded_constructor_args.to_vec());
+                let mut deployment_bytecode = (*bytecode).to_vec();
+                deployment_bytecode.extend_from_slice(&encoded_constructor_args);
 
                 let assertion_contract_res =
                     extract_assertion_contract(deployment_bytecode.into(), &self.executor_config);
@@ -812,20 +812,7 @@ mod test_indexer {
         setup_with_tag(BlockTag::Finalized).await
     }
 
-    async fn send_modifications(indexer: &Indexer) -> (Address, FixedBytes<32>) {
-        let registration_mock = deployed_bytecode("AssertionRegistration.sol:RegistrationMock");
-        let chain_id = indexer.provider.get_chain_id().await.unwrap();
-
-        indexer
-            .provider
-            .anvil_set_code(indexer.state_oracle, registration_mock)
-            .await
-            .unwrap();
-        let signer = PrivateKeySigner::random();
-        let wallet = EthereumWallet::from(signer.clone());
-
-        let protocol_addr = Address::random();
-
+    fn assertion_src() -> String {
         let assertion = r#"
             // SPDX-License-Identifier: UNLICENSED
             pragma solidity ^0.8.13 ^0.8.28;
@@ -1229,17 +1216,83 @@ mod test_indexer {
                     registerCallTrigger(this.assertCount.selector);
                 }
             }
-        "#;
 
-        let resp = match indexer
-            .da_client
-            .submit_assertion(
-                "SimpleCounterAssertion".to_string(),
-                assertion.to_string(),
-                "0.8.28".to_string(),
-            )
+            contract SimpleCounterAssertionWithArgs is Assertion {
+                event RunningAssertion(uint256 count);
+
+                uint256 public limit; 
+                
+                constructor(uint256 _limit) {
+                    limit = _limit;
+                }
+
+                function assertCount() public {
+                    uint256 count = Counter(0x0101010101010101010101010101010101010101).number();
+                    emit RunningAssertion(count);
+                    if (count > limit) {
+                        revert("Counter cannot be greater than limit");
+                    }
+                }
+
+                function triggers() external view override {
+                    registerCallTrigger(this.assertCount.selector);
+                }
+            }
+        "#;
+        assertion.to_string()
+    }
+
+    async fn send_modifications(indexer: &Indexer) -> (Address, FixedBytes<32>) {
+        send_modifications_inner(indexer, false).await
+    }
+
+    async fn send_modifications_with_args(indexer: &Indexer) -> (Address, FixedBytes<32>) {
+        send_modifications_inner(indexer, true).await
+    }
+
+    async fn send_modifications_inner(
+        indexer: &Indexer,
+        with_args: bool,
+    ) -> (Address, FixedBytes<32>) {
+        let registration_mock = deployed_bytecode("AssertionRegistration.sol:RegistrationMock");
+        let chain_id = indexer.provider.get_chain_id().await.unwrap();
+
+        indexer
+            .provider
+            .anvil_set_code(indexer.state_oracle, registration_mock)
             .await
-        {
+            .unwrap();
+        let signer = PrivateKeySigner::random();
+        let wallet = EthereumWallet::from(signer.clone());
+
+        let protocol_addr = Address::random();
+
+        let resp = match with_args {
+            true => {
+                indexer
+                    .da_client
+                    .submit_assertion_with_args(
+                        "SimpleCounterAssertionWithArgs".to_string(),
+                        assertion_src(),
+                        "0.8.28".to_string(),
+                        "constructor(uint256)".to_string(),
+                        vec![U256::from(5).to_string()],
+                    )
+                    .await
+            }
+            false => {
+                indexer
+                    .da_client
+                    .submit_assertion(
+                        "SimpleCounterAssertion".to_string(),
+                        assertion_src(),
+                        "0.8.28".to_string(),
+                    )
+                    .await
+            }
+        };
+
+        let resp = match resp {
             Ok(rax) => {
                 println!("response: {rax:?}");
                 rax
@@ -1460,6 +1513,90 @@ mod test_indexer {
                 .unwrap()
                 .number,
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_index_range_with_args() {
+        let (indexer, da, _anvil) = setup().await;
+        tokio::task::spawn(da);
+
+        let (assertion_adopter, id) = send_modifications_with_args(&indexer).await;
+
+        let block = indexer
+            .provider
+            .get_block_by_number(0.into(), Default::default())
+            .await
+            .unwrap()
+            .unwrap();
+        let block_number = block.header.number;
+
+        assert_eq!(block_number, 0);
+
+        let timestamp = block.header.inner.timestamp;
+
+        let _ = indexer
+            .provider
+            .evm_mine(Some(MineOptions::Timestamp(Some(timestamp + 5))))
+            .await;
+
+        indexer.index_range(0, 1).await.unwrap();
+
+        assert_eq!(
+            indexer
+                .get_last_indexed_block_num_hash()
+                .unwrap()
+                .unwrap()
+                .number,
+            1
+        );
+
+        let pending_mods_tree = indexer.pending_modifications_tree;
+
+        assert_eq!(pending_mods_tree.len(), 1);
+
+        let key = bincode::serialize(&U256::from(1_u64)).unwrap();
+
+        let value = pending_mods_tree.get(&key).unwrap().unwrap();
+
+        let pending_modifications: Vec<PendingModification> = bincode::deserialize(&value).unwrap();
+
+        let assertion = indexer.da_client.fetch_assertion(id).await.unwrap();
+
+        let mut bytecode = (*assertion.bytecode).to_vec();
+        let encoded_constructor_args = assertion.encoded_constructor_args;
+        bytecode.extend_from_slice(&encoded_constructor_args);
+
+        let assertion_contract =
+            extract_assertion_contract(bytecode.into(), &ExecutorConfig::default()).unwrap();
+
+        assert_eq!(
+            assertion_contract
+                .0
+                .storage
+                .get(&U256::from(0))
+                .unwrap()
+                .present_value,
+            U256::from(5)
+        );
+
+        assert_eq!(
+            pending_modifications,
+            vec![
+                PendingModification::Add {
+                    assertion_adopter,
+                    assertion_contract: assertion_contract.0.clone(),
+                    trigger_recorder: assertion_contract.1,
+                    active_at_block: 65,
+                    log_index: 0,
+                },
+                PendingModification::Remove {
+                    inactive_at_block: 65,
+                    log_index: 1,
+                    assertion_contract_id: id,
+                    assertion_adopter,
+                },
+            ]
         );
     }
 
