@@ -64,6 +64,8 @@ pub enum FnSelectorExtractorError {
     AssertionContractNoCode,
 }
 
+const DEPLOYMENT_GAS_LIMIT: u64 = 20_000_000;
+
 /// Extracts [`AssertionContract`] and [`TriggerRecorder`] from a given assertion contract's deployment bytecode
 #[allow(clippy::result_large_err)]
 pub fn extract_assertion_contract(
@@ -85,7 +87,7 @@ pub fn extract_assertion_contract(
         transact_to: TxKind::Create,
         caller: CALLER,
         data: assertion_code.clone(),
-        gas_limit: config.assertion_gas_limit,
+        gas_limit: DEPLOYMENT_GAS_LIMIT,
         #[cfg(feature = "optimism")]
         optimism: create_optimism_fields(),
         ..Default::default()
@@ -197,4 +199,40 @@ fn test_get_assertion_selectors() {
         .collect::<Vec<_>>();
     recorded_selectors.sort();
     assert_eq!(recorded_selectors, expected_selectors);
+}
+
+#[test]
+fn test_endless_loop_constructor() {
+    use crate::test_utils::*;
+
+    use crate::primitives::EvmExecutionResult;
+
+    use revm::primitives::HaltReason;
+
+    let config = ExecutorConfig::default();
+
+    // Test with valid assertion contract
+    let result = extract_assertion_contract(
+        bytecode("InfiniteDeployment.sol:InfiniteDeploymentAssertion"),
+        &config,
+    );
+
+    match result {
+        Ok(_) => panic!("Expected an error due to infinite loop in constructor"),
+        Err(e) => {
+            if let FnSelectorExtractorError::AssertionContractDeployFailed(result_and_state) = e {
+                match result_and_state.result {
+                    EvmExecutionResult::Halt { reason, .. } => {
+                        if let HaltReason::OutOfGas(_) = reason {
+                        } else {
+                            panic!("Expected OutOfGas error");
+                        }
+                    }
+                    _ => panic!("Expected OutOfGas error"),
+                }
+            } else {
+                panic!("Expected AssertionContractDeployFailed error");
+            }
+        }
+    }
 }
