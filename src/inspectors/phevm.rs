@@ -1,18 +1,28 @@
 use crate::{
     db::{
-        multi_fork_db::MultiForkDb,
+        multi_fork_db::{
+            ForkError,
+            MultiForkDb,
+        },
         DatabaseRef,
     },
     inspectors::{
+        inspector_result_to_call_outcome,
         precompiles::{
-            calls::get_call_inputs,
+            calls::{
+                get_call_inputs,
+                GetCallInputsError,
+            },
             fork::{
                 fork_post_state,
                 fork_pre_state,
             },
             load::load_external_slot,
             logs::get_logs,
-            state_changes::get_state_changes,
+            state_changes::{
+                get_state_changes,
+                GetStateChangesError,
+            },
         },
         sol_primitives::PhEvm,
         tracer::CallTracer,
@@ -35,15 +45,14 @@ use revm::{
         CreateInputs,
         CreateOutcome,
         Gas,
-        InstructionResult,
         Interpreter,
-        InterpreterResult,
     },
     precompile::{
         PrecompileSpecId,
         Precompiles,
     },
     primitives::{
+        FixedBytes,
         Log,
         SpecId,
     },
@@ -70,6 +79,20 @@ impl<'a> PhEvmContext<'a> {
             call_traces,
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PrecompileError {
+    #[error("Precompile selector not found: {0:#?}")]
+    SelectorNotFound(FixedBytes<4>),
+    #[error("Unexpected error, should be Infallible: {0}")]
+    UnexpectedError(#[from] std::convert::Infallible),
+    #[error("Error getting state changes: {0}")]
+    GetStateChangesError(#[from] GetStateChangesError),
+    #[error("Error getting call inputs: {0}")]
+    GetCallInputsError(#[from] GetCallInputsError),
+    #[error("Error switching forks: {0}")]
+    ForkError(#[from] ForkError),
 }
 
 /// PhEvmInspector is an inspector for supporting the PhEvm precompiles.
@@ -105,10 +128,8 @@ impl<'a> PhEvmInspector<'a> {
         &self,
         context: &mut EvmContext<&mut MultiForkDb<impl DatabaseRef>>,
         inputs: &mut CallInputs,
-    ) -> CallOutcome {
-        let gas = Gas::new(inputs.gas_limit);
-
-        match inputs
+    ) -> Result<Bytes, PrecompileError> {
+        let result = match inputs
             .input
             .as_ref()
             .get(0..4)
@@ -117,36 +138,19 @@ impl<'a> PhEvmInspector<'a> {
             .unwrap_or_default()
         {
             PhEvm::forkPreStateCall::SELECTOR => {
-                fork_pre_state(
-                    &self.init_journaled_state,
-                    context,
-                    gas,
-                    inputs.return_memory_offset.clone(),
-                )
+                fork_pre_state(&self.init_journaled_state, context)?
             }
             PhEvm::forkPostStateCall::SELECTOR => {
-                fork_post_state(
-                    &self.init_journaled_state,
-                    context,
-                    gas,
-                    inputs.return_memory_offset.clone(),
-                )
+                fork_post_state(&self.init_journaled_state, context)?
             }
-            PhEvm::loadCall::SELECTOR => load_external_slot(&context.inner, inputs, gas),
-            PhEvm::getLogsCall::SELECTOR => get_logs(inputs, self.context, gas),
-            PhEvm::getCallInputsCall::SELECTOR => get_call_inputs(inputs, self.context, gas),
-            PhEvm::getStateChangesCall::SELECTOR => get_state_changes(inputs, self.context, gas),
-            _ => {
-                CallOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Revert,
-                        output: Bytes::default(),
-                        gas,
-                    },
-                    memory_offset: inputs.return_memory_offset.clone(),
-                }
-            }
-        }
+            PhEvm::loadCall::SELECTOR => load_external_slot(&context.inner, inputs)?,
+            PhEvm::getLogsCall::SELECTOR => get_logs(self.context)?,
+            PhEvm::getCallInputsCall::SELECTOR => get_call_inputs(inputs, self.context)?,
+            PhEvm::getStateChangesCall::SELECTOR => get_state_changes(inputs, self.context)?,
+            selector => Err(PrecompileError::SelectorNotFound(selector.into()))?,
+        };
+
+        Ok(result)
     }
 }
 
@@ -192,7 +196,16 @@ impl<DB: DatabaseRef> Inspector<&mut MultiForkDb<DB>> for PhEvmInspector<'_> {
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if inputs.target_address == PRECOMPILE_ADDRESS {
-            return Some(self.execute_precompile(context, inputs));
+            let call_outcome = inspector_result_to_call_outcome(
+                self.execute_precompile(context, inputs),
+                Gas::new(inputs.gas_limit),
+                inputs.return_memory_offset.clone(),
+            );
+
+            if call_outcome.result.is_revert() {
+                println!("PhEvm precompile revert: {:#?}", call_outcome.result.output);
+            }
+            return Some(call_outcome);
         }
         None
     }
@@ -217,4 +230,39 @@ fn insert_precompile_account<T>(db: &mut MultiForkDb<T>) {
             ..Default::default()
         },
     );
+}
+
+#[cfg(test)]
+mod test {
+    use crate::test_utils::run_precompile_test;
+
+    use crate::inspectors::sol_primitives::Error;
+    use alloy_sol_types::SolError;
+
+    #[tokio::test]
+    async fn test_invalid_selector_error_encoding() {
+        let result = run_precompile_test("TestInvalidCall").await;
+        assert!(!result.is_valid());
+        assert_eq!(result.assertions_executions.len(), 1);
+        let assertion_contract_execution = &result.assertions_executions[0];
+        assert_eq!(assertion_contract_execution.assertion_fns_results.len(), 1);
+        let assertion_fn_result = &assertion_contract_execution.assertion_fns_results[0];
+
+        match &assertion_fn_result.result {
+            crate::primitives::AssertionFunctionExecutionResult::AssertionExecutionResult(
+                result,
+            ) => {
+                assert!(!result.is_success());
+                let data = result.clone().into_output().unwrap();
+
+                let error_string = Error::abi_decode(data.iter().as_slice(), true)
+                    .expect("Failed to decode error");
+
+                assert_eq!(error_string._0, "Precompile selector not found: 0x1dcc85ae");
+            }
+            _ => {
+                panic!("Expected AssertionExecutionResult(_), got: {assertion_fn_result:#?}");
+            }
+        }
+    }
 }

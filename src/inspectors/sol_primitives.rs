@@ -56,6 +56,8 @@ sol! {
         // Get state changes for a given contract and storage slot.
         function getStateChanges(address contractAddress, bytes32 slot) external returns (bytes32[] memory);
     }
+
+    #[derive(Debug)]
     error Error(string);
 }
 

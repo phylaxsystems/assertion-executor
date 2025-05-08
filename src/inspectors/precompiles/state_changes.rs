@@ -3,6 +3,7 @@ use crate::{
     inspectors::sol_primitives::PhEvm,
     primitives::{
         Address,
+        Bytes,
         JournaledState,
         U256,
     },
@@ -14,13 +15,7 @@ use alloy_sol_types::{
 };
 
 use revm::{
-    interpreter::{
-        CallInputs,
-        CallOutcome,
-        Gas,
-        InstructionResult,
-        InterpreterResult,
-    },
+    interpreter::CallInputs,
     JournalEntry,
 };
 
@@ -37,39 +32,11 @@ pub enum GetStateChangesError {
 }
 
 /// Function for getting state changes for the PhEvm precompile.
-/// This function returns the final call outcome for the precompile, by converting the result type
-/// of the inner function to the CallOutcome type.
-pub fn get_state_changes(inputs: &CallInputs, context: &PhEvmContext, gas: Gas) -> CallOutcome {
-    match get_state_changes_inner(inputs, context) {
-        Ok(result) => {
-            CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Return,
-                    output: result.into(),
-                    gas,
-                },
-                memory_offset: inputs.return_memory_offset.clone(),
-            }
-        }
-        Err(e) => {
-            CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: e.to_string().into(),
-                    gas,
-                },
-                memory_offset: inputs.return_memory_offset.clone(),
-            }
-        }
-    }
-}
-
-/// Function for getting state changes for the PhEvm precompile.
 /// This returns a result type, which can be used to determine the success of the precompile call and include error messaging.
-pub fn get_state_changes_inner(
+pub fn get_state_changes(
     inputs: &CallInputs,
     context: &PhEvmContext,
-) -> Result<Vec<u8>, GetStateChangesError> {
+) -> Result<Bytes, GetStateChangesError> {
     let event = PhEvm::getStateChangesCall::abi_decode(&inputs.input, true)?;
     let journaled_state = context
         .call_traces
@@ -79,7 +46,7 @@ pub fn get_state_changes_inner(
 
     let differences = get_differences(journaled_state, event.contractAddress, event.slot.into())?;
 
-    Ok(Vec::<U256>::abi_encode(&differences))
+    Ok(Vec::<U256>::abi_encode(&differences).into())
 }
 
 /// Returns an array of different values for an account and slot, from the JournaledState passed.

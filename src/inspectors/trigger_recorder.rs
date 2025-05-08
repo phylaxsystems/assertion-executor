@@ -1,7 +1,7 @@
 use crate::{
-    inspectors::sol_primitives::{
-        Error,
-        ITriggerRecorder,
+    inspectors::{
+        inspector_result_to_call_outcome,
+        sol_primitives::ITriggerRecorder,
     },
     primitives::{
         address,
@@ -21,9 +21,7 @@ use revm::{
         CreateInputs,
         CreateOutcome,
         Gas,
-        InstructionResult,
         Interpreter,
-        InterpreterResult,
     },
     Database,
     EvmContext,
@@ -31,17 +29,11 @@ use revm::{
     Inspector,
 };
 
-use alloy_sol_types::{
-    SolCall,
-    SolError,
-};
+use alloy_sol_types::SolCall;
 
-use std::{
-    collections::{
-        HashMap,
-        HashSet,
-    },
-    ops::Range,
+use std::collections::{
+    HashMap,
+    HashSet,
 };
 
 use serde::{
@@ -90,7 +82,7 @@ pub enum RecordError {
 
 impl TriggerRecorder {
     /// Records a trigger call made to the trigger recorder address.
-    fn record_trigger(&mut self, inputs: &CallInputs) -> Result<(), RecordError> {
+    fn record_trigger(&mut self, inputs: &CallInputs) -> Result<Bytes, RecordError> {
         match inputs
             .input
             .as_ref()
@@ -150,7 +142,7 @@ impl TriggerRecorder {
 
             _ => return Err(RecordError::FnSelectorNotFound),
         }
-        Ok(())
+        Ok(Bytes::new())
     }
 
     /// Adds an assertion to the trigger recorder's respective trigger type.
@@ -159,37 +151,6 @@ impl TriggerRecorder {
             .entry(trigger_type)
             .or_default()
             .insert(fn_selector);
-    }
-}
-
-/// Convert a fork result to a call outcome.
-/// Uses the default require [`Error`] signature for encoding revert messages.
-fn record_result_to_call_outcome(
-    result: Result<(), RecordError>,
-    gas: Gas,
-    memory_offset: Range<usize>,
-) -> CallOutcome {
-    match result {
-        Ok(()) => {
-            CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Stop,
-                    output: Bytes::default(),
-                    gas,
-                },
-                memory_offset,
-            }
-        }
-        Err(e) => {
-            CallOutcome {
-                result: InterpreterResult {
-                    result: InstructionResult::Revert,
-                    output: Error::abi_encode(&Error { _0: e.to_string() }).into(),
-                    gas,
-                },
-                memory_offset,
-            }
-        }
     }
 }
 
@@ -226,7 +187,7 @@ impl<DB: Database> Inspector<DB> for TriggerRecorder {
         if inputs.target_address == TRIGGER_RECORDER {
             let record_result = self.record_trigger(inputs);
             let gas = Gas::new(inputs.gas_limit);
-            return Some(record_result_to_call_outcome(
+            return Some(inspector_result_to_call_outcome(
                 record_result,
                 gas,
                 inputs.return_memory_offset.clone(),

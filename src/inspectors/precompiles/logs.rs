@@ -5,15 +5,9 @@ use crate::{
 };
 
 use alloy_sol_types::SolType;
-use revm::interpreter::{
-    CallInputs,
-    CallOutcome,
-    Gas,
-    InstructionResult,
-    InterpreterResult,
-};
+use std::convert::Infallible;
 
-pub fn get_logs(inputs: &CallInputs, context: &PhEvmContext, gas: Gas) -> CallOutcome {
+pub fn get_logs(context: &PhEvmContext) -> Result<Bytes, Infallible> {
     let sol_logs: Vec<PhEvm::Log> = context
         .tx_logs
         .iter()
@@ -29,14 +23,7 @@ pub fn get_logs(inputs: &CallInputs, context: &PhEvmContext, gas: Gas) -> CallOu
     let encoded: Bytes =
         <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_encode(&sol_logs).into();
 
-    CallOutcome {
-        result: InterpreterResult {
-            result: InstructionResult::Return,
-            output: encoded,
-            gas,
-        },
-        memory_offset: inputs.return_memory_offset.clone(),
-    }
+    Ok(encoded)
 }
 
 #[cfg(test)]

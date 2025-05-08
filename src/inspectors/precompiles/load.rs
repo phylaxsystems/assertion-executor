@@ -1,17 +1,13 @@
 use crate::{
     db::MultiForkDb,
-    inspectors::precompiles::empty_outcome,
     inspectors::sol_primitives::PhEvm::loadCall,
-    primitives::Address,
+    primitives::{
+        Address,
+        Bytes,
+    },
 };
 use revm::{
-    interpreter::{
-        CallInputs,
-        CallOutcome,
-        Gas,
-        InstructionResult,
-        InterpreterResult,
-    },
+    interpreter::CallInputs,
     DatabaseRef,
     InnerEvmContext,
 };
@@ -20,16 +16,16 @@ use alloy_sol_types::{
     SolCall,
     SolValue,
 };
+use std::convert::Infallible;
 
 /// Returns a storage slot for a given address. Will return `0x0` if slot empty.
 pub fn load_external_slot(
     context: &InnerEvmContext<&mut MultiForkDb<impl DatabaseRef>>,
     call_inputs: &CallInputs,
-    gas: Gas,
-) -> CallOutcome {
+) -> Result<Bytes, Infallible> {
     let call = match loadCall::abi_decode(&call_inputs.input, true) {
         Ok(call) => call,
-        Err(_) => return empty_outcome(gas, call_inputs.return_memory_offset.clone()),
+        Err(_) => return Ok(Bytes::default()),
     };
     let address: Address = call.target;
 
@@ -37,19 +33,10 @@ pub fn load_external_slot(
 
     let slot_value = match context.db.active_db.storage_ref(address, slot.into()) {
         Ok(rax) => rax,
-        Err(_) => return empty_outcome(gas, call_inputs.return_memory_offset.clone()),
+        Err(_) => return Ok(Bytes::default()),
     };
 
-    let value = SolValue::abi_encode(&slot_value);
-
-    CallOutcome {
-        result: InterpreterResult {
-            result: InstructionResult::Return,
-            output: value.into(),
-            gas,
-        },
-        memory_offset: call_inputs.return_memory_offset.clone(),
-    }
+    Ok(SolValue::abi_encode(&slot_value).into())
 }
 
 #[cfg(test)]

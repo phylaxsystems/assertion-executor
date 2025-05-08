@@ -1,9 +1,6 @@
 use crate::{
     inspectors::phevm::PhEvmContext,
-    inspectors::sol_primitives::{
-        Error,
-        PhEvm,
-    },
+    inspectors::sol_primitives::PhEvm,
     primitives::{
         Address,
         Bytes,
@@ -11,37 +8,27 @@ use crate::{
     },
 };
 
-use revm::interpreter::{
-    CallInputs,
-    CallOutcome,
-    Gas,
-    InstructionResult,
-    InterpreterResult,
-};
+use revm::interpreter::CallInputs;
 
-use alloy_sol_types::{
-    SolError,
-    SolType,
-};
+use alloy_sol_types::SolType;
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetCallInputsError {
+    #[error("Invalid input length, less than 64 bytes: {0}")]
+    InvalidInputLength(usize),
+}
 
 /// Returns a storage slot for a given address. Will return `0x0` if slot empty.
-pub fn get_call_inputs(inputs: &CallInputs, context: &PhEvmContext, gas: Gas) -> CallOutcome {
+pub fn get_call_inputs(
+    inputs: &CallInputs,
+    context: &PhEvmContext,
+) -> Result<Bytes, GetCallInputsError> {
     // Skip function selector (4 bytes)
     let input_data = &inputs.input[4..];
 
     // Input must be at least 64 bytes (2 * 32 byte parameters)
     if input_data.len() < 64 {
-        return CallOutcome {
-            result: InterpreterResult {
-                result: InstructionResult::Revert,
-                output: Error::abi_encode(&Error {
-                    _0: "Invalid input length".into(),
-                })
-                .into(),
-                gas,
-            },
-            memory_offset: 0..0,
-        };
+        return Err(GetCallInputsError::InvalidInputLength(input_data.len()));
     }
 
     // Extract address from first parameter (skip 12 bytes padding)
@@ -73,14 +60,7 @@ pub fn get_call_inputs(inputs: &CallInputs, context: &PhEvmContext, gas: Gas) ->
     let encoded: Bytes =
         <alloy_sol_types::sol_data::Array<PhEvm::CallInputs>>::abi_encode(&sol_call_inputs).into();
 
-    CallOutcome {
-        result: InterpreterResult {
-            result: InstructionResult::Return,
-            output: encoded,
-            gas,
-        },
-        memory_offset: inputs.return_memory_offset.clone(),
-    }
+    Ok(encoded)
 }
 
 #[cfg(test)]
