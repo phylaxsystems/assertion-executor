@@ -31,6 +31,7 @@ use tracing::{
     error,
     info,
     instrument,
+    trace,
     warn,
 };
 
@@ -169,6 +170,8 @@ impl From<BlockTag> for BlockNumberOrTag {
 
 type PubSubProvider = RootProvider;
 
+const MAX_BLOCKS_PER_CALL: u64 = 50_000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum IndexerError {
     #[error("Transport error")]
@@ -282,7 +285,16 @@ impl Indexer {
 
         let mut block_stream = self.provider.subscribe_blocks().await?;
         loop {
+            // FIXME: Sometimes when op-talos is syncing from scratch,
+            // the below might fail with `Lagged` on the recv.
+            // When op-talos is initially syncing, writes indexer data to disk,
+            // and then restarts this problem does not appear.
             let latest_block = block_stream.recv().await?;
+            trace!(
+                target = "assertion_executor::indexer",
+                ?latest_block,
+                "Received new block"
+            );
             self.handle_latest_block(latest_block).await?;
         }
     }
@@ -309,11 +321,14 @@ impl Indexer {
         let latest_block_header = latest_block.header();
         let latest_block_number = latest_block_header.number();
         let latest_block_hash = latest_block_header.hash();
-        self.sync(UpdateBlock {
-            block_number: latest_block_number,
-            block_hash: latest_block_header.hash(),
-            parent_hash: latest_block_header.parent_hash(),
-        })
+        self.sync(
+            UpdateBlock {
+                block_number: latest_block_number,
+                block_hash: latest_block_header.hash(),
+                parent_hash: latest_block_header.parent_hash(),
+            },
+            MAX_BLOCKS_PER_CALL,
+        )
         .await?;
 
         self.is_synced = true;
@@ -401,11 +416,14 @@ impl Indexer {
         &self,
         header: impl HeaderResponse + std::fmt::Debug,
     ) -> IndexerResult {
-        self.sync(UpdateBlock {
-            block_number: header.number(),
-            block_hash: header.hash(),
-            parent_hash: header.parent_hash(),
-        })
+        self.sync(
+            UpdateBlock {
+                block_number: header.number(),
+                block_hash: header.hash(),
+                parent_hash: header.parent_hash(),
+            },
+            MAX_BLOCKS_PER_CALL,
+        )
         .await?;
 
         Ok(())
@@ -418,8 +436,14 @@ impl Indexer {
     /// If reorg, prunes the pending modifications and block hashes trees.
     /// Then indexes the new blocks.
     /// If no block has been indexed, indexes from block 0.
+    ///
+    /// FIXME: We limit individual calls to 50k blocks to not go over reths
+    /// WS call limits.
+    /// If we try to get logs from too many blocks at once, calls might fail.
+    /// This can happen if op-talos was out of sync for a while or if it is syncing
+    /// an existing chain from scratch.
     #[instrument(skip(self))]
-    pub async fn sync(&self, update_block: UpdateBlock) -> IndexerResult {
+    pub async fn sync(&self, update_block: UpdateBlock, max_blocks_per_call: u64) -> IndexerResult {
         let last_indexed_block_num_hash = self.get_last_indexed_block_num_hash()?;
 
         let from;
@@ -448,7 +472,19 @@ impl Indexer {
             from = 0;
         };
 
-        self.index_range(from, update_block.block_number).await?;
+        let update_block_number = update_block.block_number;
+        let mut current_from = from;
+        while current_from <= update_block_number {
+            let current_to =
+                std::cmp::min(current_from + max_blocks_per_call - 1, update_block_number);
+
+            self.index_range(current_from, current_to).await?;
+            if current_to == update_block_number {
+                break;
+            }
+            current_from = current_to + 1;
+        }
+
         Ok(())
     }
 
@@ -1878,5 +1914,68 @@ mod test_indexer {
 
         assert_eq!(active_assertions_2.len(), 0);
         assert_eq!(active_assertions_3.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sync_with_large_range() {
+        // Set up the indexer
+        let (indexer, da, _anvil) = setup_with_tag(BlockTag::Latest).await;
+        tokio::task::spawn(da);
+
+        // Mine a larger number of blocks to better test the chunking behavior
+        let num_blocks = 100;
+
+        for _ in 0..num_blocks {
+            mine_block(&indexer.provider).await;
+        }
+
+        let (assertion_adopter, _) = send_modifications(&indexer).await;
+
+        // Mine additional blocks to ensure the modification is processed
+        for i in 0..5 {
+            let block = mine_block(&indexer.provider).await;
+            println!(
+                "Mined additional block {}: number={}, hash={:?}",
+                i, block.number, block.hash
+            );
+        }
+
+        // Get the latest block
+        let latest_block = indexer
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Latest, BlockTransactionsKind::Hashes)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let update_block = UpdateBlock {
+            block_number: latest_block.header().number(),
+            block_hash: latest_block.header().hash(),
+            parent_hash: latest_block.header().parent_hash(),
+        };
+        indexer.sync(update_block, 50).await.unwrap();
+
+        // Check if we have any pending modifications
+        println!(
+            "Pending modifications tree size: {}",
+            indexer.pending_modifications_tree.len()
+        );
+        for (key, value) in indexer.pending_modifications_tree.iter().flatten() {
+            let block_number: U256 = bincode::deserialize(&key).unwrap();
+            let mods: Vec<PendingModification> = bincode::deserialize(&value).unwrap();
+            println!("Block {}: {} modification(s)", block_number, mods.len());
+        }
+        // Directly move all pending modifications to the store
+        let last_block_num = latest_block.header().number();
+        indexer
+            .move_pending_modifications_to_store(last_block_num)
+            .await
+            .unwrap();
+
+        // Verify store contents
+        let count = indexer.store.assertion_contract_count(assertion_adopter);
+
+        // Verify the assertion was found
+        assert_eq!(count, 1, "Assertion not found in store");
     }
 }
