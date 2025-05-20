@@ -7,6 +7,7 @@ use assertion_executor::{
     db::{
         overlay::test_utils::MockDb,
         MultiForkDb,
+        multi_fork_db::ForkId,
     },
     inspectors::{
         precompiles::load::load_external_slot,
@@ -14,11 +15,15 @@ use assertion_executor::{
     },
     primitives::{
         Address,
+        JournaledState,
         Bytes,
         U256,
+        SpecId,
     },
 };
 use libfuzzer_sys::fuzz_target;
+
+use alloy_primitives::map::HashSet;
 
 use revm::{
     interpreter::CallInputs,
@@ -127,8 +132,11 @@ fuzz_target!(|data: &[u8]| {
     post_tx_db.insert_storage(params.target, params.slot, U256::from(0xdeadbeefu32 as u32));
     let slot_value = post_tx_db.storage_ref(params.target, params.slot).unwrap();
 
+    let journaled_state = JournaledState::new(SpecId::default(), HashSet::default());
+
     // Create a minimally viable context
     let mut multi_fork = MultiForkDb::new(MockDb::new(), post_tx_db);
+    multi_fork.switch_fork(ForkId::PostTx, &mut journaled_state.clone(), &journaled_state).unwrap();
     let context = InnerEvmContext::new(&mut multi_fork);
 
     // Call the target function and catch any panics
