@@ -1,5 +1,8 @@
 #![no_main]
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{
+    SolCall,
+    SolValue
+};
 use assertion_executor::{
     db::{
         overlay::test_utils::MockDb,
@@ -20,10 +23,19 @@ use libfuzzer_sys::fuzz_target;
 use revm::{
     interpreter::CallInputs,
     InnerEvmContext,
+    DatabaseRef,
 };
 
+/// Struct that returns generated call input params so we can querry them
+/// for validity
+#[derive(Debug, Default)]
+struct CallInputParams {
+    target: Address,
+    slot: U256,
+}
+
 // Helper to create CallInputs from fuzzer data
-fn create_call_inputs(data: &[u8]) -> CallInputs {
+fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
     // Need at least enough bytes for target address + slot
     if data.len() < 52 {
         let tx_env = revm::primitives::TxEnv {
@@ -34,7 +46,7 @@ fn create_call_inputs(data: &[u8]) -> CallInputs {
             transact_to: revm::primitives::TxKind::Call(Address::default()),
             ..Default::default()
         };
-        return CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs");
+        return (CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs"), CallInputParams::default());
     }
 
     // Extract target address (20 bytes)
@@ -51,6 +63,11 @@ fn create_call_inputs(data: &[u8]) -> CallInputs {
     let call = loadCall {
         target: target_address,
         slot: slot.into(),
+    };
+
+    let call_input_params = CallInputParams {
+        target: call.target,
+        slot: call.slot.into(),
     };
 
     // Encode the call
@@ -92,7 +109,8 @@ fn create_call_inputs(data: &[u8]) -> CallInputs {
         ..Default::default()
     };
 
-    CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs")
+    (CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs"), call_input_params)
+
 }
 
 // The fuzz target definition for libFuzzer
@@ -103,17 +121,27 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Create call inputs from fuzzer data
-    let call_inputs = create_call_inputs(data);
+    let (call_inputs, params) = create_call_inputs(data);
+
+    let mut post_tx_db = MockDb::new();
+    post_tx_db.insert_storage(params.target, params.slot, U256::from(0xdeadbeefu32 as u32));
+    let slot_value = post_tx_db.storage_ref(params.target, params.slot).unwrap();
 
     // Create a minimally viable context
-    let mut multi_fork = MultiForkDb::new(MockDb::new(), MockDb::new());
+    let mut multi_fork = MultiForkDb::new(MockDb::new(), post_tx_db);
     let context = InnerEvmContext::new(&mut multi_fork);
 
     // Call the target function and catch any panics
     let _ = std::panic::catch_unwind(|| {
         match load_external_slot(&context, &call_inputs) {
-            Ok(_) => (),  // Function completed successfully
-            Err(_) => (), // Function returned an error
+            Ok(rax) => {
+                // Check if the result is valid
+                assert_eq!(rax, SolValue::abi_encode(&slot_value));
+            },
+            Err(err) => {
+                // Handle the error case
+                assert!(false, "Error loading external slot: {:?}", err);
+            },
         }
     });
 });
