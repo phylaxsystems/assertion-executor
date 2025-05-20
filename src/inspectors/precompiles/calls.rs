@@ -18,7 +18,7 @@ pub enum GetCallInputsError {
     InvalidInputLength(usize),
 }
 
-/// Returns a storage slot for a given address. Will return `0x0` if slot empty.
+/// Returns the call inputs of a transaction.
 pub fn get_call_inputs(
     inputs: &CallInputs,
     context: &PhEvmContext,

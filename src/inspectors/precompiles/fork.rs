@@ -16,6 +16,7 @@ use revm::{
     InnerEvmContext,
 };
 
+/// Fork to the state before the transaction.
 pub fn fork_pre_state(
     init_journaled_state: &JournaledState,
     context: &mut EvmContext<&mut MultiForkDb<impl DatabaseRef>>,
@@ -30,6 +31,7 @@ pub fn fork_pre_state(
     Ok(Bytes::default())
 }
 
+/// Fork to the state after the transaction.
 pub fn fork_post_state(
     init_journaled_state: &JournaledState,
     context: &mut EvmContext<&mut MultiForkDb<impl DatabaseRef>>,

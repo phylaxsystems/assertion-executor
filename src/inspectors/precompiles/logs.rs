@@ -7,6 +7,7 @@ use crate::{
 use alloy_sol_types::SolType;
 use std::convert::Infallible;
 
+/// Get the log outputs.
 pub fn get_logs(context: &PhEvmContext) -> Result<Bytes, Infallible> {
     let sol_logs: Vec<PhEvm::Log> = context
         .logs_and_traces

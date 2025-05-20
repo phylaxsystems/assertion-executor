@@ -5,6 +5,10 @@
 //! the precompile implementations can be found as follows:
 //!
 //! - `load`: Loads storage from any account.
+//! - `calls`: Returns the call inputs of a transaction.
+//! - `fork`: Forks to pre and post tx states.
+//! - `logs`: Returns the logs of a transaction.
+//! - `state_changes`: Returns the state changes of a transaction.
 
 pub mod assertion_adopter;
 pub mod calls;
