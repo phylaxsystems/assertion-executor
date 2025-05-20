@@ -1,6 +1,6 @@
 mod phevm;
 mod precompiles;
-mod sol_primitives;
+pub mod sol_primitives;
 mod tracer;
 mod trigger_recorder;
 
