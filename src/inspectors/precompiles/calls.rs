@@ -43,6 +43,7 @@ pub fn get_call_inputs(
         .call_inputs
         .get(&(target, selector))
         .unwrap_or(&binding);
+    panic!("inputs: {:#?}", inputs);
 
     let sol_call_inputs: Vec<PhEvm::CallInputs> = call_inputs
         .iter()
@@ -57,6 +58,7 @@ pub fn get_call_inputs(
             }
         })
         .collect();
+
 
     let encoded: Bytes =
         <alloy_sol_types::sol_data::Array<PhEvm::CallInputs>>::abi_encode(&sol_call_inputs).into();

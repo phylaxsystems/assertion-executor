@@ -24,3 +24,10 @@ path = "fuzz_targets/load_external_slot_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "calls_fuzz"
+path = "fuzz_targets/calls_fuzz.rs"
+test = false
+doc = false
+bench = false

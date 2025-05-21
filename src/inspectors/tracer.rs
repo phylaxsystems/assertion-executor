@@ -37,7 +37,7 @@ impl CallTracer {
         Self::default()
     }
 
-    fn record_call(&mut self, mut inputs: CallInputs) {
+    pub fn record_call(&mut self, mut inputs: CallInputs) {
         // If the input is at least 4 bytes long, use the first 4 bytes as the selector
         // Otherwise, use 0x00000000 as the default selector
         // Note: It doesn't mean that the selector is a valid function selector of the target contract
