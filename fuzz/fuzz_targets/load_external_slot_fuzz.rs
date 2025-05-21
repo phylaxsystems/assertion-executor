@@ -39,7 +39,7 @@ struct CallInputParams {
     slot: U256,
 }
 
-// Helper to create CallInputs from fuzzer data
+/// Helper to create CallInputs from fuzzer data
 fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
     // Need at least enough bytes for target address + slot
     if data.len() < 52 {
@@ -71,8 +71,8 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
     };
 
     let call_input_params = CallInputParams {
-        target: call.target,
-        slot: call.slot.into(),
+        target: target_address,
+        slot: slot.into(),
     };
 
     // Encode the call
@@ -121,7 +121,7 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
 // The fuzz target definition for libFuzzer
 fuzz_target!(|data: &[u8]| {
     // Need at least some minimum amount of data
-    if data.len() < 32 {
+    if data.len() < 53 {
         return;
     }
 
@@ -143,8 +143,9 @@ fuzz_target!(|data: &[u8]| {
     let _ = std::panic::catch_unwind(|| {
         match load_external_slot(&context, &call_inputs) {
             Ok(rax) => {
+                let bytes: Bytes = SolValue::abi_encode(&slot_value).into();
                 // Check if the result is valid
-                assert_eq!(rax, SolValue::abi_encode(&slot_value));
+                assert_eq!(rax, bytes);
             },
             Err(err) => {
                 // Handle the error case
