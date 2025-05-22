@@ -22,6 +22,7 @@
           buildInputs = with pkgs; [
             pkg-config
             cargo-flamegraph
+            cargo-fuzz
             cargo-tarpaulin
             lldb
             (rust-bin.nightly.latest.default.override {
