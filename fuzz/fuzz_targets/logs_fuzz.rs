@@ -1,4 +1,6 @@
 #![no_main]
+use alloy_sol_types::SolType;
+use assertion_executor::inspectors::sol_primitives::PhEvm;
 use alloy_primitives::FixedBytes;
 use alloy_primitives::{
     Log,
@@ -143,22 +145,36 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    // Create call inputs from fuzzer data
-    let (call_inputs, _) = create_call_inputs(data);
-
+    // Create a log from fuzzer data
+    let log = create_log(data);
+    
     // Create a minimally viable context
-    let log_array: &[Log] = &[create_log(data)];
+    let log_array: &[Log] = &[log.clone()];
     let mut call_tracer = CallTracer::default();
+    let (call_inputs, _) = create_call_inputs(data);
     call_tracer.record_call(call_inputs);
     let context = PhEvmContext::new(log_array, &call_tracer);
 
     // Call the target function and catch any panics
     let _ = std::panic::catch_unwind(|| {
         match get_logs(&context) {
-            Ok(rax) => {}
-            Err(err) => {
-                // Handle the error case
-                panic!("Error loading external slot: {err:?}");
+            Ok(rax) => {
+                // Create the expected encoding - we need to match exactly what's returned
+                let expected_log = PhEvm::Log {
+                    topics: log.topics().to_vec(),
+                    data: log.data.data.clone(),
+                    emitter: log.address,
+                };
+                let expected_logs = vec![expected_log];
+                let expected: Bytes =
+                    <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_encode(&expected_logs).into();
+                
+                // Verify the encoding matches exactly
+                assert_eq!(rax, expected, "Encoded logs don't match expected value");
+            },
+            Err(_) => {
+                // This should never happen since the function returns Infallible
+                panic!("Error getting logs - this should never happen with Infallible error type");
             }
         }
     });
