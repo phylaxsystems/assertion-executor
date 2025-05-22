@@ -59,7 +59,6 @@ pub fn get_call_inputs(
         })
         .collect();
 
-
     let encoded: Bytes =
         <alloy_sol_types::sol_data::Array<PhEvm::CallInputs>>::abi_encode(&sol_call_inputs).into();
 

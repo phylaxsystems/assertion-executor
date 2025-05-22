@@ -1,13 +1,13 @@
 #![no_main]
 use alloy_sol_types::{
     SolCall,
-    SolValue
+    SolValue,
 };
 use assertion_executor::{
     db::{
+        multi_fork_db::ForkId,
         overlay::test_utils::MockDb,
         MultiForkDb,
-        multi_fork_db::ForkId,
     },
     inspectors::{
         precompiles::load::load_external_slot,
@@ -15,10 +15,10 @@ use assertion_executor::{
     },
     primitives::{
         Address,
-        JournaledState,
         Bytes,
-        U256,
+        JournaledState,
         SpecId,
+        U256,
     },
 };
 use libfuzzer_sys::fuzz_target;
@@ -27,8 +27,8 @@ use alloy_primitives::map::HashSet;
 
 use revm::{
     interpreter::CallInputs,
-    InnerEvmContext,
     DatabaseRef,
+    InnerEvmContext,
 };
 
 /// Struct that returns generated call input params so we can querry them
@@ -51,7 +51,10 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
             transact_to: revm::primitives::TxKind::Call(Address::default()),
             ..Default::default()
         };
-        return (CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs"), CallInputParams::default());
+        return (
+            CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs"),
+            CallInputParams::default(),
+        );
     }
 
     // Extract target address (20 bytes)
@@ -72,7 +75,7 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
 
     let call_input_params = CallInputParams {
         target: target_address,
-        slot: slot.into(),
+        slot,
     };
 
     // Encode the call
@@ -114,8 +117,10 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
         ..Default::default()
     };
 
-    (CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs"), call_input_params)
-
+    (
+        CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs"),
+        call_input_params,
+    )
 }
 
 // The fuzz target definition for libFuzzer
@@ -129,14 +134,20 @@ fuzz_target!(|data: &[u8]| {
     let (call_inputs, params) = create_call_inputs(data);
 
     let mut post_tx_db = MockDb::new();
-    post_tx_db.insert_storage(params.target, params.slot, U256::from(0xdeadbeefu32 as u32));
+    post_tx_db.insert_storage(params.target, params.slot, U256::from(0xdeadbeef_u32));
     let slot_value = post_tx_db.storage_ref(params.target, params.slot).unwrap();
 
     let journaled_state = JournaledState::new(SpecId::default(), HashSet::default());
 
     // Create a minimally viable context
     let mut multi_fork = MultiForkDb::new(MockDb::new(), post_tx_db);
-    multi_fork.switch_fork(ForkId::PostTx, &mut journaled_state.clone(), &journaled_state).unwrap();
+    multi_fork
+        .switch_fork(
+            ForkId::PostTx,
+            &mut journaled_state.clone(),
+            &journaled_state,
+        )
+        .unwrap();
     let context = InnerEvmContext::new(&mut multi_fork);
 
     // Call the target function and catch any panics
@@ -146,11 +157,11 @@ fuzz_target!(|data: &[u8]| {
                 let bytes: Bytes = SolValue::abi_encode(&slot_value).into();
                 // Check if the result is valid
                 assert_eq!(rax, bytes);
-            },
+            }
             Err(err) => {
                 // Handle the error case
-                assert!(false, "Error loading external slot: {:?}", err);
-            },
+                panic!("Error loading external slot: {err}");
+            }
         }
     });
 });

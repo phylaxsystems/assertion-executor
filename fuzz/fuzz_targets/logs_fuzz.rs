@@ -4,11 +4,9 @@ use alloy_primitives::{
     Log,
     LogData,
 };
+use alloy_sol_types::SolCall;
 use assertion_executor::inspectors::CallTracer;
 use assertion_executor::inspectors::PhEvmContext;
-use alloy_sol_types::{
-    SolCall,
-};
 use assertion_executor::{
     inspectors::{
         precompiles::logs::get_logs,
@@ -22,14 +20,12 @@ use assertion_executor::{
 };
 use libfuzzer_sys::fuzz_target;
 
-
-use revm::{
-    interpreter::CallInputs,
-};
+use revm::interpreter::CallInputs;
 
 /// Struct that returns generated call input params so we can querry them
 /// for validity
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct CallInputParams {
     target: Address,
     slot: U256,
@@ -47,7 +43,10 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
             transact_to: revm::primitives::TxKind::Call(Address::default()),
             ..Default::default()
         };
-        return (CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs"), CallInputParams::default());
+        return (
+            CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs"),
+            CallInputParams::default(),
+        );
     }
 
     // Extract target address (20 bytes)
@@ -68,7 +67,7 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
 
     let call_input_params = CallInputParams {
         target: target_address,
-        slot: slot.into(),
+        slot,
     };
 
     // Encode the call
@@ -110,8 +109,10 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
         ..Default::default()
     };
 
-    (CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs"), call_input_params)
-
+    (
+        CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs"),
+        call_input_params,
+    )
 }
 
 fn create_log(data: &[u8]) -> Log {
@@ -124,7 +125,10 @@ fn create_log(data: &[u8]) -> Log {
     // Now create data with the rest
     let topic = &data[20..52];
 
-    let log_data = LogData::new_unchecked(vec![FixedBytes::<32>::from_slice(topic)], Bytes::copy_from_slice(&data[52..]));
+    let log_data = LogData::new_unchecked(
+        vec![FixedBytes::<32>::from_slice(topic)],
+        Bytes::copy_from_slice(&data[52..]),
+    );
 
     Log {
         data: log_data,
@@ -151,13 +155,11 @@ fuzz_target!(|data: &[u8]| {
     // Call the target function and catch any panics
     let _ = std::panic::catch_unwind(|| {
         match get_logs(&context) {
-            Ok(rax) => {
-
-            },
+            Ok(rax) => {}
             Err(err) => {
                 // Handle the error case
-                assert!(false, "Error loading external slot: {:?}", err);
-            },
+                panic!("Error loading external slot: {err:?}");
+            }
         }
     });
 });

@@ -1,13 +1,13 @@
 #![no_main]
 use alloy_primitives::FixedBytes;
-use assertion_executor::inspectors::sol_primitives::PhEvm;
 use alloy_primitives::Log;
-use assertion_executor::inspectors::CallTracer;
-use assertion_executor::inspectors::PhEvmContext;
 use alloy_sol_types::{
     SolCall,
     SolType,
 };
+use assertion_executor::inspectors::sol_primitives::PhEvm;
+use assertion_executor::inspectors::CallTracer;
+use assertion_executor::inspectors::PhEvmContext;
 use assertion_executor::{
     inspectors::{
         precompiles::calls::get_call_inputs,
@@ -20,7 +20,6 @@ use assertion_executor::{
     },
 };
 use libfuzzer_sys::fuzz_target;
-
 
 use revm::interpreter::{
     CallInputs,
@@ -48,7 +47,10 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
             transact_to: revm::primitives::TxKind::Call(Address::default()),
             ..Default::default()
         };
-        return (CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs"), CallInputParams::default());
+        return (
+            CallInputs::new(&tx_env, 100_000).expect("Unable to create default CallInputs"),
+            CallInputParams::default(),
+        );
     }
 
     // Extract target address (20 bytes)
@@ -69,7 +71,7 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
 
     let call_input_params = CallInputParams {
         target: target_address,
-        slot: slot.into(),
+        slot,
     };
 
     // Encode the call
@@ -111,8 +113,10 @@ fn create_call_inputs(data: &[u8]) -> (CallInputs, CallInputParams) {
         ..Default::default()
     };
 
-    (CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs"), call_input_params)
-
+    (
+        CallInputs::new(&tx_env, gas_limit).expect("Unable to create CallInputs"),
+        call_input_params,
+    )
 }
 
 // The fuzz target definition for libFuzzer
@@ -135,27 +139,27 @@ fuzz_target!(|data: &[u8]| {
     // Create a minimally viable context
     let log_array: &[Log] = &[];
     let mut call_tracer = CallTracer::default();
-    
+
     // Store the original call input in the tracer (WITH the selector)
     call_tracer.record_call(call_inputs.clone());
     let context = PhEvmContext::new(log_array, &call_tracer);
 
     // Create a precompile call input with the target and selector
     let mut precompile_input = Vec::with_capacity(68);
-    
+
     // Precompile function selector (4 bytes)
     precompile_input.extend_from_slice(&[0x12, 0x34, 0x56, 0x78]);
-    
+
     // First parameter: target address (padded to 32 bytes)
     let mut param1 = [0u8; 32];
     param1[12..32].copy_from_slice(params.target.as_slice());
     precompile_input.extend_from_slice(&param1);
-    
+
     // Second parameter: selector (padded to 32 bytes)
     let mut param2 = [0u8; 32];
     param2[28..32].copy_from_slice(&selector[..]);
     precompile_input.extend_from_slice(&param2);
-    
+
     let precompile_call = CallInputs {
         input: Bytes::from(precompile_input),
         return_memory_offset: 0..0,
@@ -173,7 +177,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = std::panic::catch_unwind(|| {
         match get_call_inputs(&precompile_call, &context) {
             Ok(rax) => {
-                // IMPORTANT: Create the expected encoding with the FULL input 
+                // IMPORTANT: Create the expected encoding with the FULL input
                 // (including selector + potentially some prefix bytes)
                 let inputs = PhEvm::CallInputs {
                     caller: call_inputs.caller,
@@ -185,12 +189,13 @@ fuzz_target!(|data: &[u8]| {
                 };
                 let inputs = vec![inputs];
                 let encoded: Bytes =
-                    <alloy_sol_types::sol_data::Array<PhEvm::CallInputs>>::abi_encode(&inputs).into();
+                    <alloy_sol_types::sol_data::Array<PhEvm::CallInputs>>::abi_encode(&inputs)
+                        .into();
                 assert_eq!(rax, encoded);
-            },
+            }
             Err(err) => {
-                assert!(false, "Error loading external call inputs: {:?}", err);
-            },
+                panic!("Error loading external call inputs: {err}");
+            }
         }
     });
 });
