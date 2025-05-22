@@ -1,22 +1,22 @@
 # Build the binary
 build:
-	cargo build --verbose --release
+	cargo +nightly build  --release
 
 # Build the contract mocks and run the rust tests
 test:
-	forge build --root contract-mocks && cargo test --verbose
+	forge build --root contract-mocks && cargo +nightly test
 
 # Build the contract mocks and run the rust tests using the optimism feature flag
 test-optimism:
-	forge build --root contract-mocks && cargo test --verbose --features optimism
+	forge build --root contract-mocks && cargo +nightly test --features optimism
 
 # Validate formatting
 format:
-	cargo fmt --check
+	cargo +nightly fmt --check
 
 # Errors if there is a warning with clippy
 lint:
-	cargo clippy  -- -D warnings
+	cargo +nightly clippy  -- -D warnings
 
 # Run foundry tests against the contract mocks
 test-mocks:
@@ -24,4 +24,4 @@ test-mocks:
 
 # Can be used as a manual pre-commit check
 pre-commit:
-	cargo fmt && make lint
+	cargo +nightly fmt && make lint

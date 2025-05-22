@@ -69,10 +69,6 @@ assertion-da-server = { git = "ssh://git@github.com/phylaxsystems/assertion-da.g
 criterion = { version = "0.5.1" }
 bollard = "0.18"
 
-[[bin]]
-name = "demo"
-required-features = ["test"]
-
 [[bench]]
 name = "worst-case-op"
 required-features = ["test"]
