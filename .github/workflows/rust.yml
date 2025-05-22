@@ -14,7 +14,7 @@ jobs:
       require-lockfile: true
       install-foundry: true
       dind: true
-      submodules: 'recursive'
+      submodules: true
       requires-private-deps: true
       foundry-command: 'forge build --root contract-mocks'
       # [""] means default features
