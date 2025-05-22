@@ -37,13 +37,13 @@ pub fn get_call_inputs(
     // Extract selector from second parameter (skip 28 bytes padding)
     let selector = FixedBytes::from_slice(&input_data[32..36]);
     let binding = Vec::new();
+    // panic!("context: {:#?}\ntarget: {:?}\nselector {:?}", context, target, selector);
     let call_inputs = context
         .logs_and_traces
         .call_traces
         .call_inputs
         .get(&(target, selector))
         .unwrap_or(&binding);
-    panic!("inputs: {:#?}", inputs);
 
     let sol_call_inputs: Vec<PhEvm::CallInputs> = call_inputs
         .iter()

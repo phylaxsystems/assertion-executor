@@ -39,5 +39,16 @@ This repository contains the following primary components:
 [`fork-db`]: https://github.com/phylaxsystems/assertion-executor/blob/main/src/db/fork_db.rs
 [`phevm`]: https://github.com/phylaxsystems/assertion-executor/blob/main/src/inspectors/phevm.rs
 
+## Fuzz testing
+
+This repo contains fuzz tests for the executor precompiles/cheatcodes. To run them you need to install `cargo-fuzz`.
+With `cargo-fuzz` they can be ran with:
+```bash
+cargo fuzz run logs_fuzz -- -max_len=200
+```
+From the top level assertion executor folder.
+
+To view available fuzz tests see the `./fuzz/fuzz_targets` folder.
+
 ## Supported Rust Versions (MSRV)
 Currently this library requires nightly rust. 

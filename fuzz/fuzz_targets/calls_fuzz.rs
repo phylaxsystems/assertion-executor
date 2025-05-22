@@ -1,4 +1,5 @@
 #![no_main]
+use alloy_primitives::FixedBytes;
 use assertion_executor::inspectors::sol_primitives::PhEvm;
 use alloy_primitives::Log;
 use assertion_executor::inspectors::CallTracer;
@@ -21,7 +22,10 @@ use assertion_executor::{
 use libfuzzer_sys::fuzz_target;
 
 
-use revm::interpreter::CallInputs;
+use revm::interpreter::{
+    CallInputs,
+    CallScheme,
+};
 
 /// Struct that returns generated call input params so we can querry them
 /// for validity
@@ -119,25 +123,81 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Create call inputs from fuzzer data
-    let (call_inputs, _) = create_call_inputs(data);
+    let (call_inputs, params) = create_call_inputs(data);
 
     // Create a minimally viable context
     let log_array: &[Log] = &[];
     let mut call_tracer = CallTracer::default();
-    call_tracer.record_call(call_inputs.clone());
+    
+    // Explicitly create a call input with the correct selector for the context
+    let selector_bytes = if data.len() >= 28 {
+        let mut sel = [0u8; 4];
+        sel.copy_from_slice(&data[24..28]); // Use 4 bytes for selector
+        FixedBytes::from(sel)
+    } else {
+        FixedBytes::default()
+    };
+    
+    // Create a properly formatted input for the CallTracer
+    let target_call_input = CallInputs {
+        // Use the selector as the first 4 bytes of input
+        input: Bytes::from([&selector_bytes[..], &call_inputs.input[..]].concat()),
+        return_memory_offset: 0..0,
+        gas_limit: call_inputs.gas_limit,
+        bytecode_address: params.target,
+        target_address: params.target,
+        caller: call_inputs.caller,
+        value: call_inputs.value.clone(),
+        is_static: false,
+        is_eof: false,
+        scheme: CallScheme::Call,
+    };
+    
+    call_tracer.record_call(target_call_input.clone());
     let context = PhEvmContext::new(log_array, &call_tracer);
 
-    // Call the target function and catch any panics
+    // Modify the call_inputs to include the selector in the expected position
+    // in the input data for get_call_inputs
+    let mut precompile_input = Vec::with_capacity(68); // 4 bytes selector + 64 bytes params
+    
+    // Precompile selector (can be any 4 bytes)
+    precompile_input.extend_from_slice(&[0x12, 0x34, 0x56, 0x78]);
+    
+    // First parameter: target address (padded to 32 bytes)
+    let mut param1 = [0u8; 32];
+    let target_bytes = params.target.as_slice();
+    param1[12..32].copy_from_slice(target_bytes);
+    precompile_input.extend_from_slice(&param1);
+    
+    // Second parameter: selector (padded to 32 bytes)
+    let mut param2 = [0u8; 32];
+    param2[0..4].copy_from_slice(&selector_bytes[..]);
+    precompile_input.extend_from_slice(&param2);
+    
+    let precompile_call = CallInputs {
+        input: Bytes::from(precompile_input),
+        return_memory_offset: 0..0,
+        gas_limit: call_inputs.gas_limit,
+        bytecode_address: Address::default(),
+        target_address: Address::default(),
+        caller: call_inputs.caller,
+        value: call_inputs.value,
+        is_static: false,
+        is_eof: false,
+        scheme: CallScheme::Call,
+    };
+
+    // Call the target function with the modified inputs
     let _ = std::panic::catch_unwind(|| {
-        match get_call_inputs(&call_inputs, &context) {
+        match get_call_inputs(&precompile_call, &context) {
             Ok(rax) => {
                 let inputs = PhEvm::CallInputs {
-                    caller: call_inputs.caller,
-                    gas_limit: call_inputs.gas_limit,
-                    bytecode_address: call_inputs.target_address,
-                    input: call_inputs.input,
-                    target_address: call_inputs.target_address,
-                    value: call_inputs.value.get(),
+                    caller: target_call_input.caller,
+                    gas_limit: target_call_input.gas_limit,
+                    bytecode_address: target_call_input.bytecode_address,
+                    input: target_call_input.input.clone(), 
+                    target_address: target_call_input.target_address,
+                    value: target_call_input.value.get(),
                 };
                 let inputs = vec![inputs];
                 let encoded: Bytes =
@@ -145,7 +205,6 @@ fuzz_target!(|data: &[u8]| {
                 assert_eq!(rax, encoded);
             },
             Err(err) => {
-                // Handle the error case
                 assert!(false, "Error loading external slot: {:?}", err);
             },
         }
