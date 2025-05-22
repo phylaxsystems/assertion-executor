@@ -24,6 +24,7 @@ use crate::{
     error::ExecutorError,
     inspectors::{
         CallTracer,
+        LogsAndTraces,
         PhEvmContext,
         PhEvmInspector,
     },
@@ -156,9 +157,12 @@ where
         trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
 
-        let context = PhEvmContext::new(result_and_state.result.logs(), &tx_traces);
+        let logs_and_traces = LogsAndTraces {
+            tx_logs: result_and_state.result.logs(),
+            call_traces: &tx_traces,
+        };
 
-        let results = self.execute_assertions(block_env, multi_fork_db, &context)?;
+        let results = self.execute_assertions(block_env, multi_fork_db, logs_and_traces)?;
 
         trace!(
             target: "assertion-executor::validation",
@@ -181,30 +185,35 @@ where
         &'a self,
         block_env: BlockEnv,
         multi_fork_db: MultiForkDb<ForkDb<Active>>,
-        context: &PhEvmContext<'a>,
+        logs_and_traces: LogsAndTraces<'a>,
     ) -> ExecutorResult<Vec<AssertionContractExecution>, DB>
     where
         Active: DatabaseRef + Sync + Send,
         Active::Error: Debug,
     {
-        let assertions = self.store.read(context.call_traces, block_env.number)?;
+        let assertions = self
+            .store
+            .read(logs_and_traces.call_traces, block_env.number)?;
 
         trace!(
             target: "assertion-executor::execute_assertions",
             assertion_count = assertions.len(),
-            assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.0.id)).collect::<Vec<_>>(),
+            assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.assertion_contract.id)).collect::<Vec<_>>(),
             "Retrieved Assertion contracts from Assertion store"
         );
         let results: ExecutorResult<Vec<AssertionContractExecution>, DB> = assertions
             .into_par_iter()
             .map(
-                move |(assertion_contract, fn_selectors)| -> ExecutorResult<AssertionContractExecution, DB> {
+                move |assertion_for_execution| -> ExecutorResult<AssertionContractExecution, DB> {
+                    let phevm_context =
+                        PhEvmContext::new(&logs_and_traces, assertion_for_execution.adopter);
+
                     self.run_assertion_contract(
-                        &assertion_contract,
-                        &fn_selectors,
+                        &assertion_for_execution.assertion_contract,
+                        &assertion_for_execution.selectors,
                         block_env.clone(),
                         multi_fork_db.clone(),
-                        context,
+                        &phevm_context,
                     )
                 },
             )

@@ -55,6 +55,9 @@ sol! {
 
         // Get state changes for a given contract and storage slot.
         function getStateChanges(address contractAddress, bytes32 slot) external returns (bytes32[] memory);
+
+        // Get assertion adopter contract address associated with the assertion triggering transaction.
+        function getAssertionAdopter() external view returns (address);
     }
 
     #[derive(Debug)]

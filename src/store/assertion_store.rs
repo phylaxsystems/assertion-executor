@@ -54,6 +54,15 @@ pub enum AssertionStoreError {
     BlockNumberExceedsU64,
 }
 
+/// Struct representing an assertion contract, matched fn selectors, and the adopter.
+/// This is necessary context when running assertions.
+#[derive(Debug, Clone)]
+pub struct AssertionsForExecution {
+    pub assertion_contract: AssertionContract,
+    pub selectors: Vec<FixedBytes<4>>,
+    pub adopter: Address,
+}
+
 /// Struct representing a pending assertion modification that has not passed the timelock.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct AssertionState {
@@ -174,7 +183,7 @@ impl AssertionStore {
         &self,
         traces: &CallTracer,
         block_num: U256,
-    ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
+    ) -> Result<Vec<AssertionsForExecution>, AssertionStoreError> {
         let block_num = block_num
             .try_into()
             .map_err(|_| AssertionStoreError::BlockNumberExceedsU64)?;
@@ -182,7 +191,18 @@ impl AssertionStore {
         let mut assertions = Vec::new();
         for (contract_address, triggers) in traces.triggers() {
             let contract_assertions = self.read_adopter(contract_address, triggers, block_num)?;
-            assertions.extend(contract_assertions);
+            let assertions_for_execution: Vec<AssertionsForExecution> = contract_assertions
+                .into_iter()
+                .map(|(assertion_contract, selectors)| {
+                    AssertionsForExecution {
+                        assertion_contract,
+                        selectors,
+                        adopter: contract_address,
+                    }
+                })
+                .collect();
+
+            assertions.extend(assertions_for_execution);
         }
         debug!(target: "assertion-executor::assertion_store", assertions=?assertions, triggers=?traces.triggers(), "Assertions found based on triggers");
         Ok(assertions)
@@ -490,7 +510,7 @@ mod tests {
         // Read at block 150 (should be active)
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].0.id, assertion_contract_id);
+        assert_eq!(assertions[0].assertion_contract.id, assertion_contract_id);
 
         // Read at block 50 (should be inactive)
         let assertions = store.read(&tracer, U256::from(50))?;
@@ -518,7 +538,10 @@ mod tests {
         // Read at block 150 (should see first assertion only)
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].0.id, mod1.assertion_contract_id());
+        assert_eq!(
+            assertions[0].assertion_contract.id,
+            mod1.assertion_contract_id()
+        );
 
         // Read at block 250 (should see both assertions)
         let assertions = store.read(&tracer, U256::from(250))?;
@@ -588,7 +611,10 @@ mod tests {
         // Should only see one assertion
         let assertions = store.read(&tracer, U256::from(150))?;
         assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].0.id, mod1.assertion_contract_id());
+        assert_eq!(
+            assertions[0].assertion_contract.id,
+            mod1.assertion_contract_id()
+        );
 
         Ok(())
     }
@@ -645,7 +671,7 @@ mod tests {
         recorded_triggers: Vec<(TriggerType, HashSet<FixedBytes<4>>)>,
         journal_entries: Vec<JournalEntry>,
         assertion_adopter: Address,
-    ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
+    ) -> Result<Vec<AssertionsForExecution>, AssertionStoreError> {
         let store = AssertionStore::new_ephemeral()?;
         let mut trigger_recorder = TriggerRecorder::default();
 
@@ -716,7 +742,7 @@ mod tests {
 
         let assertions = setup_and_match(recorded_triggers, journal_entries, aa)?;
         assert_eq!(assertions.len(), 1);
-        let mut matched_selectors = assertions[0].1.clone();
+        let mut matched_selectors = assertions[0].selectors.clone();
         matched_selectors.sort();
         assert_eq!(matched_selectors, expected_selectors);
 
@@ -777,7 +803,7 @@ mod tests {
 
         let assertions = setup_and_match(recorded_triggers, journal_entries, aa)?;
         assert_eq!(assertions.len(), 1);
-        let mut matched_selectors = assertions[0].1.clone();
+        let mut matched_selectors = assertions[0].selectors.clone();
         matched_selectors.sort();
         assert_eq!(matched_selectors, expected_selectors);
 
@@ -821,7 +847,7 @@ mod tests {
 
         let assertions = setup_and_match(recorded_triggers, vec![], aa)?;
         assert_eq!(assertions.len(), 1);
-        let mut matched_selectors = assertions[0].1.clone();
+        let mut matched_selectors = assertions[0].selectors.clone();
         matched_selectors.sort();
         assert_eq!(matched_selectors, expected_selectors);
 

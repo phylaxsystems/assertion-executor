@@ -39,6 +39,7 @@ pub fn get_state_changes(
 ) -> Result<Bytes, GetStateChangesError> {
     let event = PhEvm::getStateChangesCall::abi_decode(&inputs.input, true)?;
     let journaled_state = context
+        .logs_and_traces
         .call_traces
         .journaled_state
         .as_ref()

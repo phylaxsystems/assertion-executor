@@ -9,6 +9,7 @@ use std::convert::Infallible;
 
 pub fn get_logs(context: &PhEvmContext) -> Result<Bytes, Infallible> {
     let sol_logs: Vec<PhEvm::Log> = context
+        .logs_and_traces
         .tx_logs
         .iter()
         .map(|log| {

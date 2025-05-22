@@ -6,6 +6,7 @@
 //!
 //! - `load`: Loads storage from any account.
 
+pub mod assertion_adopter;
 pub mod calls;
 pub mod fork;
 pub mod load;

@@ -9,6 +9,7 @@ use crate::{
     inspectors::{
         inspector_result_to_call_outcome,
         precompiles::{
+            assertion_adopter::get_assertion_adopter,
             calls::{
                 get_call_inputs,
                 GetCallInputsError,
@@ -66,17 +67,23 @@ use alloy_sol_types::SolCall;
 /// address(uint160(uint256(keccak256("Kim Jong Un Sucks"))))
 pub const PRECOMPILE_ADDRESS: Address = address!("4461812e00718ff8D80929E3bF595AEaaa7b881E");
 
-#[derive(Debug)]
-pub struct PhEvmContext<'a> {
+#[derive(Debug, Clone)]
+pub struct LogsAndTraces<'a> {
     pub tx_logs: &'a [Log],
     pub call_traces: &'a CallTracer,
 }
 
+#[derive(Debug)]
+pub struct PhEvmContext<'a> {
+    pub logs_and_traces: &'a LogsAndTraces<'a>,
+    pub adopter: Address,
+}
+
 impl<'a> PhEvmContext<'a> {
-    pub fn new(tx_logs: &'a [Log], call_traces: &'a CallTracer) -> Self {
+    pub fn new(logs_and_traces: &'a LogsAndTraces<'a>, adopter: Address) -> Self {
         Self {
-            tx_logs,
-            call_traces,
+            logs_and_traces,
+            adopter,
         }
     }
 }
@@ -147,6 +154,7 @@ impl<'a> PhEvmInspector<'a> {
             PhEvm::getLogsCall::SELECTOR => get_logs(self.context)?,
             PhEvm::getCallInputsCall::SELECTOR => get_call_inputs(inputs, self.context)?,
             PhEvm::getStateChangesCall::SELECTOR => get_state_changes(inputs, self.context)?,
+            PhEvm::getAssertionAdopterCall::SELECTOR => get_assertion_adopter(self.context)?,
             selector => Err(PrecompileError::SelectorNotFound(selector.into()))?,
         };
 

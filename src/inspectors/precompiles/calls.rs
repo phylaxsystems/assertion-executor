@@ -38,6 +38,7 @@ pub fn get_call_inputs(
     let selector = FixedBytes::from_slice(&input_data[32..36]);
     let binding = Vec::new();
     let call_inputs = context
+        .logs_and_traces
         .call_traces
         .call_inputs
         .get(&(target, selector))

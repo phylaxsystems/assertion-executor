@@ -207,6 +207,7 @@ mod tests {
     use crate::{
         db::MultiForkDb,
         inspectors::{
+            LogsAndTraces,
             PhEvmContext,
             PhEvmInspector,
         },
@@ -295,7 +296,11 @@ mod tests {
         let mut multi_fork_db = MultiForkDb::new(db.clone(), db);
 
         let tracer = CallTracer::default();
-        let phvem_context = PhEvmContext::new(&[], &tracer);
+        let logs_and_traces = LogsAndTraces {
+            tx_logs: &[],
+            call_traces: &tracer,
+        };
+        let phvem_context = PhEvmContext::new(&logs_and_traces, address);
 
         let inspector = PhEvmInspector::new(Default::default(), &mut multi_fork_db, &phvem_context);
 
