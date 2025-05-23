@@ -56,8 +56,8 @@ pub enum FnSelectorExtractorError {
     AssertionContractDeployError(EVMError<Infallible>),
     #[error("Assertion contract deployment failed: {0:?}")]
     AssertionContractDeployFailed(ResultAndState),
-    #[error("No triggers found in assertion contract")]
-    NoTriggersFound,
+    #[error("No triggers recorded in assertion contract")]
+    NoTriggersRecorded,
     #[error("Assertion Contract not found at expected address.")]
     AssertionContractNotFound,
     #[error("Assertion Contract did not contain code at expected address.")]
@@ -148,6 +148,11 @@ pub fn extract_assertion_contract(
         return Err(FnSelectorExtractorError::TriggersCallFailed(
             trigger_call_result,
         ));
+    }
+
+    // If the triggers function does not record any triggers,
+    if evm.context.external.triggers.is_empty() {
+        return Err(FnSelectorExtractorError::NoTriggersRecorded);
     }
 
     let Account {

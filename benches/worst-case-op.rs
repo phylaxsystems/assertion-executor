@@ -1,11 +1,15 @@
 use assertion_executor::{
     build_evm::new_phevm,
     db::{
+        overlay::{
+            test_utils::MockDb,
+            OverlayDb,
+        },
         MultiForkDb,
-        SharedDB,
     },
     inspectors::{
         CallTracer,
+        LogsAndTraces,
         PhEvmContext,
         PhEvmInspector,
     },
@@ -33,7 +37,7 @@ use criterion::{
 use evm_glue::assembler::assemble_minimized;
 use evm_glue::assembly::Asm;
 use evm_glue::opcodes::Opcode::*;
-use revm_19::primitives::HaltReason;
+use revm::primitives::HaltReason;
 use Asm::*;
 
 fn register_op<M: Measurement>(
@@ -44,19 +48,17 @@ fn register_op<M: Measurement>(
 ) {
     let runtime_bytecode = assemble_inf_loop(op);
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
     std::env::set_var("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1");
 
     // Execute the future, blocking the current thread until completion
-    let db = rt.block_on(async move { SharedDB::<64>::new_test().await });
+    let db = OverlayDb::<MockDb>::new_test();
 
     // Insert runtime bytecode into the database
     let mut fork = db.fork();
     let addr = Address::random();
 
     fork.insert_account_info(
-        addr.clone(),
+        addr,
         AccountInfo {
             nonce: 1,
             balance: U256::MAX,
@@ -73,7 +75,11 @@ fn register_op<M: Measurement>(
 
     let mut multi_fork_db = MultiForkDb::new(fork.clone(), fork);
     let call_tracer = CallTracer::default();
-    let phevm_context = PhEvmContext::new(&[], &call_tracer);
+    let logs_and_traces = LogsAndTraces {
+        tx_logs: &[],
+        call_traces: &call_tracer,
+    };
+    let phevm_context = PhEvmContext::new(&logs_and_traces, Default::default());
     let inspector = PhEvmInspector::new(SpecId::default(), &mut multi_fork_db, &phevm_context);
     let mut evm = new_phevm(
         tx_env,
@@ -93,11 +99,11 @@ fn register_op<M: Measurement>(
                 if let HaltReason::OutOfGas(..) = reason {
                     // Expected
                 } else {
-                    panic!("{label}: Unexpected halt reason: {:?}", reason);
+                    panic!("{label}: Unexpected halt reason: {reason:#?}");
                 }
             }
             _ => {
-                panic!("{label}: Unexpected result: {:?}", result.result);
+                panic!("{label}: Unexpected result: {result:#?}");
             }
         }
     } else {
@@ -183,18 +189,16 @@ fn test_ecrecover() {
 
     let (_, runtime_bytecode) = assemble_minimized(&op, true).unwrap();
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
     std::env::set_var("FOUNDRY_DISABLE_NIGHTLY_WARNING", "1");
 
     // Execute the future, blocking the current thread until completion
-    let db = rt.block_on(async move { SharedDB::<64>::new_test().await });
+    let db = OverlayDb::<MockDb>::new_test();
 
     // Insert runtime bytecode into the database
     let mut fork = db.fork();
     let addr = Address::random();
     fork.insert_account_info(
-        addr.clone(),
+        addr,
         AccountInfo {
             nonce: 1,
             balance: U256::MAX,
@@ -211,7 +215,11 @@ fn test_ecrecover() {
 
     let mut multi_fork_db = MultiForkDb::new(fork.clone(), fork);
     let call_tracer = CallTracer::default();
-    let phevm_context = PhEvmContext::new(&[], &call_tracer);
+    let logs_and_traces = LogsAndTraces {
+        tx_logs: &[],
+        call_traces: &call_tracer,
+    };
+    let phevm_context = PhEvmContext::new(&logs_and_traces, Default::default());
     let inspector = PhEvmInspector::new(SpecId::default(), &mut multi_fork_db, &phevm_context);
     let mut evm = new_phevm(
         tx_env,

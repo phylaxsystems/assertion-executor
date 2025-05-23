@@ -20,7 +20,7 @@ clap = { version = "4.4.3", features = ["derive"] }
 
 # ETH deps
 alloy = "0.11.1"
-alloy-provider = { version = "0.11.1", features = ["ws", "anvil-node"] }
+alloy-provider = { version = "0.11.1", features = ["ws", "anvil-node", "trace-api", "debug-api"] }
 alloy-sol-types = "0.8.3"
 alloy-consensus = { version = "0.11.1", features = ["k256"] }
 alloy-rpc-types = "0.11.1"
@@ -40,12 +40,13 @@ reth-primitives = { git = "https://github.com/paradigmxyz/reth.git", tag = "v1.2
 
 # Test deps
 serde_json = { optional = true, version = "1.0.133" }
-rand = { version = "0.9.0", optional = true }
+rand = { version = "0.8.0", optional = true }
 jsonrpsee = { version = "0.24.7", features = ["client", "http-client", "server"] }
 tokio-util = "0.7.13"
 evm-glue = { git = "https://git@github.com/Philogy/evm-glue.git", version = "0.1.0" }
 moka = { version = "0.12.10", features = ["sync"] }
 enum-as-inner = "0.6.1"
+url = "2.5.4"
 
 # Maxperf profile for absolute maximum performance
 # Only use for builds that are going to get used by end users
@@ -61,13 +62,16 @@ optimism = ["revm/optimism", "revm/optimism-default-handler"]
 test = ["serde_json", "rand"]
 
 [dev-dependencies]
-rand = "0.9.0"
+rand = "0.8.0"
 serde_json = "1.0.133"
 tempfile = "3.13.0"
 alloy-eip7702 = "0.5.1"
 assertion-da-server = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git", rev = "cc1b26e" }
 criterion = { version = "0.5.1" }
 bollard = "0.18"
+int-test-utils = { git = "https://github.com/phylaxsystems/int-test-utils.git", rev = "2ddaa07" }
+assertion-executor = { path = ".", features = ["test"]}
+futures = "0.3.31"
 
 [[bench]]
 name = "worst-case-op"

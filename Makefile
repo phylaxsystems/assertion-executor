@@ -15,8 +15,8 @@ format:
 	cargo +nightly fmt --check
 
 # Errors if there is a warning with clippy
-lint:
-	cargo +nightly clippy  -- -D warnings
+lint: 
+	cargo clippy --all-targets --workspace --locked  --profile dev -- -D warnings
 
 # Run foundry tests against the contract mocks
 test-mocks:

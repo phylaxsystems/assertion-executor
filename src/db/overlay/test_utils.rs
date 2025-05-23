@@ -35,8 +35,7 @@ impl<Db> OverlayDb<Db> {
 }
 
 #[derive(Debug, Default, Clone)]
-#[allow(dead_code)]
-pub(crate) struct MockDb {
+pub struct MockDb {
     /// Simple storage for account info.
     accounts: HashMap<Address, AccountInfo>,
     /// Simple storage for contract code.

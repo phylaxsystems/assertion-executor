@@ -6,7 +6,7 @@ import {Assertion} from "credible-std/Assertion.sol";
 contract SelectorImpl is Assertion {
     event RunningAssertion(uint256 count);
 
-    function assertCount() public {
+    function assertCount() public pure {
         uint256 count = 0;
 
         if (count > 1) {
@@ -20,15 +20,15 @@ contract SelectorImpl is Assertion {
         registerCallTrigger(this.assertionBoth.selector);
     }
 
-    function assertionStorage() external returns (bool) {
+    function assertionStorage() external pure returns (bool) {
         return true;
     }
 
-    function assertionEther() external returns (bool) {
+    function assertionEther() external pure returns (bool) {
         return true;
     }
 
-    function assertionBoth() external returns (bool) {
+    function assertionBoth() external pure returns (bool) {
         return true;
     }
 }

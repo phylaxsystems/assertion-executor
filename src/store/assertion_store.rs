@@ -66,10 +66,10 @@ pub struct AssertionsForExecution {
 /// Struct representing a pending assertion modification that has not passed the timelock.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct AssertionState {
-    active_at_block: u64,
-    inactive_at_block: Option<u64>,
-    assertion_contract: AssertionContract,
-    trigger_recorder: TriggerRecorder,
+    pub active_at_block: u64,
+    pub inactive_at_block: Option<u64>,
+    pub assertion_contract: AssertionContract,
+    pub trigger_recorder: TriggerRecorder,
 }
 
 impl AssertionState {
@@ -405,20 +405,26 @@ impl AssertionStore {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test"))]
     pub fn assertion_contract_count(&self, assertion_adopter: Address) -> usize {
+        let assertions = self.get_assertions_for_contract(assertion_adopter);
+        assertions.len()
+    }
+
+    #[cfg(any(test, feature = "test"))]
+    pub fn get_assertions_for_contract(&self, assertion_adopter: Address) -> Vec<AssertionState> {
         let assertions_serialized = self
             .db
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(assertion_adopter)
-            .unwrap();
+            .unwrap_or(None);
 
         if let Some(assertions_serialized) = assertions_serialized {
             let assertions: Vec<AssertionState> = de(&assertions_serialized).unwrap_or_default();
-            assertions.len()
+            assertions
         } else {
-            0
+            vec![]
         }
     }
 }

@@ -301,7 +301,7 @@ impl Indexer {
 
     /// Sync the indexer to the latest block
     #[instrument(skip(self))]
-    async fn sync_to_head(&mut self) -> IndexerResult {
+    pub async fn sync_to_head(&mut self) -> IndexerResult {
         info!(
             target = "assertion_executor::indexer",
             "Syncing indexer to latest block"
