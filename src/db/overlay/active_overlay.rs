@@ -4,6 +4,7 @@ use crate::db::{
         TableKey,
         TableValue,
     },
+    DatabaseCommit,
     NotFoundError,
 };
 use std::{
@@ -66,14 +67,12 @@ impl<Db> ActiveOverlay<Db> {
     }
 
     /// Clears the buffer.
-    #[allow(dead_code)]
-    fn run_pending_tasks(&self) {
+    pub fn run_pending_tasks(&self) {
         self.overlay.run_pending_tasks();
     }
 
     // Helper for tests to check cache presence
-    #[cfg(test)]
-    fn is_cached(&self, key: &TableKey) -> bool {
+    pub fn is_cached(&self, key: &TableKey) -> bool {
         self.overlay.get(key).is_some()
     }
 }
@@ -171,6 +170,57 @@ impl<Db: Database> DatabaseRef for ActiveOverlay<Db> {
             // Found in DB, cache it
             self.overlay.insert(key, TableValue::BlockHash(block_hash));
             Ok(block_hash)
+        }
+    }
+}
+
+/// Implementation of `DatabaseCommit` for `ActiveOverlay`.
+///
+/// This implementation commits EVM state changes only to the overlay cache,
+/// not to the underlying database. This allows temporary state modifications
+/// that can be shared across multiple database instances through the same cache.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use std::cell::UnsafeCell;
+/// use std::sync::Arc;
+///
+/// let active_db = Arc::new(UnsafeCell::new(some_db));
+/// let cache = Cache::new(1024);
+/// let mut active_overlay = ActiveOverlay::new(active_db, cache);
+///
+/// // Commit state changes to the shared cache
+/// active_overlay.commit(state_changes);
+/// ```
+impl<Db> DatabaseCommit for ActiveOverlay<Db> {
+    fn commit(&mut self, changes: revm::primitives::EvmState) {
+        for (address, account) in changes {
+            // Skip untouched accounts
+            if !account.is_touched() {
+                continue;
+            }
+
+            // Update account info in shared cache
+            // This will be visible to the parent OverlayDb and other ActiveOverlays
+            let key = TableKey::Basic(address);
+            self.overlay
+                .insert(key, TableValue::Basic(account.info.clone()));
+
+            // Update codebyhash if the account has code
+            if let Some(code) = &account.info.code {
+                let code_key = TableKey::CodeByHash(account.info.code_hash);
+                self.overlay
+                    .insert(code_key, TableValue::CodeByHash(code.clone()));
+            }
+
+            // Update storage slots in shared cache
+            for (slot, storage_slot) in account.storage {
+                let storage_key = TableKey::Storage(address, slot);
+                let value_b256: B256 = storage_slot.present_value().to_be_bytes().into();
+                self.overlay
+                    .insert(storage_key, TableValue::Storage(value_b256));
+            }
         }
     }
 }
@@ -469,5 +519,254 @@ mod active_overlay_tests {
         assert_eq!(get_mock_db_field!(mock_db2_arc, get_basic_calls), 1); // No new DB calls
 
         assert_eq!(shared_cache.entry_count(), 2);
+    }
+
+    // Test DatabaseCommit implementation
+    #[test]
+    fn test_active_database_commit() {
+        use revm::primitives::{
+            Account,
+            AccountStatus,
+            EvmState,
+            EvmStorageSlot,
+            HashMap,
+        };
+
+        let addr1 = address!("0000000000000000000000000000000000000001");
+        let addr2 = address!("0000000000000000000000000000000000000002");
+
+        let code_bytes = bytes!("608060405260aa8060106000396000f3fe");
+        let code = Bytecode::new_raw(code_bytes.clone());
+        let code_hash = code.hash_slow();
+
+        // Create a mock database
+        let mock_db = MockDb::new();
+        #[allow(clippy::arc_with_non_send_sync)]
+        let mock_db_arc = Arc::new(UnsafeCell::new(mock_db));
+
+        // Create a cache
+        let cache = Cache::new(100);
+
+        // Create the active overlay
+        let mut active_overlay = ActiveOverlay::new(mock_db_arc.clone(), cache.clone());
+
+        // Create accounts with different states
+        let account1 = Account {
+            info: AccountInfo {
+                balance: U256::from(1500),
+                nonce: 3,
+                code_hash,
+                code: Some(code.clone()),
+            },
+            storage: HashMap::from_iter([
+                (U256::from(5), EvmStorageSlot::new(U256::from(500))),
+                (U256::from(6), EvmStorageSlot::new(U256::from(600))),
+            ]),
+            status: AccountStatus::Touched,
+        };
+
+        let account2 = Account {
+            info: AccountInfo {
+                balance: U256::from(2500),
+                nonce: 4,
+                code_hash: b256!(
+                    "0000000000000000000000000000000000000000000000000000000000000000"
+                ),
+                code: None,
+            },
+            storage: HashMap::from_iter([(U256::from(20), EvmStorageSlot::new(U256::from(2000)))]),
+            status: AccountStatus::Touched,
+        };
+
+        // Create an untouched account that should be ignored
+        let account3 = Account {
+            info: AccountInfo {
+                balance: U256::from(3500),
+                nonce: 5,
+                code_hash: b256!(
+                    "0000000000000000000000000000000000000000000000000000000000000000"
+                ),
+                code: None,
+            },
+            storage: HashMap::default(),
+            status: AccountStatus::default(), // Not touched
+        };
+
+        let addr3 = address!("0000000000000000000000000000000000000003");
+
+        let evm_state: EvmState =
+            HashMap::from_iter([(addr1, account1), (addr2, account2), (addr3, account3)]);
+
+        // Initial cache should be empty
+        assert_eq!(cache.entry_count(), 0);
+
+        // Commit the state changes
+        active_overlay.commit(evm_state);
+
+        // Run pending tasks to ensure cache is updated
+        active_overlay.run_pending_tasks();
+
+        // Verify account1's data was committed
+        assert!(active_overlay.is_cached(&TableKey::Basic(addr1)));
+        assert_eq!(
+            active_overlay.basic_ref(addr1).unwrap().unwrap().balance,
+            U256::from(1500)
+        );
+        assert_eq!(active_overlay.basic_ref(addr1).unwrap().unwrap().nonce, 3);
+
+        // Verify code was committed
+        assert!(active_overlay.is_cached(&TableKey::CodeByHash(code_hash)));
+        assert_eq!(
+            active_overlay.code_by_hash_ref(code_hash).unwrap().bytes(),
+            code_bytes
+        );
+
+        // Verify storage was committed
+        assert!(active_overlay.is_cached(&TableKey::Storage(addr1, U256::from(5))));
+        assert!(active_overlay.is_cached(&TableKey::Storage(addr1, U256::from(6))));
+        assert_eq!(
+            active_overlay.storage_ref(addr1, U256::from(5)).unwrap(),
+            U256::from(500)
+        );
+        assert_eq!(
+            active_overlay.storage_ref(addr1, U256::from(6)).unwrap(),
+            U256::from(600)
+        );
+
+        // Verify account2's data was committed
+        assert!(active_overlay.is_cached(&TableKey::Basic(addr2)));
+        assert_eq!(
+            active_overlay.basic_ref(addr2).unwrap().unwrap().balance,
+            U256::from(2500)
+        );
+        assert!(active_overlay.is_cached(&TableKey::Storage(addr2, U256::from(20))));
+        assert_eq!(
+            active_overlay.storage_ref(addr2, U256::from(20)).unwrap(),
+            U256::from(2000)
+        );
+
+        // Verify account3 (untouched) was NOT committed
+        assert!(!active_overlay.is_cached(&TableKey::Basic(addr3)));
+
+        // Verify no underlying DB calls were made
+        assert_eq!(get_mock_db_field!(mock_db_arc, get_basic_calls), 0);
+        assert_eq!(get_mock_db_field!(mock_db_arc, get_storage_calls), 0);
+        assert_eq!(get_mock_db_field!(mock_db_arc, get_code_calls), 0);
+
+        // Verify correct number of cache entries (2 accounts + 1 code + 3 storage slots)
+        assert_eq!(cache.entry_count(), 6);
+    }
+
+    // Test DatabaseCommit with shared cache across multiple overlays
+    #[test]
+    fn test_active_database_commit_shared_cache() {
+        use revm::primitives::{
+            Account,
+            AccountStatus,
+            EvmState,
+            EvmStorageSlot,
+            HashMap,
+        };
+
+        let addr1 = address!("f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1");
+        let addr2 = address!("f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2");
+
+        // Create two mock databases
+        let mock_db1 = MockDb::new();
+        let mock_db2 = MockDb::new();
+        #[allow(clippy::arc_with_non_send_sync)]
+        let mock_db1_arc = Arc::new(UnsafeCell::new(mock_db1));
+        #[allow(clippy::arc_with_non_send_sync)]
+        let mock_db2_arc = Arc::new(UnsafeCell::new(mock_db2));
+
+        // Create a shared cache
+        let shared_cache = Cache::new(100);
+
+        // Create two active overlays sharing the same cache
+        let mut active_overlay1 = ActiveOverlay::new(mock_db1_arc.clone(), shared_cache.clone());
+        let mut active_overlay2 = ActiveOverlay::new(mock_db2_arc.clone(), shared_cache.clone());
+
+        // Create state for overlay1
+        let account1 = Account {
+            info: AccountInfo {
+                balance: U256::from(1000),
+                nonce: 1,
+                code_hash: b256!(
+                    "0000000000000000000000000000000000000000000000000000000000000000"
+                ),
+                code: None,
+            },
+            storage: HashMap::from_iter([(U256::from(1), EvmStorageSlot::new(U256::from(100)))]),
+            status: AccountStatus::Touched,
+        };
+
+        let state1: EvmState = HashMap::from_iter([(addr1, account1)]);
+
+        // Create state for overlay2
+        let account2 = Account {
+            info: AccountInfo {
+                balance: U256::from(2000),
+                nonce: 2,
+                code_hash: b256!(
+                    "0000000000000000000000000000000000000000000000000000000000000000"
+                ),
+                code: None,
+            },
+            storage: HashMap::from_iter([(U256::from(2), EvmStorageSlot::new(U256::from(200)))]),
+            status: AccountStatus::Touched,
+        };
+
+        let state2: EvmState = HashMap::from_iter([(addr2, account2)]);
+
+        // Commit state1 through overlay1
+        active_overlay1.commit(state1);
+        active_overlay1.run_pending_tasks();
+
+        // Commit state2 through overlay2
+        active_overlay2.commit(state2);
+        active_overlay2.run_pending_tasks();
+
+        // Both overlays should see both accounts through the shared cache
+        assert_eq!(
+            active_overlay1.basic_ref(addr1).unwrap().unwrap().balance,
+            U256::from(1000)
+        );
+        assert_eq!(
+            active_overlay1.basic_ref(addr2).unwrap().unwrap().balance,
+            U256::from(2000)
+        );
+        assert_eq!(
+            active_overlay2.basic_ref(addr1).unwrap().unwrap().balance,
+            U256::from(1000)
+        );
+        assert_eq!(
+            active_overlay2.basic_ref(addr2).unwrap().unwrap().balance,
+            U256::from(2000)
+        );
+
+        // Storage should also be shared
+        assert_eq!(
+            active_overlay1.storage_ref(addr1, U256::from(1)).unwrap(),
+            U256::from(100)
+        );
+        assert_eq!(
+            active_overlay2.storage_ref(addr1, U256::from(1)).unwrap(),
+            U256::from(100)
+        );
+        assert_eq!(
+            active_overlay1.storage_ref(addr2, U256::from(2)).unwrap(),
+            U256::from(200)
+        );
+        assert_eq!(
+            active_overlay2.storage_ref(addr2, U256::from(2)).unwrap(),
+            U256::from(200)
+        );
+
+        // Verify no underlying DB calls were made
+        assert_eq!(get_mock_db_field!(mock_db1_arc, get_basic_calls), 0);
+        assert_eq!(get_mock_db_field!(mock_db2_arc, get_basic_calls), 0);
+
+        // Verify correct number of cache entries (2 accounts + 2 storage slots)
+        assert_eq!(shared_cache.entry_count(), 4);
     }
 }

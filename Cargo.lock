@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alloy 0.11.1",
  "alloy-consensus 0.11.1",
@@ -3052,7 +3052,7 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=2ddaa07#2ddaa074889c8b0400410eb6912f1c746686a176"
+source = "git+ssh://git@github.com/phylaxsystems/int-test-utils.git?rev=5c24e078d96eadba19e0a2d3d43c3b40cf898b78#5c24e078d96eadba19e0a2d3d43c3b40cf898b78"
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
@@ -4357,7 +4357,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.101",

@@ -1,6 +1,6 @@
 [package]
 name = "assertion-executor"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
@@ -69,7 +69,7 @@ alloy-eip7702 = "0.5.1"
 assertion-da-server = { git = "ssh://git@github.com/phylaxsystems/assertion-da.git", rev = "cc1b26e" }
 criterion = { version = "0.5.1" }
 bollard = "0.18"
-int-test-utils = { git = "https://github.com/phylaxsystems/int-test-utils.git", rev = "2ddaa07" }
+int-test-utils = { git = "ssh://git@github.com/phylaxsystems/int-test-utils.git", rev = "5c24e078d96eadba19e0a2d3d43c3b40cf898b78" }
 assertion-executor = { path = ".", features = ["test"]}
 futures = "0.3.31"
 
