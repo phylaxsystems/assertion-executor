@@ -1066,31 +1066,23 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
+version = "0.1.2"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy 0.11.1",
- "assertion-da-core 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e)",
+ "assertion-da-core",
  "http",
  "jsonrpsee",
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
 name = "assertion-da-core"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
-dependencies = [
- "alloy 0.11.1",
- "serde",
-]
-
-[[package]]
-name = "assertion-da-core"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=ea880865dd201758166d70ea49711b45d393036d#ea880865dd201758166d70ea49711b45d393036d"
+version = "0.1.2"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy 0.11.1",
  "serde",
@@ -1098,56 +1090,14 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-server"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
+version = "0.1.2"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy 0.11.1",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "anyhow",
- "assertion-da-core 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e)",
- "bincode",
- "bollard",
- "clap",
- "directories",
- "ecdsa",
- "futures",
- "futures-util",
- "hex",
- "http-body-util",
- "hyper",
- "hyper-util",
- "k256",
- "metrics",
- "metrics-exporter-prometheus 0.16.2",
- "rand 0.8.5",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "simd-json",
- "sled",
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
- "util",
- "uuid",
- "zerocopy 0.7.35",
-]
-
-[[package]]
-name = "assertion-da-server"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=ea880865dd201758166d70ea49711b45d393036d#ea880865dd201758166d70ea49711b45d393036d"
-dependencies = [
- "alloy 0.11.1",
- "alloy-dyn-abi",
- "alloy-json-abi",
- "anyhow",
- "assertion-da-core 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=ea880865dd201758166d70ea49711b45d393036d)",
+ "assertion-da-core",
  "bincode",
  "bollard",
  "clap",
@@ -1205,7 +1155,7 @@ dependencies = [
  "alloy-transport-ws",
  "anyhow",
  "assertion-da-client",
- "assertion-da-server 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e)",
+ "assertion-da-server",
  "assertion-executor",
  "bincode",
  "bollard",
@@ -3052,11 +3002,11 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/int-test-utils.git?rev=5c24e078d96eadba19e0a2d3d43c3b40cf898b78#5c24e078d96eadba19e0a2d3d43c3b40cf898b78"
+source = "git+ssh://git@github.com/phylaxsystems/int-test-utils.git?rev=1c2fd92#1c2fd92fc7db4fae45243043c9c6798cdf92beaf"
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
- "assertion-da-server 0.1.0 (git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=ea880865dd201758166d70ea49711b45d393036d)",
+ "assertion-da-server",
  "bollard",
  "rand 0.8.5",
  "sled",
@@ -4357,7 +4307,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",

@@ -778,22 +778,17 @@ mod test_indexer {
         },
     };
     use alloy_primitives::FixedBytes;
-    use bollard::Docker;
-    use std::{
-        net::{
-            IpAddr,
-            Ipv4Addr,
-            SocketAddr,
-        },
-        sync::Arc,
+    use std::net::{
+        IpAddr,
+        Ipv4Addr,
+        SocketAddr,
     };
+    use std::str::FromStr;
 
-    use assertion_da_server::serve;
     use sled::Config;
 
     use tokio::task::JoinHandle;
-
-    use tokio::net::TcpListener;
+    use tokio_util::sync::CancellationToken;
 
     use alloy_network::{
         EthereumWallet,
@@ -1376,6 +1371,7 @@ mod test_indexer {
     }
 
     async fn mock_da_server() -> (JoinHandle<()>, u16) {
+        let addr = SocketAddr::from_str("127.0.0.1:0").unwrap();
         let config = assertion_da_server::Config {
             db_path: Some(
                 tempfile::tempdir()
@@ -1386,7 +1382,7 @@ mod test_indexer {
                     .to_string()
                     .into(),
             ),
-            listen_addr: "127.0.0.1:0".to_owned(),
+            listen_addr: addr,
             cache_size: 1024,
             private_key: "00973f42a0620b6fee12391c525daeb64097412e117b8f09a2742e06ca14e0ae"
                 .to_string(),
@@ -1394,6 +1390,9 @@ mod test_indexer {
             log_level: tracing::metadata::LevelFilter::current(),
         };
 
+        let server = config.build().await.unwrap();
+        let port = server.listener.local_addr().unwrap().port();
+        /*
         println!("Binding to: {}", config.listen_addr);
         let listener: &'static mut TcpListener = Box::leak(Box::new(
             TcpListener::bind(&config.listen_addr).await.unwrap(),
@@ -1418,14 +1417,19 @@ mod test_indexer {
         // tokio selecting them so we can essentially restart the whole assertion
         // loader on demand in case anything fails.
         let docker = Arc::new(Docker::connect_with_local_defaults().unwrap());
+        */
+
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.clone();
 
         #[allow(clippy::async_yields_async)]
         let handle = tokio::spawn(async move {
             println!("Serving...");
-            let _ = serve(listener, db_tx, docker, config.private_key.clone()).await;
+            server.run(cancel_token_clone).await.unwrap();
+            println!("Done serving");
         });
 
-        (handle, local_addr.port())
+        (handle, port)
     }
 
     async fn mine_block_write_hash(indexer: &Indexer) -> alloy_rpc_types::Header {
