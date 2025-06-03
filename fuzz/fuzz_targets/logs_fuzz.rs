@@ -1,12 +1,12 @@
 #![no_main]
-use alloy_sol_types::SolType;
-use assertion_executor::inspectors::sol_primitives::PhEvm;
 use alloy_primitives::FixedBytes;
 use alloy_primitives::{
     Log,
     LogData,
 };
 use alloy_sol_types::SolCall;
+use alloy_sol_types::SolType;
+use assertion_executor::inspectors::sol_primitives::PhEvm;
 use assertion_executor::inspectors::CallTracer;
 use assertion_executor::inspectors::PhEvmContext;
 use assertion_executor::{
@@ -147,7 +147,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Create a log from fuzzer data
     let log = create_log(data);
-    
+
     // Create a minimally viable context
     let log_array: &[Log] = &[log.clone()];
     let mut call_tracer = CallTracer::default();
@@ -167,11 +167,12 @@ fuzz_target!(|data: &[u8]| {
                 };
                 let expected_logs = vec![expected_log];
                 let expected: Bytes =
-                    <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_encode(&expected_logs).into();
-                
+                    <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_encode(&expected_logs)
+                        .into();
+
                 // Verify the encoding matches exactly
                 assert_eq!(rax, expected, "Encoded logs don't match expected value");
-            },
+            }
             Err(_) => {
                 // This should never happen since the function returns Infallible
                 panic!("Error getting logs - this should never happen with Infallible error type");

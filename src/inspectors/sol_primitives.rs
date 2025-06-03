@@ -1,6 +1,5 @@
 use alloy_sol_types::sol;
 
-
 sol! {
     interface PhEvm {
         // An Ethereum log

@@ -1,18 +1,21 @@
 #![no_main]
-use assertion_executor::inspectors::LogsAndTraces;
-use alloy_primitives::FixedBytes;
-use alloy_primitives::Log;
+use alloy_primitives::{
+    FixedBytes,
+    Log,
+};
 use alloy_sol_types::{
     SolCall,
     SolType,
 };
-use assertion_executor::inspectors::sol_primitives::PhEvm;
-use assertion_executor::inspectors::CallTracer;
-use assertion_executor::inspectors::PhEvmContext;
+
 use assertion_executor::{
     inspectors::{
         precompiles::calls::get_call_inputs,
+        sol_primitives::PhEvm,
         sol_primitives::PhEvm::loadCall,
+        CallTracer,
+        LogsAndTraces,
+        PhEvmContext,
     },
     primitives::{
         Address,
@@ -133,7 +136,7 @@ fuzz_target!(|data: &[u8]| {
     // Create a minimally viable context
     let log_array: &[Log] = &[];
     let mut call_tracer = CallTracer::default();
-    
+
     // Explicitly create a call input with the correct selector for the context
     let selector_bytes = if data.len() >= 28 {
         let mut sel = [0u8; 4];
@@ -142,7 +145,7 @@ fuzz_target!(|data: &[u8]| {
     } else {
         FixedBytes::default()
     };
-    
+
     // Create a properly formatted input for the CallTracer
     let target_call_input = CallInputs {
         // Use the selector as the first 4 bytes of input
@@ -157,7 +160,7 @@ fuzz_target!(|data: &[u8]| {
         is_eof: false,
         scheme: CallScheme::Call,
     };
-    
+
     call_tracer.record_call(target_call_input.clone());
     let logs_traces = LogsAndTraces {
         tx_logs: log_array,
@@ -168,7 +171,7 @@ fuzz_target!(|data: &[u8]| {
     // Modify the call_inputs to include the selector in the expected position
     // in the input data for get_call_inputs
     let mut precompile_input = Vec::with_capacity(68); // 4 bytes selector + 64 bytes params
-    
+
     // Precompile selector (can be any 4 bytes)
     precompile_input.extend_from_slice(&[0x12, 0x34, 0x56, 0x78]);
 
