@@ -1,4 +1,5 @@
 #![no_main]
+use assertion_executor::inspectors::LogsAndTraces;
 use alloy_primitives::FixedBytes;
 use alloy_primitives::Log;
 use alloy_sol_types::{
@@ -158,7 +159,11 @@ fuzz_target!(|data: &[u8]| {
     };
     
     call_tracer.record_call(target_call_input.clone());
-    let context = PhEvmContext::new(log_array, &call_tracer);
+    let logs_traces = LogsAndTraces {
+        tx_logs: log_array,
+        call_traces: &call_tracer,
+    };
+    let context = PhEvmContext::new(&logs_traces, params.target);
 
     // Modify the call_inputs to include the selector in the expected position
     // in the input data for get_call_inputs
@@ -199,11 +204,12 @@ fuzz_target!(|data: &[u8]| {
                     caller: target_call_input.caller,
                     gas_limit: target_call_input.gas_limit,
                     bytecode_address: target_call_input.bytecode_address,
-                    input: target_call_input.input.clone(), 
+                    input: target_call_input.input.clone()[4..].to_vec().into(), // Skip the first 4 bytes (selector)
                     target_address: target_call_input.target_address,
                     value: target_call_input.value.get(),
                 };
                 let inputs = vec![inputs];
+
                 let encoded: Bytes =
                     <alloy_sol_types::sol_data::Array<PhEvm::CallInputs>>::abi_encode(&inputs)
                         .into();

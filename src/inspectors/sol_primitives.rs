@@ -1,5 +1,6 @@
 use alloy_sol_types::sol;
 
+
 sol! {
     interface PhEvm {
         // An Ethereum log
@@ -13,6 +14,7 @@ sol! {
         }
 
         // Call inputs for the getCallInputs precompile
+        #[derive(Debug)]
         struct CallInputs {
             // The call data of the call.
             bytes input;
