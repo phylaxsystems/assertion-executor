@@ -977,8 +977,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
+version = "0.1.2"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy",
  "assertion-da-core",
@@ -987,12 +987,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
 name = "assertion-da-core"
-version = "0.1.0"
-source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?rev=cc1b26e#cc1b26eed4a76c14a080033651972e0767382f8f"
+version = "0.1.2"
+source = "git+ssh://git@github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
 dependencies = [
  "alloy",
  "serde",
@@ -1000,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alloy",
  "alloy-consensus",
