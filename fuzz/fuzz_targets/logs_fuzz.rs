@@ -1,18 +1,23 @@
 #![no_main]
-use alloy_primitives::FixedBytes;
 use alloy_primitives::{
+    FixedBytes,
     Log,
     LogData,
 };
-use alloy_sol_types::SolCall;
-use alloy_sol_types::SolType;
-use assertion_executor::inspectors::sol_primitives::PhEvm;
-use assertion_executor::inspectors::CallTracer;
-use assertion_executor::inspectors::PhEvmContext;
+use alloy_sol_types::{
+    SolCall,
+    SolType,
+};
 use assertion_executor::{
     inspectors::{
         precompiles::logs::get_logs,
-        sol_primitives::PhEvm::loadCall,
+        sol_primitives::{
+            PhEvm,
+            PhEvm::loadCall,
+        },
+        CallTracer,
+        LogsAndTraces,
+        PhEvmContext,
     },
     primitives::{
         Address,
@@ -149,11 +154,16 @@ fuzz_target!(|data: &[u8]| {
     let log = create_log(data);
 
     // Create a minimally viable context
-    let log_array: &[Log] = &[log.clone()];
+    let log_array: &[Log] = std::slice::from_ref(&log);
     let mut call_tracer = CallTracer::default();
-    let (call_inputs, _) = create_call_inputs(data);
+    let (call_inputs, params) = create_call_inputs(data);
     call_tracer.record_call(call_inputs);
-    let context = PhEvmContext::new(log_array, &call_tracer);
+
+    let logs_traces = LogsAndTraces {
+        tx_logs: log_array,
+        call_traces: &call_tracer,
+    };
+    let context = PhEvmContext::new(&logs_traces, params.target);
 
     // Call the target function and catch any panics
     let _ = std::panic::catch_unwind(|| {
