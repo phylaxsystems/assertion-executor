@@ -3006,7 +3006,7 @@ source = "git+ssh://git@github.com/phylaxsystems/int-test-utils.git?rev=1c2fd92#
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
- "assertion-da-server",
+
  "bollard",
  "rand 0.8.5",
  "sled",
