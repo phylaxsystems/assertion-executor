@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "alloy 0.11.1",
  "alloy-consensus 0.11.1",
@@ -3002,7 +3002,7 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=60cd1fa#60cd1fae57bd1650ff667d53eecee81a17555b47"
+source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=6633976#66339765611c636ca56a0690afc0db4ac9f26168"
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
