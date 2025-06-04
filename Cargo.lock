@@ -817,7 +817,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tokio-util",
+ "tokio-util 0.7.15",
  "tracing",
 ]
 
@@ -1066,8 +1066,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.3#c5074e06c660e7756ab2e29e394766e11675cc11"
 dependencies = [
  "alloy 0.11.1",
  "assertion-da-core",
@@ -1076,13 +1076,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util",
+ "tokio-util 0.6.10",
 ]
 
 [[package]]
 name = "assertion-da-core"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.3#c5074e06c660e7756ab2e29e394766e11675cc11"
 dependencies = [
  "alloy 0.11.1",
  "serde",
@@ -1090,8 +1090,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-server"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.3#c5074e06c660e7756ab2e29e394766e11675cc11"
 dependencies = [
  "alloy 0.11.1",
  "alloy-dyn-abi",
@@ -1124,7 +1124,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
- "tokio-util",
+ "tokio-util 0.6.10",
  "tracing",
  "tracing-subscriber",
  "util",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "alloy 0.11.1",
  "alloy-consensus 0.11.1",
@@ -1178,7 +1178,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.64",
  "tokio",
- "tokio-util",
+ "tokio-util 0.7.15",
  "tracing",
  "url",
  "zerocopy 0.8.3",
@@ -1446,7 +1446,7 @@ dependencies = [
  "serde_urlencoded",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util",
+ "tokio-util 0.7.15",
  "tower-service",
  "url",
  "winapi",
@@ -2545,7 +2545,7 @@ dependencies = [
  "indexmap 2.8.0",
  "slab",
  "tokio",
- "tokio-util",
+ "tokio-util 0.7.15",
  "tracing",
 ]
 
@@ -3002,7 +3002,7 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=60cd1fa#60cd1fae57bd1650ff667d53eecee81a17555b47"
+source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=2d640d2#2d640d2f36a70cc504de682e2767f8256a08639a"
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
@@ -3013,7 +3013,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util",
+ "tokio-util 0.7.15",
  "tracing",
 ]
 
@@ -3153,7 +3153,7 @@ dependencies = [
  "thiserror 1.0.64",
  "tokio",
  "tokio-rustls",
- "tokio-util",
+ "tokio-util 0.7.15",
  "tracing",
  "url",
 ]
@@ -3232,7 +3232,7 @@ dependencies = [
  "thiserror 1.0.64",
  "tokio",
  "tokio-stream",
- "tokio-util",
+ "tokio-util 0.7.15",
  "tower 0.4.13",
  "tracing",
 ]
@@ -4911,7 +4911,7 @@ checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 [[package]]
 name = "rust-tracing"
 version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/rust-tracing.git?rev=7c3861c83b880c40e1f2c6005892f1d915598081#7c3861c83b880c40e1f2c6005892f1d915598081"
+source = "git+https://github.com/phylaxsystems/rust-tracing.git?tag=0.1.3#7c3861c83b880c40e1f2c6005892f1d915598081"
 dependencies = [
  "alloy 0.12.6",
  "init4-from-env-derive",
@@ -5928,7 +5928,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
+ "tokio-util 0.7.15",
 ]
 
 [[package]]
@@ -5945,6 +5945,20 @@ dependencies = [
  "tokio-rustls",
  "tungstenite",
  "webpki-roots",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.6.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36943ee01a6d67977dd3f84a5a1d2efeb4ada3a1ae771cadfaa535d9d9fc6507"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "log",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
