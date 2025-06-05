@@ -817,7 +817,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tracing",
 ]
 
@@ -1067,7 +1067,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-client"
 version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.3#ee1370e944082bc329f7cf6fc6ddc2d3c64a4c81"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
 dependencies = [
  "alloy 0.11.1",
  "assertion-da-core 0.1.3",
@@ -1077,7 +1077,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.6.10",
+ "tokio-util",
  "url",
 ]
 
@@ -1093,7 +1093,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-core"
 version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.3#ee1370e944082bc329f7cf6fc6ddc2d3c64a4c81"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
 dependencies = [
  "alloy 0.11.1",
  "serde",
@@ -1135,7 +1135,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "util",
@@ -1146,7 +1146,7 @@ dependencies = [
 [[package]]
 name = "assertion-da-server"
 version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.3#ee1370e944082bc329f7cf6fc6ddc2d3c64a4c81"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
 dependencies = [
  "alloy 0.11.1",
  "alloy-dyn-abi",
@@ -1179,7 +1179,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
- "tokio-util 0.6.10",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "util",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "alloy 0.11.1",
  "alloy-consensus 0.11.1",
@@ -1233,7 +1233,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.64",
  "tokio",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tracing",
  "url",
  "zerocopy 0.8.3",
@@ -1501,7 +1501,7 @@ dependencies = [
  "serde_urlencoded",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tower-service",
  "url",
  "winapi",
@@ -2606,7 +2606,7 @@ dependencies = [
  "indexmap 2.8.0",
  "slab",
  "tokio",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tracing",
 ]
 
@@ -3075,7 +3075,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tracing",
 ]
 
@@ -3215,7 +3215,7 @@ dependencies = [
  "thiserror 1.0.64",
  "tokio",
  "tokio-rustls",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tracing",
  "url",
 ]
@@ -3294,7 +3294,7 @@ dependencies = [
  "thiserror 1.0.64",
  "tokio",
  "tokio-stream",
- "tokio-util 0.7.15",
+ "tokio-util",
  "tower 0.4.13",
  "tracing",
 ]
@@ -6087,7 +6087,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util 0.7.15",
+ "tokio-util",
 ]
 
 [[package]]
@@ -6104,20 +6104,6 @@ dependencies = [
  "tokio-rustls",
  "tungstenite",
  "webpki-roots",
-]
-
-[[package]]
-name = "tokio-util"
-version = "0.6.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36943ee01a6d67977dd3f84a5a1d2efeb4ada3a1ae771cadfaa535d9d9fc6507"
-dependencies = [
- "bytes",
- "futures-core",
- "futures-sink",
- "log",
- "pin-project-lite",
- "tokio",
 ]
 
 [[package]]
