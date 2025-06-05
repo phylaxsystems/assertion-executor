@@ -1070,7 +1070,7 @@ version = "0.1.4"
 source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#229dac8e663abeae22a122d0902a0469c62b3286"
 dependencies = [
  "alloy 0.11.1",
- "assertion-da-core 0.1.4",
+ "assertion-da-core",
  "http",
  "reqwest",
  "serde",
@@ -1083,15 +1083,6 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-core"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
-dependencies = [
- "alloy 0.11.1",
- "serde",
-]
-
-[[package]]
-name = "assertion-da-core"
 version = "0.1.4"
 source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#229dac8e663abeae22a122d0902a0469c62b3286"
 dependencies = [
@@ -1101,14 +1092,14 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-server"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+version = "0.1.4"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#229dac8e663abeae22a122d0902a0469c62b3286"
 dependencies = [
  "alloy 0.11.1",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "anyhow",
- "assertion-da-core 0.1.2",
+ "assertion-da-core",
  "bincode",
  "bollard",
  "clap",
@@ -1126,51 +1117,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
- "rust-tracing 0.1.3 (git+https://github.com/phylaxsystems/rust-tracing.git?rev=7c3861c83b880c40e1f2c6005892f1d915598081)",
- "serde",
- "serde_json",
- "simd-json",
- "sled",
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "util",
- "uuid",
- "zerocopy 0.7.35",
-]
-
-[[package]]
-name = "assertion-da-server"
-version = "0.1.4"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#229dac8e663abeae22a122d0902a0469c62b3286"
-dependencies = [
- "alloy 0.11.1",
- "alloy-dyn-abi",
- "alloy-json-abi",
- "anyhow",
- "assertion-da-core 0.1.4",
- "bincode",
- "bollard",
- "clap",
- "directories",
- "ecdsa",
- "futures",
- "futures-util",
- "hex",
- "http-body-util",
- "hyper",
- "hyper-util",
- "k256",
- "metrics",
- "metrics-exporter-prometheus 0.16.2",
- "rand 0.8.5",
- "regex",
- "reqwest",
- "rust-tracing 0.1.3 (git+https://github.com/phylaxsystems/rust-tracing.git?tag=0.1.3)",
+ "rust-tracing",
  "serde",
  "serde_json",
  "simd-json",
@@ -1210,7 +1157,7 @@ dependencies = [
  "alloy-transport-ws",
  "anyhow",
  "assertion-da-client",
- "assertion-da-server 0.1.4",
+ "assertion-da-server",
  "assertion-executor",
  "bincode",
  "bollard",
@@ -3064,11 +3011,11 @@ dependencies = [
 [[package]]
 name = "int-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=6633976#66339765611c636ca56a0690afc0db4ac9f26168"
+source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=06b4a06#06b4a061db74ca9f1c892f0e3671200c6ec3f07d"
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
- "assertion-da-server 0.1.2",
+ "assertion-da-server",
  "bollard",
  "rand 0.8.5",
  "sled",
@@ -5031,28 +4978,6 @@ checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 name = "rust-tracing"
 version = "0.1.3"
 source = "git+https://github.com/phylaxsystems/rust-tracing.git?tag=0.1.3#7c3861c83b880c40e1f2c6005892f1d915598081"
-dependencies = [
- "alloy 0.12.6",
- "init4-from-env-derive",
- "metrics",
- "metrics-exporter-prometheus 0.17.0",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
- "serde",
- "thiserror 2.0.12",
- "tracing",
- "tracing-core",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "rust-tracing"
-version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/rust-tracing.git?rev=7c3861c83b880c40e1f2c6005892f1d915598081#7c3861c83b880c40e1f2c6005892f1d915598081"
 dependencies = [
  "alloy 0.12.6",
  "init4-from-env-derive",

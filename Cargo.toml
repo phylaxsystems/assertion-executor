@@ -79,7 +79,7 @@ alloy-eip7702 = "0.5.1"
 assertion-da-server = { git = "https://github.com/phylaxsystems/assertion-da.git", tag = "0.1.4" }
 criterion = { version = "0.5.1" }
 bollard = "0.18"
-int-test-utils = { git = "https://github.com/phylaxsystems/int-test-utils.git", rev = "6633976" }
+int-test-utils = { git = "https://github.com/phylaxsystems/int-test-utils.git", rev = "06b4a06" }
 assertion-executor = { path = ".", features = ["test"] }
 futures = "0.3.31"
 
