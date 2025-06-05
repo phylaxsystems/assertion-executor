@@ -1066,11 +1066,11 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
+version = "0.1.4"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#229dac8e663abeae22a122d0902a0469c62b3286"
 dependencies = [
  "alloy 0.11.1",
- "assertion-da-core 0.1.3",
+ "assertion-da-core 0.1.4",
  "http",
  "reqwest",
  "serde",
@@ -1092,8 +1092,8 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-core"
-version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
+version = "0.1.4"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#229dac8e663abeae22a122d0902a0469c62b3286"
 dependencies = [
  "alloy 0.11.1",
  "serde",
@@ -1145,14 +1145,14 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-server"
-version = "0.1.3"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
+version = "0.1.4"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#229dac8e663abeae22a122d0902a0469c62b3286"
 dependencies = [
  "alloy 0.11.1",
  "alloy-dyn-abi",
  "alloy-json-abi",
  "anyhow",
- "assertion-da-core 0.1.3",
+ "assertion-da-core 0.1.4",
  "bincode",
  "bollard",
  "clap",
@@ -1210,7 +1210,7 @@ dependencies = [
  "alloy-transport-ws",
  "anyhow",
  "assertion-da-client",
- "assertion-da-server 0.1.3",
+ "assertion-da-server 0.1.4",
  "assertion-executor",
  "bincode",
  "bollard",
