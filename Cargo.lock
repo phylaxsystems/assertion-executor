@@ -1066,23 +1066,34 @@ dependencies = [
 
 [[package]]
 name = "assertion-da-client"
-version = "0.1.2"
-source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
 dependencies = [
  "alloy 0.11.1",
- "assertion-da-core",
+ "assertion-da-core 0.1.3",
  "http",
- "jsonrpsee",
+ "reqwest",
+ "serde",
  "serde_json",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
+ "url",
 ]
 
 [[package]]
 name = "assertion-da-core"
 version = "0.1.2"
 source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.2#48edd1137fedbca4f84413ebb84adb2a9af67888"
+dependencies = [
+ "alloy 0.11.1",
+ "serde",
+]
+
+[[package]]
+name = "assertion-da-core"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
 dependencies = [
  "alloy 0.11.1",
  "serde",
@@ -1097,7 +1108,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
  "anyhow",
- "assertion-da-core",
+ "assertion-da-core 0.1.2",
  "bincode",
  "bollard",
  "clap",
@@ -1115,7 +1126,51 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
- "rust-tracing",
+ "rust-tracing 0.1.3 (git+https://github.com/phylaxsystems/rust-tracing.git?rev=7c3861c83b880c40e1f2c6005892f1d915598081)",
+ "serde",
+ "serde_json",
+ "simd-json",
+ "sled",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "util",
+ "uuid",
+ "zerocopy 0.7.35",
+]
+
+[[package]]
+name = "assertion-da-server"
+version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/assertion-da.git?tag=0.1.4#7eccceb798a35de0c6c1766ff40f8a8887de2fa7"
+dependencies = [
+ "alloy 0.11.1",
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "anyhow",
+ "assertion-da-core 0.1.3",
+ "bincode",
+ "bollard",
+ "clap",
+ "directories",
+ "ecdsa",
+ "futures",
+ "futures-util",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "k256",
+ "metrics",
+ "metrics-exporter-prometheus 0.16.2",
+ "rand 0.8.5",
+ "regex",
+ "reqwest",
+ "rust-tracing 0.1.3 (git+https://github.com/phylaxsystems/rust-tracing.git?tag=0.1.3)",
  "serde",
  "serde_json",
  "simd-json",
@@ -1134,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "alloy 0.11.1",
  "alloy-consensus 0.11.1",
@@ -1155,7 +1210,7 @@ dependencies = [
  "alloy-transport-ws",
  "anyhow",
  "assertion-da-client",
- "assertion-da-server",
+ "assertion-da-server 0.1.3",
  "assertion-executor",
  "bincode",
  "bollard",
@@ -1551,6 +1606,12 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -2747,6 +2808,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -3006,7 +3068,7 @@ source = "git+https://github.com/phylaxsystems/int-test-utils.git?rev=6633976#66
 dependencies = [
  "alloy 0.11.1",
  "anyhow",
- "assertion-da-server",
+ "assertion-da-server 0.1.2",
  "bollard",
  "rand 0.8.5",
  "sled",
@@ -4335,6 +4397,58 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
+name = "quinn"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62e96808277ec6f97351a2380e6c25114bc9e67037775464979f3037c92d05ef"
+dependencies = [
+ "bytes",
+ "pin-project-lite",
+ "quinn-proto",
+ "quinn-udp",
+ "rustc-hash 2.1.1",
+ "rustls",
+ "socket2",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "quinn-proto"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2fe5ef3495d7d2e377ff17b1a8ce2ee2ec2a18cde8b6ad6619d65d0701c135d"
+dependencies = [
+ "bytes",
+ "getrandom 0.2.15",
+ "rand 0.8.5",
+ "ring",
+ "rustc-hash 2.1.1",
+ "rustls",
+ "rustls-pki-types",
+ "slab",
+ "thiserror 2.0.12",
+ "tinyvec",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
+name = "quinn-udp"
+version = "0.5.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee4e529991f949c5e25755532370b8af5d114acae52326361d68d47af64aa842"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "once_cell",
+ "socket2",
+ "tracing",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4621,7 +4735,10 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls",
  "rustls-pemfile",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -4629,11 +4746,13 @@ dependencies = [
  "system-configuration",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
  "windows-registry",
 ]
 
@@ -4911,6 +5030,28 @@ checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 [[package]]
 name = "rust-tracing"
 version = "0.1.3"
+source = "git+https://github.com/phylaxsystems/rust-tracing.git?tag=0.1.3#7c3861c83b880c40e1f2c6005892f1d915598081"
+dependencies = [
+ "alloy 0.12.6",
+ "init4-from-env-derive",
+ "metrics",
+ "metrics-exporter-prometheus 0.17.0",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "serde",
+ "thiserror 2.0.12",
+ "tracing",
+ "tracing-core",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "rust-tracing"
+version = "0.1.3"
 source = "git+https://github.com/phylaxsystems/rust-tracing.git?rev=7c3861c83b880c40e1f2c6005892f1d915598081#7c3861c83b880c40e1f2c6005892f1d915598081"
 dependencies = [
  "alloy 0.12.6",
@@ -5056,6 +5197,9 @@ name = "rustls-pki-types"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "917ce264624a4b4db1c364dcc35bfca9ded014d0a958cd47ad3e960e988ea51c"
+dependencies = [
+ "web-time",
+]
 
 [[package]]
 name = "rustls-platform-verifier"
@@ -5868,6 +6012,21 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "tinyvec"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09b3661f17e86524eccd4371ab0429194e0d7c008abb45f7a7495b1719463c71"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
