@@ -128,7 +128,7 @@ pub fn extract_assertion_contract(
             transact_to: TxKind::Call(ASSERTION_CONTRACT),
             caller: CALLER,
             data: triggersCall::SELECTOR.into(),
-            gas_limit: config.assertion_gas_limit - result_and_state.result.gas_used(),
+            gas_limit: DEPLOYMENT_GAS_LIMIT - result_and_state.result.gas_used(),
             #[cfg(feature = "optimism")]
             optimism: create_optimism_fields(),
             ..Default::default()
