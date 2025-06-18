@@ -72,7 +72,7 @@ mod test {
 
     #[test]
     fn test_get_logs_empty() {
-        let result = with_logs_context(vec![], |context| get_logs(context));
+        let result = with_logs_context(vec![], get_logs);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -93,10 +93,10 @@ mod test {
 
         let log = Log {
             address,
-            data: LogData::new(vec![topic], Bytes::from(data.clone())).unwrap(),
+            data: LogData::new(vec![topic], Bytes::from(data)).unwrap(),
         };
 
-        let result = with_logs_context(vec![log.clone()], |context| get_logs(context));
+        let result = with_logs_context(vec![log.clone()], get_logs);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -126,15 +126,15 @@ mod test {
         let logs = vec![
             Log {
                 address: address1,
-                data: LogData::new(vec![topic1], Bytes::from(data1.clone())).unwrap(),
+                data: LogData::new(vec![topic1], Bytes::from(data1)).unwrap(),
             },
             Log {
                 address: address2,
-                data: LogData::new(vec![topic2], Bytes::from(data2.clone())).unwrap(),
+                data: LogData::new(vec![topic2], Bytes::from(data2)).unwrap(),
             },
         ];
 
-        let result = with_logs_context(logs, |context| get_logs(context));
+        let result = with_logs_context(logs, get_logs);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -170,10 +170,10 @@ mod test {
 
         let log = Log {
             address,
-            data: LogData::new(vec![topic1, topic2, topic3], Bytes::from(data.clone())).unwrap(),
+            data: LogData::new(vec![topic1, topic2, topic3], Bytes::from(data)).unwrap(),
         };
 
-        let result = with_logs_context(vec![log], |context| get_logs(context));
+        let result = with_logs_context(vec![log], get_logs);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -200,10 +200,10 @@ mod test {
 
         let log = Log {
             address,
-            data: LogData::new(vec![], Bytes::from(data.clone())).unwrap(),
+            data: LogData::new(vec![], Bytes::from(data)).unwrap(),
         };
 
-        let result = with_logs_context(vec![log], |context| get_logs(context));
+        let result = with_logs_context(vec![log], get_logs);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -230,7 +230,7 @@ mod test {
             data: LogData::new(vec![topic], Bytes::new()).unwrap(),
         };
 
-        let result = with_logs_context(vec![log], |context| get_logs(context));
+        let result = with_logs_context(vec![log], get_logs);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -256,10 +256,10 @@ mod test {
 
         let log = Log {
             address,
-            data: LogData::new(vec![topic], Bytes::from(large_data.clone())).unwrap(),
+            data: LogData::new(vec![topic], Bytes::from(large_data)).unwrap(),
         };
 
-        let result = with_logs_context(vec![log], |context| get_logs(context));
+        let result = with_logs_context(vec![log], get_logs);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -289,7 +289,7 @@ mod test {
         ];
 
         for logs in test_cases {
-            let result = with_logs_context(logs, |context| get_logs(context));
+            let result = with_logs_context(logs, get_logs);
             assert!(result.is_ok(), "get_logs should never fail");
         }
     }

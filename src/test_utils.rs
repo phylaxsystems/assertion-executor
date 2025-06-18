@@ -110,11 +110,11 @@ pub fn random_address() -> Address {
 }
 
 pub fn random_u256() -> U256 {
-    U256::try_from(random_bytes::<32>()).unwrap()
+    random_bytes::<32>().into()
 }
 
 pub fn random_selector() -> FixedBytes<4> {
-    random_bytes::<4>().into()
+    random_bytes::<4>()
 }
 
 pub fn random_bytes32() -> FixedBytes<32> {

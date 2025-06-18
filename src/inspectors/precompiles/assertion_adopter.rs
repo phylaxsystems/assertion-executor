@@ -51,7 +51,7 @@ mod test {
     fn test_get_assertion_adopter_zero_address() {
         let adopter = Address::ZERO;
 
-        let result = with_adopter_context(adopter, |context| get_assertion_adopter(context));
+        let result = with_adopter_context(adopter, get_assertion_adopter);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -67,7 +67,7 @@ mod test {
     fn test_get_assertion_adopter_random_address() {
         let adopter = random_address();
 
-        let result = with_adopter_context(adopter, |context| get_assertion_adopter(context));
+        let result = with_adopter_context(adopter, get_assertion_adopter);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();

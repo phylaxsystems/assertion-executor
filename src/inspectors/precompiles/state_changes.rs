@@ -187,7 +187,7 @@ mod test {
         let mut journal_entries = Vec::new();
         for old_value in old_values {
             journal_entries.push(JournalEntry::StorageChanged {
-                address: address.into(),
+                address,
                 key: slot,
                 had_value: old_value,
             });
@@ -274,7 +274,7 @@ mod test {
 
         match result.unwrap_err() {
             GetStateChangesError::JournaledStateMissing => {}
-            other => panic!("Expected JournaledStateMissing, got {:?}", other),
+            other => panic!("Expected JournaledStateMissing, got {other:?}"),
         }
     }
 
@@ -303,7 +303,7 @@ mod test {
 
         match result.unwrap_err() {
             GetStateChangesError::CallDecodeError(_) => {}
-            other => panic!("Expected CallDecodeError, got {:?}", other),
+            other => panic!("Expected CallDecodeError, got {other:?}"),
         }
     }
 
@@ -320,7 +320,7 @@ mod test {
 
         // Add journal entry for storage change
         let journal_entries = vec![JournalEntry::StorageChanged {
-            address: contract_address.into(),
+            address: contract_address,
             key: slot,
             had_value: U256::from(100),
         }];
@@ -334,7 +334,7 @@ mod test {
 
         match result.unwrap_err() {
             GetStateChangesError::AccountNotFound => {}
-            other => panic!("Expected AccountNotFound, got {:?}", other),
+            other => panic!("Expected AccountNotFound, got {other:?}"),
         }
     }
 
@@ -351,7 +351,7 @@ mod test {
 
         // Add journal entry for storage change
         let journal_entries = vec![JournalEntry::StorageChanged {
-            address: contract_address.into(),
+            address: contract_address,
             key: slot,
             had_value: U256::from(100),
         }];
@@ -372,7 +372,7 @@ mod test {
 
         match result.unwrap_err() {
             GetStateChangesError::SlotNotFound => {}
-            other => panic!("Expected SlotNotFound, got {:?}", other),
+            other => panic!("Expected SlotNotFound, got {other:?}"),
         }
     }
 
@@ -427,7 +427,7 @@ mod test {
 
         // Add journal entry for different address
         let journal_entries = vec![JournalEntry::StorageChanged {
-            address: other_address.into(), // Different address
+            address: other_address, // Different address
             key: slot,
             had_value: U256::from(50),
         }];
