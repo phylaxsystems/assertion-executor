@@ -43,26 +43,45 @@ pub fn load_external_slot(
 mod test {
     use crate::{
         db::overlay::test_utils::MockDb,
-        inspectors::{
-            sol_primitives::PhEvm::loadCall,
+        inspectors::sol_primitives::PhEvm::loadCall,
+        primitives::{
+            Bytecode,
+            FixedBytes,
         },
-        test_utils::{run_precompile_test, random_address, random_u256},
-        primitives::{FixedBytes, Bytecode},
+        test_utils::{
+            random_address,
+            random_u256,
+            run_precompile_test,
+        },
     };
-    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_primitives::{
+        Address,
+        Bytes,
+        U256,
+    };
     use alloy_sol_types::SolCall;
     use revm::{
-        interpreter::{CallInputs, CallScheme, CallValue},
-        primitives::{AccountInfo, KECCAK_EMPTY},
-        InnerEvmContext, DatabaseRef,
+        interpreter::{
+            CallInputs,
+            CallScheme,
+            CallValue,
+        },
+        primitives::{
+            AccountInfo,
+            KECCAK_EMPTY,
+        },
+        InnerEvmContext,
     };
 
     use super::*;
 
     fn create_call_inputs_for_load(target: Address, slot: U256) -> CallInputs {
-        let call = loadCall { target, slot: slot.into() };
+        let call = loadCall {
+            target,
+            slot: slot.into(),
+        };
         let encoded = call.abi_encode();
-        
+
         CallInputs {
             input: Bytes::from(encoded),
             gas_limit: 1_000_000,
@@ -80,27 +99,31 @@ mod test {
     fn create_mock_db_with_storage(address: Address, slot: U256, value: U256) -> MockDb {
         let mut mock_db = MockDb::new();
         mock_db.insert_storage(address, slot, value);
-        mock_db.insert_account(address, AccountInfo {
-            balance: U256::ZERO,
-            nonce: 0,
-            code_hash: KECCAK_EMPTY,    
-            code: Some(Bytecode::default()),
-        });
+        mock_db.insert_account(
+            address,
+            AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: KECCAK_EMPTY,
+                code: Some(Bytecode::default()),
+            },
+        );
         mock_db
     }
-
-
 
     #[test]
     fn test_load_call_encoding_roundtrip() {
         let target = random_address();
         let slot = random_u256();
         let slot_bytes: alloy_primitives::FixedBytes<32> = slot.into();
-        
-        let call = loadCall { target, slot: slot_bytes };
+
+        let call = loadCall {
+            target,
+            slot: slot_bytes,
+        };
         let encoded = call.abi_encode();
         let decoded = loadCall::abi_decode(&encoded, true).unwrap();
-        
+
         assert_eq!(decoded.target, target);
         assert_eq!(decoded.slot, slot_bytes);
     }
@@ -111,18 +134,21 @@ mod test {
         let target = random_address();
         let slot = random_u256();
         let expected_value = random_u256();
-        
+
         // Create valid call inputs
         let call_inputs = create_call_inputs_for_load(target, slot);
-        
+
         // Create context with storage value
         let mock_db = create_mock_db_with_storage(target, slot, expected_value);
         let mut multi_fork = MultiForkDb::new(MockDb::new(), mock_db);
         let context = InnerEvmContext::new(&mut multi_fork);
-        
+
         let result = load_external_slot(&context, &call_inputs);
         let decoded = loadCall::abi_decode_returns(&result.unwrap(), true).unwrap();
-        assert_eq!(decoded.data.0, FixedBytes::from(expected_value.to_be_bytes()));
+        assert_eq!(
+            decoded.data.0,
+            FixedBytes::from(expected_value.to_be_bytes())
+        );
     }
 
     #[test]
@@ -130,35 +156,35 @@ mod test {
         // Test with an existing account but no storage value for the requested slot
         let target = random_address();
         let slot = random_u256();
-        
+
         // Create valid call inputs
         let call_inputs = create_call_inputs_for_load(target, slot);
-        
+
         // Create context with account but no storage for this slot
         let mock_db = create_mock_db_with_storage(target, random_u256(), random_u256());
         let mut multi_fork = MultiForkDb::new(MockDb::new(), mock_db);
         let context = InnerEvmContext::new(&mut multi_fork);
-        
+
         let result = load_external_slot(&context, &call_inputs);
         let decoded = loadCall::abi_decode_returns(&result.unwrap(), true).unwrap();
         assert_eq!(decoded.data.0, FixedBytes::ZERO);
     }
 
-    #[test] 
+    #[test]
     fn test_load_call_non_existing_account() {
         // Test with a non-existing account
         let target = random_address();
         let slot = random_u256();
-        
+
         // Create valid call inputs
         let call_inputs = create_call_inputs_for_load(target, slot);
-        
+
         // Create context with no accounts
         let mock_db = create_mock_db_with_storage(Address::ZERO, random_u256(), random_u256());
 
         let mut multi_fork = MultiForkDb::new(MockDb::new(), mock_db);
         let context = InnerEvmContext::new(&mut multi_fork);
-        
+
         let result = load_external_slot(&context, &call_inputs);
 
         // parse the result

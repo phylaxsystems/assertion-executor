@@ -1,14 +1,18 @@
 use crate::{
     inspectors::phevm::PhEvmContext,
-    inspectors::sol_primitives::PhEvm::{getCallInputsCall, CallInputs as PhEvmCallInputs},
-    primitives::{
-        Bytes,
+    inspectors::sol_primitives::PhEvm::{
+        getCallInputsCall,
+        CallInputs as PhEvmCallInputs,
     },
+    primitives::Bytes,
 };
 
-use revm::interpreter::{CallInputs, CallScheme, CallValue};
+use revm::interpreter::CallInputs;
 
-use alloy_sol_types::{SolType, SolCall};
+use alloy_sol_types::{
+    SolCall,
+    SolType,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum GetCallInputsError {
@@ -21,7 +25,6 @@ pub fn get_call_inputs(
     inputs: &CallInputs,
     context: &PhEvmContext,
 ) -> Result<Bytes, GetCallInputsError> {
-    
     let get_call_inputs = getCallInputsCall::abi_decode(&inputs.input, true)?;
 
     let target = get_call_inputs.target;
@@ -61,20 +64,34 @@ mod test {
     use super::*;
     use crate::{
         inspectors::{
-            phevm::{LogsAndTraces, PhEvmContext},
+            phevm::{
+                LogsAndTraces,
+                PhEvmContext,
+            },
             tracer::CallTracer,
         },
-        test_utils::{run_precompile_test, random_address, random_selector, random_bytes, random_u256},
+        test_utils::{
+            random_address,
+            random_bytes,
+            random_selector,
+            random_u256,
+            run_precompile_test,
+        },
     };
-    use alloy_primitives::{Address, Bytes, FixedBytes, U256};
-    use revm::interpreter::{CallInputs, CallScheme, CallValue};
-
+    use alloy_primitives::{
+        Address,
+        Bytes,
+        FixedBytes,
+        U256,
+    };
+    use revm::interpreter::{
+        CallInputs,
+        CallScheme,
+        CallValue,
+    };
 
     fn create_call_inputs_with_data(target: Address, selector: FixedBytes<4>) -> CallInputs {
-        let get_call_inputs = getCallInputsCall {
-            target,
-            selector,
-        };
+        let get_call_inputs = getCallInputsCall { target, selector };
 
         let input_data = get_call_inputs.abi_encode();
 
@@ -96,9 +113,9 @@ mod test {
     fn test_get_call_inputs_success() {
         let target = random_address();
         let selector = random_selector();
-        
+
         let call_inputs = create_call_inputs_with_data(target, selector);
-        
+
         // Set up the context
         let mut call_tracer = CallTracer::new();
         let mock_call_input = CallInputs {
@@ -113,59 +130,66 @@ mod test {
             is_eof: false,
             return_memory_offset: 0..0,
         };
-        
-        call_tracer.call_inputs.insert((target, selector), vec![mock_call_input.clone()]);
-        
+
+        call_tracer
+            .call_inputs
+            .insert((target, selector), vec![mock_call_input.clone()]);
+
         let logs_and_traces = LogsAndTraces {
             tx_logs: &[],
             call_traces: &call_tracer,
         };
-        
+
         let context = PhEvmContext {
             logs_and_traces: &logs_and_traces,
             adopter: Address::ZERO,
         };
-        
+
         let result = get_call_inputs(&call_inputs, &context);
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
         assert!(!encoded.is_empty());
-        
+
         // Verify we can decode the result
-        let decoded = <alloy_sol_types::sol_data::Array<PhEvmCallInputs>>::abi_decode(&encoded, false);
+        let decoded =
+            <alloy_sol_types::sol_data::Array<PhEvmCallInputs>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 1);
-        assert_eq!(decoded_array[0].target_address, mock_call_input.target_address);
+        assert_eq!(
+            decoded_array[0].target_address,
+            mock_call_input.target_address
+        );
     }
 
     #[test]
     fn test_get_call_inputs_empty_result() {
         let target = random_address();
         let selector = random_selector();
-        
+
         let call_inputs = create_call_inputs_with_data(target, selector);
-        
+
         // Create context with no matching call inputs (different target and selector)
         let call_tracer = CallTracer::new();
         let logs_and_traces = LogsAndTraces {
             tx_logs: &[],
             call_traces: &call_tracer,
         };
-        
+
         let context = PhEvmContext {
             logs_and_traces: &logs_and_traces,
             adopter: Address::ZERO,
         };
-        
+
         let result = get_call_inputs(&call_inputs, &context);
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
-        
+
         // Should return empty array
-        let decoded = <alloy_sol_types::sol_data::Array<PhEvmCallInputs>>::abi_decode(&encoded, false);
+        let decoded =
+            <alloy_sol_types::sol_data::Array<PhEvmCallInputs>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 0);
@@ -175,35 +199,38 @@ mod test {
     fn test_get_call_inputs_invalid_input_length() {
         let target = random_address();
         let selector = random_selector();
-        
+
         let mut call_inputs = create_call_inputs_with_data(target, selector);
         call_inputs.input = Bytes::from(random_bytes::<32>());
-        
+
         let call_tracer = CallTracer::new();
         let logs_and_traces = LogsAndTraces {
             tx_logs: &[],
             call_traces: &call_tracer,
         };
-        
+
         let context = PhEvmContext {
             logs_and_traces: &logs_and_traces,
             adopter: Address::ZERO,
         };
-        
+
         let result = get_call_inputs(&call_inputs, &context);
-        assert!(matches!(result, Err(GetCallInputsError::FailedToDecodeGetCallInputsCall(_))));
+        assert!(matches!(
+            result,
+            Err(GetCallInputsError::FailedToDecodeGetCallInputsCall(_))
+        ));
     }
 
     #[test]
     fn test_get_call_inputs_multiple_results() {
         let target = random_address();
         let selector = random_selector();
-        
+
         let call_inputs = create_call_inputs_with_data(target, selector);
-        
+
         let input0 = random_bytes::<32>();
         let input1 = random_bytes::<64>();
-        
+
         // Set up context with multiple call inputs
         let mut call_tracer = CallTracer::new();
         let mock_call_inputs = vec![
@@ -232,7 +259,7 @@ mod test {
                 return_memory_offset: 0..0,
             },
         ];
-        
+
         for input in mock_call_inputs.iter() {
             call_tracer.record_call(input.clone());
         }
@@ -241,25 +268,31 @@ mod test {
             tx_logs: &[],
             call_traces: &call_tracer,
         };
-        
+
         let context = PhEvmContext {
             logs_and_traces: &logs_and_traces,
             adopter: Address::ZERO,
         };
-        
+
         let result = get_call_inputs(&call_inputs, &context);
         assert!(result.is_ok());
-        
-        let encoded = result.unwrap();
-        let decoded = <alloy_sol_types::sol_data::Array<PhEvmCallInputs>>::abi_decode(&encoded, true).unwrap();
-        assert_eq!(decoded.len(), 2);
-        
 
+        let encoded = result.unwrap();
+        let decoded =
+            <alloy_sol_types::sol_data::Array<PhEvmCallInputs>>::abi_decode(&encoded, true)
+                .unwrap();
+        assert_eq!(decoded.len(), 2);
 
         // Verify both results are present
-        assert_eq!(decoded[0].target_address, mock_call_inputs[0].target_address);
+        assert_eq!(
+            decoded[0].target_address,
+            mock_call_inputs[0].target_address
+        );
         assert_eq!(decoded[0].input, Bytes::from(input0));
-        assert_eq!(decoded[1].target_address, mock_call_inputs[1].target_address);
+        assert_eq!(
+            decoded[1].target_address,
+            mock_call_inputs[1].target_address
+        );
         assert_eq!(decoded[1].input, Bytes::from(input1));
     }
 

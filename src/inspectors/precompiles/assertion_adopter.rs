@@ -16,17 +16,23 @@ mod test {
     use super::*;
     use crate::{
         inspectors::{
-            phevm::{LogsAndTraces, PhEvmContext},
+            phevm::{
+                LogsAndTraces,
+                PhEvmContext,
+            },
             tracer::CallTracer,
         },
-        test_utils::{run_precompile_test, random_address},
+        test_utils::{
+            random_address,
+            run_precompile_test,
+        },
     };
     use alloy_primitives::Address;
     use alloy_sol_types::SolValue;
 
-    fn with_adopter_context<F, R>(adopter: Address, f: F) -> R 
-    where 
-        F: FnOnce(&PhEvmContext) -> R 
+    fn with_adopter_context<F, R>(adopter: Address, f: F) -> R
+    where
+        F: FnOnce(&PhEvmContext) -> R,
     {
         let call_tracer = CallTracer::new();
         let logs_and_traces = LogsAndTraces {
@@ -44,10 +50,8 @@ mod test {
     #[test]
     fn test_get_assertion_adopter_zero_address() {
         let adopter = Address::ZERO;
-        
-        let result = with_adopter_context(adopter, |context| {
-            get_assertion_adopter(context)
-        });
+
+        let result = with_adopter_context(adopter, |context| get_assertion_adopter(context));
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -62,10 +66,8 @@ mod test {
     #[test]
     fn test_get_assertion_adopter_random_address() {
         let adopter = random_address();
-        
-        let result = with_adopter_context(adopter, |context| {
-            get_assertion_adopter(context)
-        });
+
+        let result = with_adopter_context(adopter, |context| get_assertion_adopter(context));
         assert!(result.is_ok());
 
         let encoded = result.unwrap();

@@ -33,17 +33,30 @@ mod test {
     use super::*;
     use crate::{
         inspectors::{
-            phevm::{LogsAndTraces, PhEvmContext},
+            phevm::{
+                LogsAndTraces,
+                PhEvmContext,
+            },
             sol_primitives::PhEvm,
             tracer::CallTracer,
         },
-        test_utils::{run_precompile_test, random_address, random_bytes32, random_bytes},
+        test_utils::{
+            random_address,
+            random_bytes,
+            random_bytes32,
+            run_precompile_test,
+        },
     };
-    use alloy_primitives::{Address, Bytes, Log, LogData};
+    use alloy_primitives::{
+        Address,
+        Bytes,
+        Log,
+        LogData,
+    };
 
-    fn with_logs_context<F, R>(logs: Vec<Log>, f: F) -> R 
-    where 
-        F: FnOnce(&PhEvmContext) -> R 
+    fn with_logs_context<F, R>(logs: Vec<Log>, f: F) -> R
+    where
+        F: FnOnce(&PhEvmContext) -> R,
     {
         let call_tracer = CallTracer::new();
         let logs_and_traces = LogsAndTraces {
@@ -59,14 +72,12 @@ mod test {
 
     #[test]
     fn test_get_logs_empty() {
-        let result = with_logs_context(vec![], |context| {
-            get_logs(context)
-        });
+        let result = with_logs_context(vec![], |context| get_logs(context));
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
         assert!(!encoded.is_empty());
-        
+
         // Verify we can decode the result
         let decoded = <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
@@ -79,25 +90,23 @@ mod test {
         let address = random_address();
         let topic = random_bytes32();
         let data = random_bytes::<64>();
-        
+
         let log = Log {
             address,
             data: LogData::new(vec![topic], Bytes::from(data.clone())).unwrap(),
         };
-        
-        let result = with_logs_context(vec![log.clone()], |context| {
-            get_logs(context)
-        });
+
+        let result = with_logs_context(vec![log.clone()], |context| get_logs(context));
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
-        
+
         // Verify we can decode the result
         let decoded = <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 1);
-        
+
         let decoded_log = &decoded_array[0];
         assert_eq!(decoded_log.emitter, address);
         assert_eq!(decoded_log.topics.len(), 1);
@@ -113,7 +122,7 @@ mod test {
         let topic2 = random_bytes32();
         let data1 = random_bytes::<32>();
         let data2 = random_bytes::<64>();
-        
+
         let logs = vec![
             Log {
                 address: address1,
@@ -124,27 +133,25 @@ mod test {
                 data: LogData::new(vec![topic2], Bytes::from(data2.clone())).unwrap(),
             },
         ];
-        
-        let result = with_logs_context(logs, |context| {
-            get_logs(context)
-        });
+
+        let result = with_logs_context(logs, |context| get_logs(context));
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
-        
+
         // Verify we can decode the result
         let decoded = <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 2);
-        
+
         // Verify first log
         let decoded_log1 = &decoded_array[0];
         assert_eq!(decoded_log1.emitter, address1);
         assert_eq!(decoded_log1.topics.len(), 1);
         assert_eq!(decoded_log1.topics[0], topic1);
         assert_eq!(decoded_log1.data, Bytes::from(data1));
-        
+
         // Verify second log
         let decoded_log2 = &decoded_array[1];
         assert_eq!(decoded_log2.emitter, address2);
@@ -160,25 +167,23 @@ mod test {
         let topic2 = random_bytes32();
         let topic3 = random_bytes32();
         let data = random_bytes::<128>();
-        
+
         let log = Log {
             address,
             data: LogData::new(vec![topic1, topic2, topic3], Bytes::from(data.clone())).unwrap(),
         };
-        
-        let result = with_logs_context(vec![log], |context| {
-            get_logs(context)
-        });
+
+        let result = with_logs_context(vec![log], |context| get_logs(context));
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
-        
+
         // Verify we can decode the result
         let decoded = <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 1);
-        
+
         let decoded_log = &decoded_array[0];
         assert_eq!(decoded_log.emitter, address);
         assert_eq!(decoded_log.topics.len(), 3);
@@ -192,25 +197,23 @@ mod test {
     fn test_get_logs_no_topics() {
         let address = random_address();
         let data = random_bytes::<32>();
-        
+
         let log = Log {
             address,
             data: LogData::new(vec![], Bytes::from(data.clone())).unwrap(),
         };
-        
-        let result = with_logs_context(vec![log], |context| {
-            get_logs(context)
-        });
+
+        let result = with_logs_context(vec![log], |context| get_logs(context));
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
-        
+
         // Verify we can decode the result
         let decoded = <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 1);
-        
+
         let decoded_log = &decoded_array[0];
         assert_eq!(decoded_log.emitter, address);
         assert_eq!(decoded_log.topics.len(), 0);
@@ -221,25 +224,23 @@ mod test {
     fn test_get_logs_empty_data() {
         let address = random_address();
         let topic = random_bytes32();
-        
+
         let log = Log {
             address,
             data: LogData::new(vec![topic], Bytes::new()).unwrap(),
         };
-        
-        let result = with_logs_context(vec![log], |context| {
-            get_logs(context)
-        });
+
+        let result = with_logs_context(vec![log], |context| get_logs(context));
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
-        
+
         // Verify we can decode the result
         let decoded = <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 1);
-        
+
         let decoded_log = &decoded_array[0];
         assert_eq!(decoded_log.emitter, address);
         assert_eq!(decoded_log.topics.len(), 1);
@@ -252,35 +253,33 @@ mod test {
         let address = random_address();
         let topic = random_bytes32();
         let large_data = random_bytes::<1024>(); // 1KB of data
-        
+
         let log = Log {
             address,
             data: LogData::new(vec![topic], Bytes::from(large_data.clone())).unwrap(),
         };
-        
-        let result = with_logs_context(vec![log], |context| {
-            get_logs(context)
-        });
+
+        let result = with_logs_context(vec![log], |context| get_logs(context));
         assert!(result.is_ok());
-        
+
         let encoded = result.unwrap();
-        
+
         // Verify we can decode the result
         let decoded = <alloy_sol_types::sol_data::Array<PhEvm::Log>>::abi_decode(&encoded, false);
         assert!(decoded.is_ok());
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 1);
-        
+
         let decoded_log = &decoded_array[0];
         assert_eq!(decoded_log.emitter, address);
         assert_eq!(decoded_log.data, Bytes::from(large_data));
     }
 
-    #[test] 
+    #[test]
     fn test_get_logs_never_fails() {
         // The function signature indicates it returns Result<Bytes, Infallible>
         // This means it should never fail, so let's verify that with edge cases
-        
+
         let test_cases = vec![
             vec![],
             vec![Log {
@@ -290,9 +289,7 @@ mod test {
         ];
 
         for logs in test_cases {
-            let result = with_logs_context(logs, |context| {
-                get_logs(context)
-            });
+            let result = with_logs_context(logs, |context| get_logs(context));
             assert!(result.is_ok(), "get_logs should never fail");
         }
     }
