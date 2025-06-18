@@ -859,4 +859,226 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_all_trigger_types_comprehensive() -> Result<(), AssertionStoreError> {
+        let aa = Address::random();
+
+        // Create unique selectors for each trigger type
+        let selector_specific_call = FixedBytes::<4>::random();
+        let selector_all_calls = FixedBytes::<4>::random();
+        let selector_specific_storage = FixedBytes::<4>::random();
+        let selector_all_storage = FixedBytes::<4>::random();
+        let selector_balance = FixedBytes::<4>::random();
+
+        let trigger_selector = FixedBytes::<4>::from([0x12, 0x34, 0x56, 0x78]);
+        let trigger_slot = U256::from(42);
+
+        // Create recorded triggers for ALL trigger types
+        let recorded_triggers = vec![
+            (
+                TriggerType::Call { trigger_selector },
+                vec![selector_specific_call]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::AllCalls,
+                vec![selector_all_calls].into_iter().collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::StorageChange {
+                    trigger_slot: trigger_slot.into(),
+                },
+                vec![selector_specific_storage]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::AllStorageChanges,
+                vec![selector_all_storage]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::BalanceChange,
+                vec![selector_balance].into_iter().collect::<HashSet<_>>(),
+            ),
+        ];
+
+        // Create journal entries that trigger specific call, storage change, and balance change
+        let journal_entries = vec![
+            JournalEntry::StorageChanged {
+                address: aa,
+                key: trigger_slot,
+                had_value: U256::from(0),
+            },
+            JournalEntry::StorageChanged {
+                address: aa,
+                key: U256::from(99), // Different slot to trigger AllStorageChanges
+                had_value: U256::from(1),
+            },
+            JournalEntry::BalanceTransfer {
+                from: aa,
+                to: Address::random(),
+                balance: U256::from(100),
+            },
+        ];
+
+        let store = AssertionStore::new_ephemeral()?;
+        let mut trigger_recorder = TriggerRecorder::default();
+
+        recorded_triggers.iter().for_each(|(trigger, selectors)| {
+            trigger_recorder
+                .triggers
+                .insert(trigger.clone(), selectors.clone());
+        });
+
+        let mut assertion = create_test_assertion(100, None);
+        assertion.trigger_recorder = trigger_recorder;
+        store.insert(aa, assertion)?;
+
+        let mut tracer = CallTracer::default();
+        // Add call with the specific trigger selector
+        tracer.call_inputs.insert((aa, trigger_selector), vec![]);
+
+        tracer.journaled_state = Some(JournaledState::new(
+            SpecId::LONDON,
+            RevmHashSet::<Address>::default(),
+        ));
+
+        tracer
+            .journaled_state
+            .as_mut()
+            .unwrap()
+            .journal
+            .push(journal_entries);
+
+        let assertions = store.read(&tracer, U256::from(100))?;
+        assert_eq!(assertions.len(), 1);
+
+        // All selectors should be included since we triggered:
+        // - Call (specific trigger_selector)
+        // - AllCalls (because we had a call)
+        // - StorageChange (specific trigger_slot)
+        // - AllStorageChanges (because we had storage changes)
+        // - BalanceChange (because we had a balance transfer)
+        let mut expected_selectors = vec![
+            selector_specific_call,
+            selector_all_calls,
+            selector_specific_storage,
+            selector_all_storage,
+            selector_balance,
+        ];
+        expected_selectors.sort();
+
+        let mut matched_selectors = assertions[0].selectors.clone();
+        matched_selectors.sort();
+        assert_eq!(matched_selectors, expected_selectors);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_matching_triggers() -> Result<(), AssertionStoreError> {
+        let aa = Address::random();
+
+        // Create triggers that won't be matched
+        let recorded_triggers = vec![
+            (
+                TriggerType::Call {
+                    trigger_selector: FixedBytes::<4>::from([0xFF, 0xFF, 0xFF, 0xFF]),
+                },
+                vec![FixedBytes::<4>::random()]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::StorageChange {
+                    trigger_slot: U256::from(999).into(),
+                },
+                vec![FixedBytes::<4>::random()]
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+            ),
+        ];
+
+        // Create journal entries that DON'T match the triggers
+        let journal_entries = vec![
+            JournalEntry::StorageChanged {
+                address: aa,
+                key: U256::from(123), // Different slot
+                had_value: U256::from(0),
+            },
+            JournalEntry::BalanceTransfer {
+                from: aa,
+                to: Address::random(),
+                balance: U256::from(100),
+            },
+        ];
+
+        let assertions = setup_and_match(recorded_triggers, journal_entries, aa)?;
+        assert_eq!(assertions.len(), 1);
+
+        // No selectors should match since triggers don't align
+        assert_eq!(assertions[0].selectors.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_trigger_matching() -> Result<(), AssertionStoreError> {
+        let aa = Address::random();
+
+        let selector1 = FixedBytes::<4>::random();
+        let selector2 = FixedBytes::<4>::random();
+        let selector3 = FixedBytes::<4>::random();
+
+        // Setup triggers where only some will match
+        let recorded_triggers = vec![
+            (
+                TriggerType::Call {
+                    trigger_selector: FixedBytes::<4>::from([0x11, 0x22, 0x33, 0x44]),
+                },
+                vec![selector1].into_iter().collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::StorageChange {
+                    trigger_slot: U256::from(5).into(),
+                },
+                vec![selector2].into_iter().collect::<HashSet<_>>(),
+            ),
+            (
+                TriggerType::BalanceChange,
+                vec![selector3].into_iter().collect::<HashSet<_>>(),
+            ),
+        ];
+
+        // Only trigger storage change and balance change, not the specific call
+        let journal_entries = vec![
+            JournalEntry::StorageChanged {
+                address: aa,
+                key: U256::from(5), // Matches the trigger
+                had_value: U256::from(0),
+            },
+            JournalEntry::BalanceTransfer {
+                from: aa,
+                to: Address::random(),
+                balance: U256::from(100),
+            },
+        ];
+
+        let assertions = setup_and_match(recorded_triggers, journal_entries, aa)?;
+        assert_eq!(assertions.len(), 1);
+
+        // Should only have selectors for storage change and balance change
+        let mut expected_selectors = vec![selector2, selector3];
+        expected_selectors.sort();
+
+        let mut matched_selectors = assertions[0].selectors.clone();
+        matched_selectors.sort();
+        assert_eq!(matched_selectors, expected_selectors);
+
+        Ok(())
+    }
 }

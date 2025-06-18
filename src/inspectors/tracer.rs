@@ -284,4 +284,100 @@ mod test {
             expected_triggers_trigger_contract
         );
     }
+
+    #[test]
+    fn test_triggers_all_types() {
+        use crate::primitives::{
+            JournalEntry,
+            JournaledState,
+            SpecId,
+        };
+        use revm::primitives::HashSet as RevmHashSet;
+
+        let mut tracer = CallTracer::new();
+        let addr1 = address!("1111111111111111111111111111111111111111");
+        let addr2 = address!("2222222222222222222222222222222222222222");
+        let addr3 = address!("3333333333333333333333333333333333333333");
+
+        // Test Call triggers
+        let selector1 = FixedBytes::<4>::from([0x12, 0x34, 0x56, 0x78]);
+        let selector2 = FixedBytes::<4>::from([0xAB, 0xCD, 0xEF, 0x00]);
+        tracer.call_inputs.insert((addr1, selector1), vec![]);
+        tracer.call_inputs.insert((addr2, selector2), vec![]);
+
+        // Test with journaled state for balance and storage changes
+        let mut journaled_state = JournaledState::new(SpecId::CANCUN, RevmHashSet::default());
+
+        // Add balance transfer (should create BalanceChange triggers)
+        let balance_entries = vec![JournalEntry::BalanceTransfer {
+            from: addr1,
+            to: addr2,
+            balance: U256::from(100),
+        }];
+
+        // Add storage changes (should create StorageChange triggers)
+        let storage_entries = vec![
+            JournalEntry::StorageChanged {
+                address: addr2,
+                key: U256::from(1),
+                had_value: U256::from(0),
+            },
+            JournalEntry::StorageChanged {
+                address: addr3,
+                key: U256::from(2),
+                had_value: U256::from(5),
+            },
+        ];
+
+        journaled_state.journal.push(balance_entries);
+        journaled_state.journal.push(storage_entries);
+        tracer.journaled_state = Some(journaled_state);
+
+        let triggers = tracer.triggers();
+
+        // Verify Call triggers
+        assert!(triggers[&addr1].contains(&TriggerType::Call {
+            trigger_selector: selector1
+        }));
+        assert!(triggers[&addr2].contains(&TriggerType::Call {
+            trigger_selector: selector2
+        }));
+
+        // Verify BalanceChange triggers
+        assert!(triggers[&addr1].contains(&TriggerType::BalanceChange));
+        assert!(triggers[&addr2].contains(&TriggerType::BalanceChange));
+
+        // Verify StorageChange triggers
+        assert!(triggers[&addr2].contains(&TriggerType::StorageChange {
+            trigger_slot: U256::from(1).into()
+        }));
+        assert!(triggers[&addr3].contains(&TriggerType::StorageChange {
+            trigger_slot: U256::from(2).into()
+        }));
+
+        // Verify we have triggers for all expected addresses
+        assert_eq!(triggers.len(), 3);
+        assert!(triggers.contains_key(&addr1));
+        assert!(triggers.contains_key(&addr2));
+        assert!(triggers.contains_key(&addr3));
+    }
+
+    #[test]
+    fn test_triggers_no_journal_state() {
+        let mut tracer = CallTracer::new();
+        let addr = address!("1111111111111111111111111111111111111111");
+        let selector = FixedBytes::<4>::from([0x12, 0x34, 0x56, 0x78]);
+
+        // Only call triggers, no journaled state
+        tracer.call_inputs.insert((addr, selector), vec![]);
+
+        let triggers = tracer.triggers();
+
+        // Should only have call trigger
+        assert_eq!(triggers.len(), 1);
+        assert!(triggers[&addr].contains(&TriggerType::Call {
+            trigger_selector: selector
+        }));
+        assert_eq!(triggers[&addr].len(), 1);
+    }
 }

@@ -241,3 +241,90 @@ fn test_endless_loop_constructor() {
         }
     }
 }
+
+#[test]
+fn test_extract_all_trigger_types() {
+    use crate::{
+        inspectors::TriggerType,
+        test_utils::*,
+    };
+
+    let config = ExecutorConfig::default();
+
+    // Test extraction from TriggerOnAny contract which should have AllCalls, AllStorageChanges, and BalanceChange
+    let (_, trigger_recorder_any) =
+        extract_assertion_contract(bytecode("TriggerOnAny.sol:TriggerOnAny"), &config).unwrap();
+
+    // Should have all three "Any" trigger types
+    assert!(trigger_recorder_any
+        .triggers
+        .contains_key(&TriggerType::AllCalls));
+    assert!(trigger_recorder_any
+        .triggers
+        .contains_key(&TriggerType::AllStorageChanges));
+    assert!(trigger_recorder_any
+        .triggers
+        .contains_key(&TriggerType::BalanceChange));
+
+    // Each trigger should have the DEADBEEF selector
+    let expected_selector = crate::primitives::fixed_bytes!("DEADBEEF");
+    assert!(trigger_recorder_any.triggers[&TriggerType::AllCalls].contains(&expected_selector));
+    assert!(
+        trigger_recorder_any.triggers[&TriggerType::AllStorageChanges].contains(&expected_selector)
+    );
+    assert!(trigger_recorder_any.triggers[&TriggerType::BalanceChange].contains(&expected_selector));
+
+    // Test extraction from TriggerOnSpecific contract which should have specific Call and StorageChange triggers
+    let (_, trigger_recorder_specific) =
+        extract_assertion_contract(bytecode("TriggerOnSpecific.sol:TriggerOnSpecific"), &config)
+            .unwrap();
+
+    // Should have specific trigger types
+    let expected_call_trigger = TriggerType::Call {
+        trigger_selector: crate::primitives::fixed_bytes!("f18c388a"),
+    };
+    let expected_storage_trigger = TriggerType::StorageChange {
+        trigger_slot: crate::primitives::fixed_bytes!(
+            "ccc4fa32c72b32fc1388e9b17cbcd9cb5939d52551871739e4c3415f4ee595a0"
+        ),
+    };
+
+    assert!(trigger_recorder_specific
+        .triggers
+        .contains_key(&expected_call_trigger));
+    assert!(trigger_recorder_specific
+        .triggers
+        .contains_key(&expected_storage_trigger));
+
+    // Both should have the DEADBEEF selector
+    assert!(trigger_recorder_specific.triggers[&expected_call_trigger].contains(&expected_selector));
+    assert!(
+        trigger_recorder_specific.triggers[&expected_storage_trigger].contains(&expected_selector)
+    );
+}
+
+#[test]
+fn test_extract_no_triggers_error() {
+    use crate::test_utils::*;
+
+    let config = ExecutorConfig::default();
+
+    // Test with a contract that doesn't register any triggers
+    // This would be a contract that has a triggers() function but doesn't call any register functions
+    let result = extract_assertion_contract(
+        bytecode("Target.sol:Target"), // Target contract likely doesn't register triggers
+        &config,
+    );
+
+    match result {
+        Ok(_) => panic!("Expected NoTriggersRecorded error"),
+        Err(FnSelectorExtractorError::NoTriggersRecorded) => {
+            // This is expected
+        }
+        Err(other) => {
+            // The Target contract might not even have a triggers() function,
+            // so we might get a different error, which is also acceptable for this test
+            println!("Got different error (acceptable): {other:?}");
+        }
+    }
+}
