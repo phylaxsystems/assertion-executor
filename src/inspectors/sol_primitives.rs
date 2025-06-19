@@ -3,6 +3,7 @@ use alloy_sol_types::sol;
 sol! {
     interface PhEvm {
         // An Ethereum log
+        #[derive(Debug)]
         struct Log {
             // The topics of the log, including the signature, if any.
             bytes32[] topics;

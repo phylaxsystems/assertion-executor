@@ -105,6 +105,22 @@ pub fn random_bytes<const N: usize>() -> FixedBytes<N> {
     FixedBytes::new(value)
 }
 
+pub fn random_address() -> Address {
+    random_bytes::<20>().into()
+}
+
+pub fn random_u256() -> U256 {
+    random_bytes::<32>().into()
+}
+
+pub fn random_selector() -> FixedBytes<4> {
+    random_bytes::<4>()
+}
+
+pub fn random_bytes32() -> FixedBytes<32> {
+    random_bytes::<32>()
+}
+
 fn read_artifact(input: &str) -> serde_json::Value {
     let mut parts = input.split(':');
     let file_name = parts.next().expect("Failed to read filename");

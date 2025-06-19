@@ -326,4 +326,120 @@ mod test {
             TriggerRecorder { triggers }
         );
     }
+
+    #[test]
+    fn test_all_trigger_types_manual() {
+        let mut recorder = TriggerRecorder::default();
+
+        let selector1 = fixed_bytes!("12345678");
+        let selector2 = fixed_bytes!("87654321");
+        let selector3 = fixed_bytes!("ABCDEFAB");
+        let selector4 = fixed_bytes!("FEDCBAED");
+        let selector5 = fixed_bytes!("11111111");
+
+        // Test all trigger types
+        recorder.add_trigger(TriggerType::AllCalls, selector1);
+        recorder.add_trigger(
+            TriggerType::Call {
+                trigger_selector: fixed_bytes!("AAAAAAAA"),
+            },
+            selector2,
+        );
+        recorder.add_trigger(TriggerType::AllStorageChanges, selector3);
+        recorder.add_trigger(
+            TriggerType::StorageChange {
+                trigger_slot: fixed_bytes!(
+                    "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+                ),
+            },
+            selector4,
+        );
+        recorder.add_trigger(TriggerType::BalanceChange, selector5);
+
+        // Verify all triggers were recorded
+        assert_eq!(recorder.triggers.len(), 5);
+
+        assert!(recorder.triggers[&TriggerType::AllCalls].contains(&selector1));
+        assert!(recorder.triggers[&TriggerType::Call {
+            trigger_selector: fixed_bytes!("AAAAAAAA")
+        }]
+            .contains(&selector2));
+        assert!(recorder.triggers[&TriggerType::AllStorageChanges].contains(&selector3));
+        assert!(recorder.triggers[&TriggerType::StorageChange {
+            trigger_slot: fixed_bytes!(
+                "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+            )
+        }]
+            .contains(&selector4));
+        assert!(recorder.triggers[&TriggerType::BalanceChange].contains(&selector5));
+    }
+
+    #[test]
+    fn test_multiple_selectors_same_trigger() {
+        let mut recorder = TriggerRecorder::default();
+
+        let selector1 = fixed_bytes!("11111111");
+        let selector2 = fixed_bytes!("22222222");
+        let selector3 = fixed_bytes!("33333333");
+
+        // Add multiple selectors to the same trigger type
+        recorder.add_trigger(TriggerType::AllCalls, selector1);
+        recorder.add_trigger(TriggerType::AllCalls, selector2);
+        recorder.add_trigger(TriggerType::AllCalls, selector3);
+
+        // Should have one trigger type with three selectors
+        assert_eq!(recorder.triggers.len(), 1);
+        assert_eq!(recorder.triggers[&TriggerType::AllCalls].len(), 3);
+
+        assert!(recorder.triggers[&TriggerType::AllCalls].contains(&selector1));
+        assert!(recorder.triggers[&TriggerType::AllCalls].contains(&selector2));
+        assert!(recorder.triggers[&TriggerType::AllCalls].contains(&selector3));
+    }
+
+    #[test]
+    fn test_record_trigger_invalid_selector() {
+        let mut recorder = TriggerRecorder::default();
+
+        // Create invalid call inputs with wrong function selector
+        let call_inputs = CallInputs {
+            input: Bytes::from([0xFF, 0xFF, 0xFF, 0xFF]), // Invalid selector
+            gas_limit: 1000000,
+            target_address: TRIGGER_RECORDER,
+            bytecode_address: TRIGGER_RECORDER,
+            caller: Address::random(),
+            value: revm::interpreter::CallValue::Transfer(U256::ZERO),
+            scheme: revm::interpreter::CallScheme::Call,
+            is_static: false,
+            is_eof: false,
+            return_memory_offset: 0..0,
+        };
+
+        let result = recorder.record_trigger(&call_inputs);
+        assert!(matches!(result, Err(RecordError::FnSelectorNotFound)));
+    }
+
+    #[test]
+    fn test_record_trigger_decode_error() {
+        let mut recorder = TriggerRecorder::default();
+
+        // Create call inputs with valid selector but invalid data
+        let mut invalid_data = ITriggerRecorder::registerCallTrigger_0Call::SELECTOR.to_vec();
+        invalid_data.extend_from_slice(&[0xFF; 10]); // Add invalid data
+
+        let call_inputs = CallInputs {
+            input: invalid_data.into(),
+            gas_limit: 1000000,
+            target_address: TRIGGER_RECORDER,
+            bytecode_address: TRIGGER_RECORDER,
+            caller: Address::random(),
+            value: revm::interpreter::CallValue::Transfer(U256::ZERO),
+            scheme: revm::interpreter::CallScheme::Call,
+            is_static: false,
+            is_eof: false,
+            return_memory_offset: 0..0,
+        };
+
+        let result = recorder.record_trigger(&call_inputs);
+        assert!(matches!(result, Err(RecordError::CallDecodeError(_))));
+    }
 }
