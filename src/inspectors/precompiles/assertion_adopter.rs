@@ -47,7 +47,6 @@ mod test {
         f(&context)
     }
 
-
     fn test_get_assertion_adopter_helper(adopter: Address) {
         let result = with_adopter_context(adopter, get_assertion_adopter);
         assert!(result.is_ok());
