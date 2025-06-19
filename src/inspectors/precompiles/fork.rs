@@ -116,7 +116,7 @@ mod test {
         }
 
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
-        let journaled_state = JournaledState::new(SpecId::CANCUN, HashSet::default());
+        let journaled_state = JournaledState::new(SpecId::LATEST, HashSet::default());
 
         (multi_fork_db, journaled_state)
     }

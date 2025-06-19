@@ -181,7 +181,7 @@ mod test {
         current_value: U256,
     ) -> JournaledState {
         let mut journaled_state =
-            JournaledState::new(revm::primitives::SpecId::CANCUN, HashSet::default());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::default());
 
         // Add journal entries for storage changes
         let mut journal_entries = Vec::new();
@@ -248,7 +248,7 @@ mod test {
 
         // Create empty journaled state with no changes
         let journaled_state =
-            JournaledState::new(revm::primitives::SpecId::CANCUN, HashSet::default());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::default());
         let result = with_journaled_state_context(Some(journaled_state), |context| {
             get_state_changes(&call_inputs, context)
         });
@@ -295,7 +295,7 @@ mod test {
         };
 
         let journaled_state =
-            JournaledState::new(revm::primitives::SpecId::CANCUN, HashSet::default());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::default());
         let result = with_journaled_state_context(Some(journaled_state), |context| {
             get_state_changes(&call_inputs, context)
         });
@@ -316,7 +316,7 @@ mod test {
 
         // Create journaled state with journal entries but no account in state
         let mut journaled_state =
-            JournaledState::new(revm::primitives::SpecId::CANCUN, HashSet::default());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::default());
 
         // Add journal entry for storage change
         let journal_entries = vec![JournalEntry::StorageChanged {
@@ -347,7 +347,7 @@ mod test {
 
         // Create journaled state with journal entries and account but no slot in storage
         let mut journaled_state =
-            JournaledState::new(revm::primitives::SpecId::CANCUN, HashSet::default());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::default());
 
         // Add journal entry for storage change
         let journal_entries = vec![JournalEntry::StorageChanged {
@@ -423,7 +423,7 @@ mod test {
 
         // Create journaled state with changes to different address (should not match)
         let mut journaled_state =
-            JournaledState::new(revm::primitives::SpecId::CANCUN, HashSet::default());
+            JournaledState::new(revm::primitives::SpecId::LATEST, HashSet::default());
 
         // Add journal entry for different address
         let journal_entries = vec![JournalEntry::StorageChanged {
