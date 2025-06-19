@@ -42,8 +42,13 @@ pub fn get_call_inputs(
     let sol_call_inputs = call_inputs
         .iter()
         .map(|input| {
+            let original_input_data = input.input.clone();
+            let input_data_wo_selector = match original_input_data.len() >= 4 {
+                true => original_input_data.slice(4..),
+                false => Bytes::new(),
+            };
             PhEvmCallInputs {
-                input: input.input.clone(),
+                input: input_data_wo_selector,
                 gas_limit: input.gas_limit,
                 bytecode_address: input.bytecode_address,
                 target_address: input.target_address,
@@ -78,6 +83,21 @@ mod test {
             run_precompile_test,
         },
     };
+
+    fn test_with_inputs_and_tracer(
+        call_inputs: &CallInputs,
+        call_tracer: CallTracer,
+    ) -> Result<Bytes, GetCallInputsError> {
+        let logs_and_traces = LogsAndTraces {
+            tx_logs: &[],
+            call_traces: &call_tracer,
+        };
+        let context = PhEvmContext {
+            logs_and_traces: &logs_and_traces,
+            adopter: Address::ZERO,
+        };
+        get_call_inputs(call_inputs, &context)
+    }
     use alloy_primitives::{
         Address,
         Bytes,
@@ -90,7 +110,7 @@ mod test {
         CallValue,
     };
 
-    fn create_call_inputs_with_data(target: Address, selector: FixedBytes<4>) -> CallInputs {
+    fn create_get_call_input(target: Address, selector: FixedBytes<4>) -> CallInputs {
         let get_call_inputs = getCallInputsCall { target, selector };
 
         let input_data = get_call_inputs.abi_encode();
@@ -109,17 +129,13 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_get_call_inputs_success() {
-        let target = random_address();
-        let selector = random_selector();
-
-        let call_inputs = create_call_inputs_with_data(target, selector);
-
-        // Set up the context
-        let mut call_tracer = CallTracer::new();
-        let mock_call_input = CallInputs {
-            input: Bytes::from(random_bytes::<32>()),
+    fn create_random_call_input<const INPUT_SIZE: usize>(
+        target: Address,
+        selector: FixedBytes<4>,
+    ) -> CallInputs {
+        let input_data = [&selector[..], &random_bytes::<INPUT_SIZE>()[..]].concat();
+        CallInputs {
+            input: Bytes::from(input_data),
             gas_limit: 100_000,
             bytecode_address: random_address(),
             target_address: target,
@@ -129,38 +145,48 @@ mod test {
             is_static: false,
             is_eof: false,
             return_memory_offset: 0..0,
-        };
+        }
+    }
 
+    fn create_call_tracer_with_inputs<I>(call_inputs: I) -> CallTracer
+    where
+        I: IntoIterator<Item = CallInputs>,
+    {
+        let mut call_tracer = CallTracer::new();
+        for input in call_inputs {
+            call_tracer.record_call(input);
+        }
         call_tracer
-            .call_inputs
-            .insert((target, selector), vec![mock_call_input.clone()]);
+    }
 
-        let logs_and_traces = LogsAndTraces {
-            tx_logs: &[],
-            call_traces: &call_tracer,
-        };
+    #[test]
+    fn test_get_call_inputs_success() {
+        let target = random_address();
+        let selector = random_selector();
 
-        let context = PhEvmContext {
-            logs_and_traces: &logs_and_traces,
-            adopter: Address::ZERO,
-        };
+        // Set up the context
+        let mock_call_input = create_random_call_input::<32>(target, selector);
 
-        let result = get_call_inputs(&call_inputs, &context);
-        assert!(result.is_ok());
+        let get_call_inputs = create_get_call_input(target, selector);
+        let call_tracer = create_call_tracer_with_inputs(vec![mock_call_input.clone()]);
+
+        let result = test_with_inputs_and_tracer(&get_call_inputs, call_tracer);
 
         let encoded = result.unwrap();
-        assert!(!encoded.is_empty());
 
         // Verify we can decode the result
         let decoded =
             <alloy_sol_types::sol_data::Array<PhEvmCallInputs>>::abi_decode(&encoded, false);
-        assert!(decoded.is_ok());
+
         let decoded_array = decoded.unwrap();
         assert_eq!(decoded_array.len(), 1);
+
         assert_eq!(
             decoded_array[0].target_address,
             mock_call_input.target_address
         );
+
+        assert_eq!(decoded_array[0].input, mock_call_input.input.slice(4..));
     }
 
     #[test]
@@ -168,21 +194,12 @@ mod test {
         let target = random_address();
         let selector = random_selector();
 
-        let call_inputs = create_call_inputs_with_data(target, selector);
+        let get_call_inputs = create_get_call_input(target, selector);
 
         // Create context with no matching call inputs (different target and selector)
         let call_tracer = CallTracer::new();
-        let logs_and_traces = LogsAndTraces {
-            tx_logs: &[],
-            call_traces: &call_tracer,
-        };
 
-        let context = PhEvmContext {
-            logs_and_traces: &logs_and_traces,
-            adopter: Address::ZERO,
-        };
-
-        let result = get_call_inputs(&call_inputs, &context);
+        let result = test_with_inputs_and_tracer(&get_call_inputs, call_tracer);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -200,21 +217,12 @@ mod test {
         let target = random_address();
         let selector = random_selector();
 
-        let mut call_inputs = create_call_inputs_with_data(target, selector);
-        call_inputs.input = Bytes::from(random_bytes::<32>());
+        let mut get_call_inputs = create_get_call_input(target, selector);
+        get_call_inputs.input = Bytes::from(random_bytes::<32>());
 
         let call_tracer = CallTracer::new();
-        let logs_and_traces = LogsAndTraces {
-            tx_logs: &[],
-            call_traces: &call_tracer,
-        };
 
-        let context = PhEvmContext {
-            logs_and_traces: &logs_and_traces,
-            adopter: Address::ZERO,
-        };
-
-        let result = get_call_inputs(&call_inputs, &context);
+        let result = test_with_inputs_and_tracer(&get_call_inputs, call_tracer);
         assert!(matches!(
             result,
             Err(GetCallInputsError::FailedToDecodeGetCallInputsCall(_))
@@ -226,55 +234,17 @@ mod test {
         let target = random_address();
         let selector = random_selector();
 
-        let call_inputs = create_call_inputs_with_data(target, selector);
-
-        let input0 = random_bytes::<32>();
-        let input1 = random_bytes::<64>();
+        let get_call_inputs = create_get_call_input(target, selector);
 
         // Set up context with multiple call inputs
-        let mut call_tracer = CallTracer::new();
         let mock_call_inputs = vec![
-            CallInputs {
-                input: Bytes::from([selector.as_slice(), input0.as_slice()].concat()),
-                gas_limit: 100_000,
-                bytecode_address: random_address(),
-                target_address: target,
-                caller: random_address(),
-                value: CallValue::Transfer(random_u256()),
-                scheme: CallScheme::Call,
-                is_static: false,
-                is_eof: false,
-                return_memory_offset: 0..0,
-            },
-            CallInputs {
-                input: Bytes::from([selector.as_slice(), input1.as_slice()].concat()),
-                gas_limit: 200_000,
-                bytecode_address: random_address(),
-                target_address: target,
-                caller: random_address(),
-                value: CallValue::Transfer(random_u256()),
-                scheme: CallScheme::Call,
-                is_static: false,
-                is_eof: false,
-                return_memory_offset: 0..0,
-            },
+            create_random_call_input::<32>(target, selector),
+            create_random_call_input::<64>(target, selector),
         ];
 
-        for input in mock_call_inputs.iter() {
-            call_tracer.record_call(input.clone());
-        }
+        let call_tracer = create_call_tracer_with_inputs(mock_call_inputs.clone());
 
-        let logs_and_traces = LogsAndTraces {
-            tx_logs: &[],
-            call_traces: &call_tracer,
-        };
-
-        let context = PhEvmContext {
-            logs_and_traces: &logs_and_traces,
-            adopter: Address::ZERO,
-        };
-
-        let result = get_call_inputs(&call_inputs, &context);
+        let result = test_with_inputs_and_tracer(&get_call_inputs, call_tracer);
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
@@ -288,12 +258,12 @@ mod test {
             decoded[0].target_address,
             mock_call_inputs[0].target_address
         );
-        assert_eq!(decoded[0].input, Bytes::from(input0));
+        assert_eq!(decoded[0].input, mock_call_inputs[0].input.slice(4..));
         assert_eq!(
             decoded[1].target_address,
             mock_call_inputs[1].target_address
         );
-        assert_eq!(decoded[1].input, Bytes::from(input1));
+        assert_eq!(decoded[1].input, mock_call_inputs[1].input.slice(4..));
     }
 
     #[tokio::test]

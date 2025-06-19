@@ -37,7 +37,7 @@ impl CallTracer {
         Self::default()
     }
 
-    pub fn record_call(&mut self, mut inputs: CallInputs) {
+    pub fn record_call(&mut self, inputs: CallInputs) {
         // If the input is at least 4 bytes long, use the first 4 bytes as the selector
         // Otherwise, use 0x00000000 as the default selector
         // Note: It doesn't mean that the selector is a valid function selector of the target contract
@@ -47,10 +47,6 @@ impl CallTracer {
         } else {
             FixedBytes::default() // 0x00000000 for ETH transfers/no-input calls
         };
-
-        if inputs.input.len() >= 4 {
-            inputs.input = revm::primitives::Bytes::from(inputs.input[4..].to_vec());
-        }
 
         self.call_inputs
             .entry((inputs.target_address, selector))
