@@ -47,10 +47,8 @@ mod test {
         f(&context)
     }
 
-    #[test]
-    fn test_get_assertion_adopter_zero_address() {
-        let adopter = Address::ZERO;
 
+    fn test_get_assertion_adopter_helper(adopter: Address) {
         let result = with_adopter_context(adopter, get_assertion_adopter);
         assert!(result.is_ok());
 
@@ -58,25 +56,19 @@ mod test {
         assert!(!encoded.is_empty());
 
         // Verify we can decode the result back to the original address
-        let decoded = Address::abi_decode(&encoded, false);
+        let decoded = Address::abi_decode(&encoded, true);
         assert!(decoded.is_ok());
         assert_eq!(decoded.unwrap(), adopter);
     }
 
     #[test]
+    fn test_get_assertion_adopter_zero_address() {
+        test_get_assertion_adopter_helper(Address::ZERO);
+    }
+
+    #[test]
     fn test_get_assertion_adopter_random_address() {
-        let adopter = random_address();
-
-        let result = with_adopter_context(adopter, get_assertion_adopter);
-        assert!(result.is_ok());
-
-        let encoded = result.unwrap();
-        assert!(!encoded.is_empty());
-
-        // Verify we can decode the result back to the original address
-        let decoded = Address::abi_decode(&encoded, false);
-        assert!(decoded.is_ok());
-        assert_eq!(decoded.unwrap(), adopter);
+        test_get_assertion_adopter_helper(random_address());
     }
 
     #[tokio::test]
