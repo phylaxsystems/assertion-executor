@@ -107,7 +107,7 @@ where
     ///
     /// Returns the results of the assertions, as well as the state changes that should be
     /// committed if the assertions pass.
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all, target = "executor::validate_tx")]
     pub fn validate_transaction_ext_db<'validation, ExtDb, Active>(
         &'validation mut self,
         block_env: BlockEnv,
@@ -124,37 +124,17 @@ where
         let pre_tx_db = fork_db.clone();
         let mut post_tx_db = fork_db.clone();
 
-        trace!(target: "assertion-executor::validation", caller = ?tx_env.caller, transact_to = ?tx_env.transact_to, "Executing forked transaction");
         // This call relies on From<EVMError<ExtDb::Error>> for ExecutorError<DB::Error>
         let (tx_traces, result_and_state) =
-            self.execute_forked_tx_ext_db(block_env.clone(), tx_env, &mut post_tx_db, external_db).map_err(|e| {
-            trace!(target: "assertion-executor::validation", error = %e, "error executing forked tx");
-            match e {
-                ExecutorError::TxError(EVMError::Transaction(e)) => {
-                    ExecutorError::TxError(EVMError::Transaction(e))
-                }
-                ExecutorError::TxError(EVMError::Header(e)) => {
-                    ExecutorError::TxError(EVMError::Header(e))
-                }
-                ExecutorError::TxError(EVMError::Precompile(e)) => {
-                    ExecutorError::TxError(EVMError::Precompile(e))
-                }
-                ExecutorError::TxError(EVMError::Custom(e)) => {
-                    ExecutorError::TxError(EVMError::Custom(e))
-                }
-                _ => {
-                    error!(target: "assertion-executor::validation", error = %e, "Unknown error occurred");
-                    ExecutorError::TxError(EVMError::Custom(format!("Error: {e}")))
-                }
-            }
-            })?;
+            self.execute_forked_tx_ext_db(block_env.clone(), tx_env, &mut post_tx_db, external_db)?;
+
 
         if !result_and_state.result.is_success() {
-            trace!(target: "assertion-executor::validation", "Transaction execution failed, skipping assertions");
+            debug!(target: "assertion-executor::validate_tx", "Transaction execution failed, skipping assertions");
             return Ok(TxValidationResult::new(true, result_and_state, vec![]));
         }
+        debug!(target: "assertion-executor::validate_tx", triggers=?tx_traces.triggers(), gas_used=result_and_state.result.gas_used(), "Transaction execution succeeded.");
 
-        trace!(target: "assertion-executor::validation", "Transaction succeeded, running assertions");
         let multi_fork_db = MultiForkDb::new(pre_tx_db, post_tx_db);
 
         let logs_and_traces = LogsAndTraces {
@@ -164,9 +144,10 @@ where
 
         let results = self.execute_assertions(block_env, multi_fork_db, logs_and_traces)?;
 
-        trace!(
-            target: "assertion-executor::validation",
+        debug!(
+            target: "assertion-executor::validate_tx",
             assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(),
+            assertions_valid = results.iter().all(|a| a.assertion_fns_results.iter().all(|r| r.is_success())),
             gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(),
             "Completed assertion execution"
         );
@@ -174,13 +155,21 @@ where
         let valid = results
             .iter()
             .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
+
         if valid {
+            debug!(target: "assertion-executor::validate_tx", "All assertions passed. Committing state changes");
             fork_db.commit(result_and_state.state.clone());
+        } else {
+            let invalidating_assertion_contracts = results
+                .iter()
+                .filter(|a| !a.assertion_fns_results.iter().all(|r| r.is_success()))
+                .collect::<Vec<_>>();
+            debug!(target: "assertion-executor::validate_tx", ?invalidating_assertion_contracts, "Assertions failed. Not committing state changes");
         }
+
         Ok(TxValidationResult::new(valid, result_and_state, results))
     }
 
-    #[instrument(skip_all)]
     fn execute_assertions<'a, Active>(
         &'a self,
         block_env: BlockEnv,
@@ -195,12 +184,18 @@ where
             .store
             .read(logs_and_traces.call_traces, block_env.number)?;
 
-        trace!(
+        if assertions.is_empty() {
+            debug!(target: "assertion-executor::execute_assertions", "No assertions to execute");
+            return Ok(vec![]);
+        }
+
+        debug!(
             target: "assertion-executor::execute_assertions",
-            assertion_count = assertions.len(),
             assertion_ids = ?assertions.iter().map(|a| format!("{:?}", a.assertion_contract.id)).collect::<Vec<_>>(),
+            assertion_contract_count = assertions.len(),
             "Retrieved Assertion contracts from Assertion store"
         );
+
         let results: ExecutorResult<Vec<AssertionContractExecution>, DB> = assertions
             .into_par_iter()
             .map(
@@ -218,7 +213,7 @@ where
                 },
             )
             .collect();
-        trace!(target: "assertion-executor::execute_assertions", results=?results, "Assertion Execution Results");
+        trace!(target: "assertion-executor::execute_assertions", ?results, "Assertion Execution Results");
         results
     }
 
@@ -241,7 +236,7 @@ where
             assertion_contract_id = ?id,
             selector_count = fn_selectors.len(),
             selectors = ?fn_selectors.iter().map(|s| format!("{s:x?}")).collect::<Vec<_>>(),
-            "Running assertion contract"
+            "Executing assertion contract"
         );
 
         self.insert_assertion_contract(assertion_contract, &mut multi_fork_db);
@@ -268,7 +263,7 @@ where
                         optimism: create_optimism_fields(),
                         ..Default::default()
                     };
-                    debug!(target: "assertion-executor::assertion", tx_env=?tx_env, "Transaction Environment");
+                    trace!(target: "assertion-executor::assertion", tx_env=?tx_env, "Transaction Environment");
                     let mut evm = new_phevm(
                         tx_env,
                         block_env.clone(),
@@ -281,10 +276,11 @@ where
                         .transact()
                         .map(|result_and_state| result_and_state.result)
                         .map_err(|e| {
+                            // TODO(0xgregthedev): This is bad, we are losing the typed error, we need to fix it. 
                             // Convert the error to the appropriate type
                             ExecutorError::TxError(EVMError::Custom(format!("{e:?}")))
                         })?;
-                    debug!(target: "assertion-executor::assertion", result=?result, "Assertion executed");
+                    trace!(target: "assertion-executor::assertion", result_and_state=?result, "Assertion execution result and state");
                     assertion_gas
                         .fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
                     assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -311,11 +307,12 @@ where
             total_assertion_funcs_ran: assertions_ran.into_inner(),
         };
 
-        trace!(
+        debug!(
             target: "assertion-executor::assertion",
             assertion_contract_id = ?id,
             total_gas = rax.total_assertion_gas,
             assertions_ran = rax.total_assertion_funcs_ran,
+            assertion_fns_results = ?rax.assertion_fns_results.iter().map(|r| r.is_success()).collect::<Vec<_>>(),
             "Assertion contract execution completed"
         );
 
@@ -336,11 +333,11 @@ where
         Active: DatabaseRef,
     {
         trace!(
-            target: "assertion-executor::tx",
+            target: "assertion-executor::execute_tx",
             caller = ?tx_env.caller,
             transact_to = ?tx_env.transact_to,
             gas_limit = ?tx_env.gas_limit,
-            "Executing forked transaction with external db"
+            "Executing forked transactions"
         );
 
         let mut evm = new_tx_fork_evm(
@@ -352,15 +349,15 @@ where
             CallTracer::default(),
         );
 
-        let result = evm.transact().map_err(|e| {
-            trace!(target: "assertion-executor::tx", error = %e, "Transaction execution failed");
+        let result_and_state = evm.transact().map_err(|e| {
+            trace!(target: "assertion-executor::execute_tx", error = %e, "Transaction execution failed");
             match e {
                 EVMError::Transaction(e) => ExecutorError::TxError(EVMError::Transaction(e)),
                 EVMError::Header(e) => ExecutorError::TxError(EVMError::Header(e)),
                 EVMError::Precompile(e) => ExecutorError::TxError(EVMError::Precompile(e)),
                 EVMError::Custom(e) => ExecutorError::TxError(EVMError::Custom(e)),
                 _ => {
-                    error!(target: "assertion-executor::tx", error = %e, "Unknown error occurred");
+                    error!(target: "assertion-executor::execute_tx", error = %e, "Unknown error occurred");
                     ExecutorError::TxError(EVMError::Custom(format!("Error: {e}")))
                 }
             }
@@ -370,16 +367,15 @@ where
         std::mem::drop(evm);
 
         // Commit changes to the ForkDb<Active>
-        fork_db.commit(result.state.clone());
+        fork_db.commit(result_and_state.state.clone());
 
         trace!(
-            target: "assertion-executor::tx",
-            gas_used = ?result.result.gas_used(),
-            success = result.result.is_success(),
+            target: "assertion-executor::execute_tx",
+            ?result_and_state,
             "Completed forked transaction execution"
         );
 
-        Ok((call_tracer, result))
+        Ok((call_tracer, result_and_state))
     }
 
     /// Inserts pre-deployed assertion contract inside the multi-fork db.
@@ -395,6 +391,7 @@ where
             code_hash,
             storage,
             account_status,
+            id,
             ..
         } = assertion_contract;
 
@@ -428,7 +425,8 @@ where
         multi_fork_db.commit(state);
 
         trace!(
-            target: "assertion-executor::assertion",
+            target: "assertion-executor::insert_assertion_contract",
+            assertion_id = ?id,
             "Inserted assertion contract into multi fork db"
         );
     }

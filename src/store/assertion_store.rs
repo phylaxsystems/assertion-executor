@@ -204,7 +204,21 @@ impl AssertionStore {
 
             assertions.extend(assertions_for_execution);
         }
-        debug!(target: "assertion-executor::assertion_store", assertions=?assertions, triggers=?traces.triggers(), "Assertions found based on triggers");
+        if !assertions.is_empty() {
+            debug!(
+                target: "assertion-executor::assertion_store",
+                ?assertions,
+                triggers=?traces.triggers(),
+                "Assertions found based on triggers",
+            );
+        } else {
+            debug!(
+                target: "assertion-executor::assertion_store",
+                triggers=?traces.triggers(),
+                "No assertions found based on triggers",
+            );
+        }
+
         Ok(assertions)
     }
 
