@@ -128,7 +128,6 @@ where
         let (tx_traces, result_and_state) =
             self.execute_forked_tx_ext_db(block_env.clone(), tx_env, &mut post_tx_db, external_db)?;
 
-
         if !result_and_state.result.is_success() {
             debug!(target: "assertion-executor::validate_tx", "Transaction execution failed, skipping assertions");
             return Ok(TxValidationResult::new(true, result_and_state, vec![]));
@@ -144,28 +143,27 @@ where
 
         let results = self.execute_assertions(block_env, multi_fork_db, logs_and_traces)?;
 
-        debug!(
+        let valid = results
+            .iter()
+            .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
+
+        if valid {
+            trace!(target: "assertion-executor::validate_tx", "No assertions invalidated. Committing state changes");
+            fork_db.commit(result_and_state.state.clone());
+        } else {
+            trace!(
+                target: "assertion-executor::validate_tx",
+                "Assertions invalidated. Not committing state changes"
+            );
+        }
+
+        trace!(
             target: "assertion-executor::validate_tx",
             assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(),
             assertions_valid = results.iter().all(|a| a.assertion_fns_results.iter().all(|r| r.is_success())),
             gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(),
             "Completed assertion execution"
         );
-
-        let valid = results
-            .iter()
-            .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
-
-        if valid {
-            debug!(target: "assertion-executor::validate_tx", "All assertions passed. Committing state changes");
-            fork_db.commit(result_and_state.state.clone());
-        } else {
-            let invalidating_assertion_contracts = results
-                .iter()
-                .filter(|a| !a.assertion_fns_results.iter().all(|r| r.is_success()))
-                .collect::<Vec<_>>();
-            debug!(target: "assertion-executor::validate_tx", ?invalidating_assertion_contracts, "Assertions failed. Not committing state changes");
-        }
 
         Ok(TxValidationResult::new(valid, result_and_state, results))
     }
@@ -263,7 +261,8 @@ where
                         optimism: create_optimism_fields(),
                         ..Default::default()
                     };
-                    trace!(target: "assertion-executor::assertion", tx_env=?tx_env, "Transaction Environment");
+                    trace!(target: "assertion-executor::assertion_fn", ?tx_env, ?block_env, "Executing Assertion Function");
+
                     let mut evm = new_phevm(
                         tx_env,
                         block_env.clone(),
@@ -280,7 +279,8 @@ where
                             // Convert the error to the appropriate type
                             ExecutorError::TxError(EVMError::Custom(format!("{e:?}")))
                         })?;
-                    trace!(target: "assertion-executor::assertion", result_and_state=?result, "Assertion execution result and state");
+
+                    trace!(target: "assertion-executor::assertion_fn", ?result, "Assertion execution result and state");
                     assertion_gas
                         .fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
                     assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -295,7 +295,7 @@ where
                 },
             )
             .collect::<Vec<ExecutorResult<AssertionFunctionResult, DB>>>();
-        debug!(target: "assertion-executor::assertion", results_vec=?results_vec, "Assertion Execution Results");
+        debug!(target: "assertion-executor::assertion", ?results_vec, "Assertion Execution Results");
         let mut valid_results = vec![];
         for result in results_vec {
             valid_results.push(result?);
@@ -307,7 +307,7 @@ where
             total_assertion_funcs_ran: assertions_ran.into_inner(),
         };
 
-        debug!(
+        trace!(
             target: "assertion-executor::assertion",
             assertion_contract_id = ?id,
             total_gas = rax.total_assertion_gas,
