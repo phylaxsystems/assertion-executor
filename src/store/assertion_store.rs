@@ -179,11 +179,17 @@ impl AssertionStore {
     }
 
     /// Reads the assertions for the given block from the store, given the traces.
+    #[tracing::instrument(skip_all, target = "assertion_store::read", fields(triggers=?traces.triggers(), block_num=?block_num))]
     pub fn read(
         &self,
         traces: &CallTracer,
         block_num: U256,
     ) -> Result<Vec<AssertionsForExecution>, AssertionStoreError> {
+        tracing::trace!(
+            target: "assertion_store::read",
+            "Reading assertions from store...",
+        );
+
         let block_num = block_num
             .try_into()
             .map_err(|_| AssertionStoreError::BlockNumberExceedsU64)?;
@@ -204,6 +210,11 @@ impl AssertionStore {
 
             assertions.extend(assertions_for_execution);
         }
+        tracing::trace!(
+            target: "assertion_store::read",
+            "Done reading assertions from store",
+        );
+
         if !assertions.is_empty() {
             debug!(
                 target: "assertion-executor::assertion_store",
@@ -241,6 +252,21 @@ impl AssertionStore {
             .map(|a| de::<Vec<AssertionState>>(&a))
             .transpose()?
             .unwrap_or_default();
+
+        debug!(
+                target: "assertion_store::read_adopter",
+                ?assertion_adopter,
+                assertion_states = ?assertion_states.iter().map(|a| {
+                    let mut value = serde_json::Value::default();
+                    value["assertion_id"] = a.assertion_contract_id().to_string().into();
+                    value["active_at_block"] = a.active_at_block.to_string().into();
+                    value["inactive_at_block"] = a.inactive_at_block.map(|b| b.to_string()).unwrap_or_default().into();
+                    value["recorded_triggers"] = format!("{:?}", a.trigger_recorder.triggers).into();
+                    value.to_string()
+        }).collect::<Vec<_>>(),
+            "Assertion states in store for adopter.",
+            );
+
         let active_assertion_contracts = assertion_states
             .into_iter()
             .filter(|a| {

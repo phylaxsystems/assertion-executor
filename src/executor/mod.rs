@@ -183,7 +183,6 @@ where
             .read(logs_and_traces.call_traces, block_env.number)?;
 
         if assertions.is_empty() {
-            debug!(target: "assertion-executor::execute_assertions", "No assertions to execute");
             return Ok(vec![]);
         }
 
