@@ -65,6 +65,7 @@ use tracing::{
     error,
     instrument,
     trace,
+    warn
 };
 
 #[cfg(feature = "optimism")]
@@ -142,18 +143,24 @@ where
         };
 
         let results = self.execute_assertions(block_env, multi_fork_db, logs_and_traces)?;
+        if results.is_empty() {
+            debug!(target: "assertion-executor::validate_tx", "No assertions to execute");
+            trace!(target: "assertion-executor::validate_tx", "Comitting state changes to fork db");
+            fork_db.commit(result_and_state.state.clone());
+            return Ok(TxValidationResult::new(true, result_and_state, vec![]));
+        }
 
         let valid = results
             .iter()
             .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
 
         if valid {
-            trace!(target: "assertion-executor::validate_tx", "No assertions invalidated. Committing state changes");
+            trace!(target: "assertion-executor::validate_tx", "Committing state changes to fork db");
             fork_db.commit(result_and_state.state.clone());
         } else {
             trace!(
                 target: "assertion-executor::validate_tx",
-                "Assertions invalidated. Not committing state changes"
+                "Not committing state changes to fork db"
             );
         }
 
@@ -210,7 +217,7 @@ where
                 },
             )
             .collect();
-        trace!(target: "assertion-executor::execute_assertions", ?results, "Assertion Execution Results");
+        debug!(target: "assertion-executor::execute_assertions", ?results, "Assertion Execution Results");
         results
     }
 
@@ -319,6 +326,7 @@ where
     }
 
     /// Commits a transaction against a fork of the current state using an external DB.
+    #[instrument(level = "trace", skip_all, target = "assertion-executor::execute_tx")]
     pub fn execute_forked_tx_ext_db<ExtDb, Active>(
         &self,
         block_env: BlockEnv,
@@ -331,14 +339,6 @@ where
         ExtDb::Error: Display,
         Active: DatabaseRef,
     {
-        trace!(
-            target: "assertion-executor::execute_tx",
-            caller = ?tx_env.caller,
-            transact_to = ?tx_env.transact_to,
-            gas_limit = ?tx_env.gas_limit,
-            "Executing forked transactions"
-        );
-
         let mut evm = new_tx_fork_evm(
             tx_env,
             block_env,
@@ -349,7 +349,7 @@ where
         );
 
         let result_and_state = evm.transact().map_err(|e| {
-            trace!(target: "assertion-executor::execute_tx", error = %e, "Transaction execution failed");
+            warn!(target: "assertion-executor::execute_tx", error = %e, "Evm error in assertion executor");
             match e {
                 EVMError::Transaction(e) => ExecutorError::TxError(EVMError::Transaction(e)),
                 EVMError::Header(e) => ExecutorError::TxError(EVMError::Header(e)),
@@ -361,17 +361,20 @@ where
                 }
             }
         })?;
+        debug!(
+            target: "assertion-executor::execute_tx",
+            state_changes = ?result_and_state.state.keys().collect::<Vec<_>>(),
+            "Forked transaction state changes"
+        );
 
         let call_tracer = std::mem::take(&mut evm.context.external);
         std::mem::drop(evm);
 
         // Commit changes to the ForkDb<Active>
         fork_db.commit(result_and_state.state.clone());
-
         trace!(
             target: "assertion-executor::execute_tx",
-            ?result_and_state,
-            "Completed forked transaction execution"
+            "Com"
         );
 
         Ok((call_tracer, result_and_state))

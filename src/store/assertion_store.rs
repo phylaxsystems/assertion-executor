@@ -179,7 +179,7 @@ impl AssertionStore {
     }
 
     /// Reads the assertions for the given block from the store, given the traces.
-    #[tracing::instrument(skip_all, target = "assertion_store::read", fields(triggers=?traces.triggers(), block_num=?block_num))]
+    #[tracing::instrument(skip_all, name = "read_assertions_from_store", target = "assertion_store::read", fields(triggers=?traces.triggers(), block_num=?block_num))]
     pub fn read(
         &self,
         traces: &CallTracer,
