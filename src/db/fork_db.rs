@@ -19,11 +19,11 @@ use std::{
 
 /// Maps storage slots to their values.
 /// Also contains a flag to indicate if the account is self destructed.
-/// If the account is self destructed, it won't read from the inner database.
+/// Dont read from inner db is used to indicate that the account is not self destructed.
 #[derive(Debug, Clone, Default)]
 pub struct ForkStorageMap {
     pub map: HashMap<U256, U256>,
-    self_destructed: bool,
+    pub dont_read_from_inner_db: bool,
 }
 
 /// Contains mutations on top of an existing database.
@@ -62,7 +62,7 @@ impl<ExtDb: DatabaseRef> DatabaseRef for ForkDb<ExtDb> {
         match self.storage.get(&address) {
             Some(s) => {
                 // If the account is self destructed, do not read from inner db.
-                if s.self_destructed {
+                if s.dont_read_from_inner_db {
                     return Ok(*s.map.get(&slot).unwrap_or(&U256::ZERO));
                 }
 
@@ -97,9 +97,8 @@ impl<ExtDb> DatabaseCommit for ForkDb<ExtDb> {
 
                 let fork_storage_map = self.storage.entry(address).or_default();
 
-                // Mark the account as self destructed.
-                // This will prevent reading from the inner database.
-                fork_storage_map.self_destructed = true;
+                // Mark the account to not read from the inner database if it is self destructed.
+                fork_storage_map.dont_read_from_inner_db = true;
                 fork_storage_map.map.clear();
 
                 continue;
@@ -129,7 +128,7 @@ impl<ExtDb> DatabaseCommit for ForkDb<ExtDb> {
                                 .into_iter()
                                 .map(|(k, v)| (k, v.present_value()))
                                 .collect(),
-                            self_destructed: false,
+                            dont_read_from_inner_db: false,
                         },
                     );
                 }
