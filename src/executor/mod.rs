@@ -169,7 +169,7 @@ where
 
         let results = self.execute_assertions(block_env, multi_fork_db, logs_and_traces)?;
         if results.is_empty() {
-            debug!(target: "assertion-executor::validate_tx", "No assertions to execute");
+            debug!(target: "assertion-executor::validate_tx", "No assertions were executed");
             trace!(target: "assertion-executor::validate_tx", "Comitting state changes to fork db");
             fork_db.commit(result_and_state.state.clone());
             return Ok(TxValidationResult::new(true, result_and_state, vec![]));
