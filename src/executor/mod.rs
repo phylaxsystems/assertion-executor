@@ -175,27 +175,31 @@ where
             return Ok(TxValidationResult::new(true, result_and_state, vec![]));
         }
 
-        let valid = results
+        let invalid_assertions: Vec<AssertionFnId> = results
             .iter()
-            .all(|a| a.assertion_fns_results.iter().all(|r| r.is_success()));
+            .filter(|a| !a.assertion_fns_results.iter().all(|r| r.is_success()))
+            .map(|a| {
+                a.assertion_fns_results
+                    .iter()
+                    .map(|r| r.id)
+                    .collect::<Vec<_>>()
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        let valid = invalid_assertions.is_empty();
 
         if valid {
+            debug!(target: "assertion-executor::validate_tx", gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(), assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(), "Tx validated");
             trace!(target: "assertion-executor::validate_tx", "Committing state changes to fork db");
             fork_db.commit(result_and_state.state.clone());
         } else {
+            debug!(target: "assertion-executor::validate_tx", gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(), assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(), ?invalid_assertions, "Tx invalidated by assertions");
             trace!(
                 target: "assertion-executor::validate_tx",
                 "Not committing state changes to fork db"
             );
         }
-
-        trace!(
-            target: "assertion-executor::validate_tx",
-            assertions_ran = results.iter().map(|a| a.total_assertion_funcs_ran).sum::<u64>(),
-            assertions_valid = results.iter().all(|a| a.assertion_fns_results.iter().all(|r| r.is_success())),
-            gas_used = results.iter().map(|a| a.total_assertion_gas).sum::<u64>(),
-            "Completed assertion execution"
-        );
 
         Ok(TxValidationResult::new(valid, result_and_state, results))
     }
