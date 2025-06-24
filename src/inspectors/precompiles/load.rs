@@ -29,6 +29,11 @@ pub fn load_external_slot(
     };
     let address: Address = call.target;
 
+    // Load the account before reading the storage.
+    // This prevents a bug with revm's State<Db> where it panics if reading the storage before
+    // loading the account.
+    let _ = context.db.active_db.basic_ref(address);
+
     let slot = call.slot;
 
     let slot_value = match context.db.active_db.storage_ref(address, slot.into()) {

@@ -426,6 +426,18 @@ where
         state.insert(ASSERTION_CONTRACT, account);
         state.insert(CALLER, caller_account);
         multi_fork_db.commit(state);
+        multi_fork_db
+            .active_db
+            .storage
+            .entry(ASSERTION_CONTRACT)
+            .or_default()
+            .dont_read_from_inner_db = true;
+        multi_fork_db
+            .active_db
+            .storage
+            .entry(CALLER)
+            .or_default()
+            .dont_read_from_inner_db = true;
 
         trace!(
             target: "assertion-executor::assertion",
