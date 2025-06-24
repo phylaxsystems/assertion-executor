@@ -498,7 +498,12 @@ impl Indexer {
 
         let pending_modifications = self.prune_to(upper_bound + 1)?;
 
-        if !pending_modifications.is_empty() {
+        if pending_modifications.is_empty() {
+            debug!(
+                target = "assertion_executor::indexer",
+                upper_bound, "No pending modifications to apply",
+            );
+        } else {
             debug!(
                 target = "assertion_executor::indexer",
                 upper_bound,
@@ -507,11 +512,6 @@ impl Indexer {
             );
             self.store
                 .apply_pending_modifications(pending_modifications)?;
-        } else {
-            debug!(
-                target = "assertion_executor::indexer",
-                upper_bound, "No pending modifications to apply",
-            );
         }
 
         Ok(())
