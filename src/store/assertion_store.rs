@@ -276,9 +276,9 @@ impl AssertionStore {
                 .unwrap_or_else(|e| e.into_inner())
                 .get(assertion_adopter)?
                 .map(|a| de::<Vec<AssertionState>>(&a))
-                .transpose()?
-                .unwrap_or_default()
-        });
+                .transpose()
+        })?
+        .unwrap_or_default();
 
         debug!(
             target: "assertion_store::read_adopter",
