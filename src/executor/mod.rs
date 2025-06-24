@@ -178,13 +178,7 @@ where
         let invalid_assertions: Vec<AssertionFnId> = results
             .iter()
             .filter(|a| !a.assertion_fns_results.iter().all(|r| r.is_success()))
-            .map(|a| {
-                a.assertion_fns_results
-                    .iter()
-                    .map(|r| r.id)
-                    .collect::<Vec<_>>()
-            })
-            .flatten()
+            .flat_map(|a| a.assertion_fns_results.iter().map(|r| r.id))
             .collect::<Vec<_>>();
 
         let valid = invalid_assertions.is_empty();
