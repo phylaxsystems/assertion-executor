@@ -257,20 +257,28 @@ impl AssertionStore {
     /// An assertion is considered active at a block if the active_at_block is less than or equal
     /// to the given block, and the inactive_at_block is greater than the given block.
     /// `assertion_adopter` is the address of the contract leveraging assertions.
+    #[tracing::instrument(skip_all, name = "read_adopter_from_db", target = "assertion_store::read_adopter", fields(assertion_adopter=?assertion_adopter, triggers=?triggers, block=?block), level="trace")]
     fn read_adopter(
         &self,
         assertion_adopter: Address,
         triggers: HashSet<TriggerType>,
         block: u64,
     ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
-        let assertion_states = self
-            .db
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(assertion_adopter)?
-            .map(|a| de::<Vec<AssertionState>>(&a))
-            .transpose()?
-            .unwrap_or_default();
+        let assertion_states = tracing::trace_span!(
+            "read_adopter_from_db",
+            ?assertion_adopter,
+            ?triggers,
+            ?block
+        )
+        .in_scope(|| {
+            self.db
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(assertion_adopter)?
+                .map(|a| de::<Vec<AssertionState>>(&a))
+                .transpose()?
+                .unwrap_or_default()
+        });
 
         debug!(
             target: "assertion_store::read_adopter",

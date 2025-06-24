@@ -284,7 +284,7 @@ where
                 .collect::<Vec<ExecutorResult<AssertionFunctionResult, DB>>>()
         });
 
-        debug!(target: "assertion-executor::execute_assertions", ?results_vec, "Assertion Execution Results");
+        debug!(target: "assertion-executor::execute_assertions", execution_results=?results_vec.iter().map(|result| format!("{result:?}")).collect::<Vec<_>>(), "Assertion Execution Results");
         let mut valid_results = vec![];
         for result in results_vec {
             valid_results.push(result?);
@@ -354,7 +354,6 @@ where
 
         assertion_gas.fetch_add(result.gas_used(), std::sync::atomic::Ordering::Relaxed);
         assertions_ran.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
 
         trace!(target: "assertion-executor::execute_assertions", ?result, "Assertion execution result and state");
         Ok(AssertionFunctionResult {
@@ -620,11 +619,13 @@ mod test {
 
         // Insert requires Bytes, use helper from test_utils
         let assertion_bytecode = bytecode(SIMPLE_ASSERTION_COUNTER);
-        assertion_store.insert(
-            COUNTER_ADDRESS,
-            // Assuming AssertionState::new_test takes Bytes or similar
-            AssertionState::new_test(assertion_bytecode),
-        ).unwrap();
+        assertion_store
+            .insert(
+                COUNTER_ADDRESS,
+                // Assuming AssertionState::new_test takes Bytes or similar
+                AssertionState::new_test(assertion_bytecode),
+            )
+            .unwrap();
 
         let config = ExecutorConfig::default();
 
