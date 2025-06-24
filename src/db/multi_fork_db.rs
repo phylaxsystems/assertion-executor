@@ -138,6 +138,7 @@ impl<ExtDb: DatabaseRef> MultiForkDb<ExtDb> {
 
         Ok(())
     }
+
 }
 /// Clones the data of the given `accounts` from the `active_journaled_state` into the `target_journaled_state`.
 pub(crate) fn update_journaled_state(
