@@ -110,9 +110,20 @@ struct StateChangeMetadata<'a> {
     storage: &'a EvmStorage,
 }
 
+#[derive(Debug)]
+struct AssertionExecutionParams<'a, Active> {
+    assertion_contract: &'a AssertionContract,
+    fn_selector: &'a FixedBytes<4>,
+    block_env: BlockEnv,
+    multi_fork_db: MultiForkDb<ForkDb<Active>>,
+    assertion_gas: &'a AtomicU64,
+    assertions_ran: &'a AtomicU64,
+    context: &'a PhEvmContext<'a>,
+}
+
 impl<DB: PhDB> AssertionExecutor<DB>
 where
-    DB: DatabaseRef<Error: std::fmt::Debug + Send>,
+    DB::Error: std::fmt::Debug + Send,
 {
     /// Executes a transaction against an external revm database, and runs the appropriate
     /// assertions.
@@ -270,15 +281,15 @@ where
                 .into_par_iter()
                 .map(
                     |fn_selector: &FixedBytes<4>| -> ExecutorResult<AssertionFunctionResult, DB> {
-                        self.execute_assertion_fn(
+                        self.execute_assertion_fn(AssertionExecutionParams {
                             assertion_contract,
                             fn_selector,
-                            block_env.clone(),
-                            multi_fork_db.clone(),
-                            &assertion_gas,
-                            &assertions_ran,
-                            &context,
-                        )
+                            block_env: block_env.clone(),
+                            multi_fork_db: multi_fork_db.clone(),
+                            assertion_gas: &assertion_gas,
+                            assertions_ran: &assertions_ran,
+                            context,
+                        })
                     },
                 )
                 .collect::<Vec<ExecutorResult<AssertionFunctionResult, DB>>>()
@@ -306,18 +317,22 @@ where
     )]
     fn execute_assertion_fn<Active>(
         &self,
-        assertion_contract: &AssertionContract,
-        fn_selector: &FixedBytes<4>,
-        block_env: BlockEnv,
-        mut multi_fork_db: MultiForkDb<ForkDb<Active>>,
-        assertion_gas: &AtomicU64,
-        assertions_ran: &AtomicU64,
-        context: &PhEvmContext,
+        params: AssertionExecutionParams<'_, Active>,
     ) -> ExecutorResult<AssertionFunctionResult, DB>
     where
         Active: DatabaseRef + Sync + Send,
         Active::Error: Debug,
     {
+        let AssertionExecutionParams {
+            assertion_contract,
+            fn_selector,
+            block_env,
+            mut multi_fork_db,
+            assertion_gas,
+            assertions_ran,
+            context,
+        } = params;
+
         let inspector = PhEvmInspector::new(self.config.spec_id, &mut multi_fork_db, context);
 
         let tx_env = TxEnv {
@@ -334,7 +349,7 @@ where
 
         let mut evm = new_phevm(
             tx_env,
-            block_env.clone(),
+            block_env,
             self.config.chain_id,
             self.config.spec_id,
             &mut multi_fork_db,
@@ -412,7 +427,7 @@ where
             state_changes = ?{
                 result_and_state.state.iter().map(|(address, state_change)| {
                     format!("{:?}", StateChangeMetadata {
-                        address: address,
+                        address,
                         storage: &state_change.storage,
                         balance: &state_change.info.balance,
                         has_code: state_change.info.code.is_some(),
