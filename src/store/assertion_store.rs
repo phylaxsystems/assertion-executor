@@ -230,7 +230,13 @@ impl AssertionStore {
             assertions.extend(assertions_for_execution);
         }
 
-        if !assertions.is_empty() {
+        if assertions.is_empty() {
+            debug!(
+                target: "assertion-executor::assertion_store",
+                triggers=?traces.triggers(),
+                "No assertions found based on triggers",
+            );
+        } else {
             debug!(
                 target: "assertion-executor::assertion_store",
                 assertions = ?assertions.iter().map(|assertion| format!("{:?}", AssertionsForExecutionMetadata {
@@ -240,12 +246,6 @@ impl AssertionStore {
                 })).collect::<Vec<_>>(),
                 triggers=?traces.triggers(),
                 "Assertions found based on triggers",
-            );
-        } else {
-            debug!(
-                target: "assertion-executor::assertion_store",
-                triggers=?traces.triggers(),
-                "No assertions found based on triggers",
             );
         }
 
