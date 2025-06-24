@@ -694,7 +694,7 @@ impl Indexer {
                         })
                     }
                     Err(err) => {
-                        debug!(
+                        warn!(
                             target = "assertion_executor::indexer",
                             ?err,
                             "Failed to extract assertion contract"
