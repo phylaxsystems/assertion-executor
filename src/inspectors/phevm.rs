@@ -238,7 +238,11 @@ fn insert_precompile_account<T>(db: &mut MultiForkDb<T>) {
             ..Default::default()
         },
     );
-    db.active_db.storage.entry(PRECOMPILE_ADDRESS).or_default().dont_read_from_inner_db = true;
+    db.active_db
+        .storage
+        .entry(PRECOMPILE_ADDRESS)
+        .or_default()
+        .dont_read_from_inner_db = true;
 }
 
 #[cfg(test)]
