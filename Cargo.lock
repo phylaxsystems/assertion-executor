@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "assertion-executor"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "alloy 0.11.1",
  "alloy-consensus 0.11.1",
