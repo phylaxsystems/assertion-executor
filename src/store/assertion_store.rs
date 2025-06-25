@@ -63,6 +63,17 @@ pub struct AssertionsForExecution {
     pub adopter: Address,
 }
 
+/// Used to represent important tracing information
+#[derive(Debug)]
+struct AssertionsForExecutionMetadata<'a> {
+    #[allow(dead_code)]
+    assertion_id: &'a B256,
+    #[allow(dead_code)]
+    selectors: &'a Vec<FixedBytes<4>>,
+    #[allow(dead_code)]
+    adopter: &'a Address,
+}
+
 /// Struct representing a pending assertion modification that has not passed the timelock.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct AssertionState {
@@ -70,6 +81,19 @@ pub struct AssertionState {
     pub inactive_at_block: Option<u64>,
     pub assertion_contract: AssertionContract,
     pub trigger_recorder: TriggerRecorder,
+}
+
+/// Used to represent important tracing information.
+#[derive(Debug)]
+struct AssertionStateMetadata<'a> {
+    #[allow(dead_code)]
+    active_at_block: u64,
+    #[allow(dead_code)]
+    inactive_at_block: Option<u64>,
+    #[allow(dead_code)]
+    assertion_id: &'a B256,
+    #[allow(dead_code)]
+    recorded_triggers: &'a std::collections::HashMap<TriggerType, HashSet<FixedBytes<4>>>,
 }
 
 impl AssertionState {
@@ -179,6 +203,7 @@ impl AssertionStore {
     }
 
     /// Reads the assertions for the given block from the store, given the traces.
+    #[tracing::instrument(skip_all, name = "read_assertions_from_store", target = "assertion_store::read", fields(triggers=?traces.triggers(), block_num=?block_num), level="DEBUG")]
     pub fn read(
         &self,
         traces: &CallTracer,
@@ -204,7 +229,26 @@ impl AssertionStore {
 
             assertions.extend(assertions_for_execution);
         }
-        debug!(target: "assertion-executor::assertion_store", assertions=?assertions, triggers=?traces.triggers(), "Assertions found based on triggers");
+
+        if assertions.is_empty() {
+            debug!(
+                target: "assertion-executor::assertion_store",
+                triggers=?traces.triggers(),
+                "No assertions found based on triggers",
+            );
+        } else {
+            debug!(
+                target: "assertion-executor::assertion_store",
+                assertions = ?assertions.iter().map(|assertion| format!("{:?}", AssertionsForExecutionMetadata {
+                    assertion_id: &assertion.assertion_contract.id,
+                    selectors: &assertion.selectors,
+                    adopter: &assertion.adopter
+                })).collect::<Vec<_>>(),
+                triggers=?traces.triggers(),
+                "Assertions found based on triggers",
+            );
+        }
+
         Ok(assertions)
     }
 
@@ -213,20 +257,43 @@ impl AssertionStore {
     /// An assertion is considered active at a block if the active_at_block is less than or equal
     /// to the given block, and the inactive_at_block is greater than the given block.
     /// `assertion_adopter` is the address of the contract leveraging assertions.
+    #[tracing::instrument(skip_all, name = "read_adopter_from_db", target = "assertion_store::read_adopter", fields(assertion_adopter=?assertion_adopter, triggers=?triggers, block=?block), level="trace")]
     fn read_adopter(
         &self,
         assertion_adopter: Address,
         triggers: HashSet<TriggerType>,
         block: u64,
     ) -> Result<Vec<(AssertionContract, Vec<FixedBytes<4>>)>, AssertionStoreError> {
-        let assertion_states = self
-            .db
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(assertion_adopter)?
-            .map(|a| de::<Vec<AssertionState>>(&a))
-            .transpose()?
-            .unwrap_or_default();
+        let assertion_states = tracing::trace_span!(
+            "read_adopter_from_db",
+            ?assertion_adopter,
+            ?triggers,
+            ?block
+        )
+        .in_scope(|| {
+            self.db
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(assertion_adopter)?
+                .map(|a| de::<Vec<AssertionState>>(&a))
+                .transpose()
+        })?
+        .unwrap_or_default();
+
+        debug!(
+            target: "assertion_store::read_adopter",
+            ?assertion_adopter,
+            assertion_states = ?assertion_states.iter().map(|a|
+                format!("{:?}",
+                AssertionStateMetadata {
+                    assertion_id: &a.assertion_contract.id,
+                    active_at_block : a.active_at_block,
+                    inactive_at_block : a.inactive_at_block,
+                    recorded_triggers : &a.trigger_recorder.triggers
+                })).collect::<Vec<_>>(),
+            "Assertion states in store for adopter.",
+        );
+
         let active_assertion_contracts = assertion_states
             .into_iter()
             .filter(|a| {

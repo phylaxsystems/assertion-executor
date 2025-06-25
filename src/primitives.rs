@@ -53,7 +53,7 @@ pub struct AssertionContract {
 }
 
 /// Id of an assertion function
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct AssertionFnId {
     /// The selector of the assertion function
     pub fn_selector: FixedBytes<4>,

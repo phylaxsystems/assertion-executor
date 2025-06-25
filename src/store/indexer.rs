@@ -385,7 +385,6 @@ impl Indexer {
     /// Finds the common ancestor
     /// Traverses from the cursor backwords until it finds a common ancestor in the block_hashes
     /// tree.
-    #[instrument(skip(self), level = "trace")]
     async fn find_common_ancestor(&self, cursor_hash: B256) -> IndexerResult<u64> {
         let block_hashes_tree = &self.block_hash_tree;
 
@@ -411,7 +410,6 @@ impl Indexer {
 
     /// Handle the latest block, sync the indexer to the latest block, and moving
     /// pending modifications to the store
-    #[instrument(skip(self), level = "trace")]
     pub async fn handle_latest_block(
         &self,
         header: impl HeaderResponse + std::fmt::Debug,
@@ -490,7 +488,6 @@ impl Indexer {
 
     /// Move pending modifications to the store, with the specified block as an upper bound
     /// Prune the pending modifications and block hashes trees
-    #[instrument(skip(self), level = "trace")]
     async fn move_pending_modifications_to_store(&self, upper_bound: u64) -> IndexerResult {
         // Delay pruning genesis block until the first block is ready to be moved.
         // Otherwise it would immediately prune the genesis block and would not be able to find a
@@ -499,21 +496,29 @@ impl Indexer {
             return Ok(());
         }
 
-        debug!(
-            target = "assertion_executor::indexer",
-            upper_bound, "Moving pending modifications to store"
-        );
-
         let pending_modifications = self.prune_to(upper_bound + 1)?;
-        self.store
-            .apply_pending_modifications(pending_modifications)?;
+
+        if pending_modifications.is_empty() {
+            debug!(
+                target = "assertion_executor::indexer",
+                upper_bound, "No pending modifications to apply",
+            );
+        } else {
+            debug!(
+                target = "assertion_executor::indexer",
+                upper_bound,
+                modifications_count = pending_modifications.len(),
+                "Moving pending modifications to store",
+            );
+            self.store
+                .apply_pending_modifications(pending_modifications)?;
+        }
 
         Ok(())
     }
 
     /// Fetch the events from the State Oracle contract.
     /// Store the events in the pending_modifications tree for the indexed blocks.
-    #[instrument(skip(self), level = "trace")]
     async fn index_range(&self, from: u64, to: u64) -> IndexerResult {
         debug!(
             target = "assertion_executor::indexer",
@@ -535,6 +540,7 @@ impl Indexer {
             let log_index = log.log_index.ok_or(IndexerError::LogIndexMissing)?;
             let block_number = log.block_number.ok_or(IndexerError::BlockNumberMissing)?;
 
+            trace!(target: "assertion_executor::indexer", log_index, block_number, "Processing log");
             if let Some(modification) = self
                 .extract_pending_modifications(log.data(), log_index)
                 .await?
@@ -559,9 +565,11 @@ impl Indexer {
         self.pending_modifications_tree
             .apply_batch(pending_mods_batch)?;
 
-        debug!(
+        trace!(
             target = "assertion_executor::indexer",
-            from, to, "Building block hashes batch"
+            from,
+            to,
+            "Building block hashes batch"
         );
 
         // Build the block hashes batch
@@ -590,9 +598,11 @@ impl Indexer {
         }
 
         self.write_block_num_hash_batch(block_hashes)?;
-        debug!(
+        trace!(
             target = "assertion_executor::indexer",
-            from, to, "Block hashes batch applied"
+            from,
+            to,
+            "Block hashes batch applied"
         );
 
         let block_to_move = self
@@ -603,16 +613,18 @@ impl Indexer {
             .header()
             .number();
 
-        debug!(
+        trace!(
             target = "assertion_executor::indexer",
-            block_to_move, "Moving pending modifications to store"
+            block_to_move,
+            "Moving pending modifications to store"
         );
 
         self.move_pending_modifications_to_store(block_to_move)
             .await?;
-        debug!(
+        trace!(
             target = "assertion_executor::indexer",
-            block_to_move, "Pending modifications moved to store"
+            block_to_move,
+            "Pending modifications moved to store"
         );
 
         Ok(())
@@ -621,7 +633,6 @@ impl Indexer {
     /// Extract the pending modifications from the logs
     /// Resolves the bytecode via the assertion da.
     /// Extracts the fn selectors from the contract.
-    #[instrument(skip(self))]
     async fn extract_pending_modifications(
         &self,
         log: &LogData,
@@ -629,15 +640,15 @@ impl Indexer {
     ) -> IndexerResult<Option<PendingModification>> {
         let pending_mod_opt = match log.topics().first() {
             Some(&AssertionAdded::SIGNATURE_HASH) => {
-                debug!(
-                    target = "assertion_executor::indexer",
-                    "AssertionAdded event signature detected."
-                );
                 let topics = AssertionAdded::decode_topics(log.topics())?;
-                let data = AssertionAdded::abi_decode_data(&log.data, true)?;
+                let data = AssertionAdded::abi_decode_data(&log.data, true).map_err(|e| {
+                    debug!(target: "assertion_executor::indexer", ?e, "Failed to decode AssertionAdded event data");
+                    e
+                })?;
+
                 let event = AssertionAdded::new(topics, data);
 
-                debug!(
+                trace!(
                     target = "assertion_executor::indexer",
                     ?event,
                     "AssertionAdded event decoded"
@@ -669,10 +680,9 @@ impl Indexer {
 
                         debug!(
                             target = "assertion_executor::indexer",
-                            ?assertion_contract,
-                            ?trigger_recorder,
+                            assertion_id=?assertion_contract.id,
                             active_at_block,
-                            "Assertion contract extracted"
+                            "assertionAdded event processed",
                         );
 
                         Some(PendingModification::Add {
@@ -684,7 +694,7 @@ impl Indexer {
                         })
                     }
                     Err(err) => {
-                        error!(
+                        warn!(
                             target = "assertion_executor::indexer",
                             ?err,
                             "Failed to extract assertion contract"
@@ -695,7 +705,7 @@ impl Indexer {
             }
 
             Some(&AssertionRemoved::SIGNATURE_HASH) => {
-                debug!(
+                trace!(
                     target = "assertion_executor::indexer",
                     "AssertionRemoved event signature detected."
                 );
@@ -703,7 +713,7 @@ impl Indexer {
                 let data = AssertionRemoved::abi_decode_data(&log.data, true)?;
                 let event = AssertionRemoved::new(topics, data);
 
-                debug!(
+                trace!(
                     target = "assertion_executor::indexer",
                     ?event,
                     "AssertionRemoved event decoded"
@@ -714,6 +724,12 @@ impl Indexer {
                     .try_into()
                     .map_err(|_| IndexerError::BlockNumberExceedsU64)?;
 
+                debug!(
+                    target = "assertion_executor::indexer",
+                    assertion_id=?event.assertionId,
+                    inactive_at_block,
+                    "assertionRemoved event processed",
+                );
                 Some(PendingModification::Remove {
                     assertion_contract_id: event.assertionId,
                     assertion_adopter: event.contractAddress,

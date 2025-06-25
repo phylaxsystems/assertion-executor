@@ -35,7 +35,10 @@ use alloy_sol_types::{
     SolCall,
 };
 
-use tracing::debug;
+use tracing::{
+    debug,
+    warn,
+};
 
 #[cfg(feature = "optimism")]
 use crate::executor::config::create_optimism_fields;
@@ -107,6 +110,11 @@ pub fn extract_assertion_contract(
     .map_err(FnSelectorExtractorError::AssertionContractDeployError)?;
 
     if !result_and_state.result.is_success() {
+        warn!(
+            target = "assertion_executor::assertion_contract_extractor",
+            result = ?result_and_state.result,
+            "Assertion contract deployment failed",
+        );
         return Err(FnSelectorExtractorError::AssertionContractDeployFailed(
             result_and_state,
         ));
